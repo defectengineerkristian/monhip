@@ -61,7 +61,7 @@ DEFAULTS = {
     "speech_language": "de",
     "last_model": "",
     "theme": "dark",
-    # WebFusedAgentMod
+    # Teamwork
     "mode": "chat",
     "room_name": "",
     "room_ai": "",
@@ -178,10 +178,10 @@ class App:
         side.pack(side=tk.LEFT, fill=tk.Y)
         side.pack_propagate(False)
 
-        # Moduswahl: Chat | WebFusedAgentMod
+        # Moduswahl: Chat | Teamwork
         modes = ttk.Frame(side, style="Sidebar.TFrame", padding=(8, 10, 8, 6))
         modes.pack(side=tk.TOP, fill=tk.X)
-        self.mode_switch = ModeSwitch(modes, [("chat", "Chat"), ("room", "WebFusedAgentMod")], self.set_mode,
+        self.mode_switch = ModeSwitch(modes, [("chat", "Chat"), ("room", "Teamwork")], self.set_mode,
                                       self.ui_scale)
         self.mode_switch.pack(fill=tk.X)
 
@@ -295,7 +295,7 @@ class App:
         view.attach_scrollbar(next(w for w in frame.winfo_children() if isinstance(w, ttk.Scrollbar)))
         return frame, text, view
 
-    # ================================================================ Modus: Chat | WebFusedAgentMod
+    # ================================================================ Modus: Chat | Teamwork
 
     def set_mode(self, mode: str):
         mode = mode if mode in ("chat", "room") else "chat"
@@ -314,7 +314,7 @@ class App:
     def update_title(self):
         if self.mode == "room":
             info = self.room.info
-            title = f"WebFusedAgentMod  ·  {info['room']}" if info else "WebFusedAgentMod"
+            title = f"Teamwork  ·  {info['room']}" if info else "Teamwork"
         else:
             title = self._chat_title
         self.title_var.set(title if len(title) <= 60 else title[:59] + "…")
@@ -426,10 +426,6 @@ class App:
                 r += 1
         ttk.Checkbutton(t, text="Bildverständnis laden (mmproj-Datei im Ordner des Modells, ca. 1 GB Grafikspeicher)",
                         variable=self.vision_var).grid(row=r, column=0, columnspan=2, sticky="w", pady=(8, 0))
-        r += 1
-        ttk.Label(t, text="Änderungen gelten beim nächsten Laden eines Modells (Temperatur und "
-                          "Antwort-Tokens sofort).", style="Muted.TLabel", wraplength=round(560 * self.ui_scale)
-                  ).grid(row=r, column=0, columnspan=2, sticky="w", pady=(14, 0))
         t.columnconfigure(1, weight=1)
 
         # ---- Werkzeuge
@@ -469,10 +465,6 @@ class App:
         ttk.Button(bf, text="Ordner hinzufügen…", command=self._add_folder).pack(side=tk.LEFT)
         ttk.Button(bf, text="★ Als Arbeitsordner", command=self._main_folder).pack(side=tk.LEFT, padx=(4, 0))
         ttk.Button(bf, text="Entfernen", command=self._remove_folder).pack(side=tk.LEFT, padx=(4, 0))
-        ttk.Label(t, text="Tipp: Ein ganzes Laufwerk (z. B. C:\\) freizugeben ist möglich – dann aber unbedingt "
-                          "„Jede Aktion bestätigen“ anlassen. PowerShell-Befehle selbst sind nicht auf die Ordner "
-                          "beschränkt.", style="Muted.TLabel", wraplength=round(600 * self.ui_scale)
-                  ).grid(row=11, column=0, columnspan=2, sticky="w", pady=(8, 0))
         t.columnconfigure(0, weight=1)
         t.rowconfigure(9, weight=1)
         self._fill_folders()
@@ -516,12 +508,8 @@ class App:
                                                                      speech.MODELS[speech.DEFAULT_MODEL]))
         self.speech_lang_var = tk.StringVar(value=next((k for k, v in speech.LANGUAGES.items()
                                                         if v == self.cfg["speech_language"]), "Deutsch"))
-        ttk.Label(t, text="Spracherkennung – läuft lokal mit whisper.cpp, nichts verlässt deinen PC.",
-                  style="Title.TLabel").grid(row=0, column=0, columnspan=2, sticky="w")
-        ttk.Label(t, text="Diktieren: 🎤 neben dem Eingabefeld klicken, sprechen, noch einmal klicken – der Text "
-                          "landet im Eingabefeld. Audiodateien (WAV, MP3, FLAC, OGG) einfach anhängen: Sie werden "
-                          "abgeschrieben und das Modell bekommt den Text.", style="Muted.TLabel", wraplength=wrap
-                  ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 12))
+        ttk.Label(t, text="Spracherkennung",
+                  style="Title.TLabel").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
         self.speech_btn = ttk.Button(t, text="Spracherkennung herunterladen / aktualisieren",
                                      command=self.download_speech)
         self.speech_btn.grid(row=2, column=0, columnspan=2, sticky="w")
@@ -534,11 +522,6 @@ class App:
             combo = ttk.Combobox(t, textvariable=var, values=values, state="readonly", width=48)
             combo.grid(row=r, column=1, sticky="w", pady=3)
             self.theme.register_combo(combo)
-        ttk.Label(t, text="Ein anderes Modell holt „herunterladen“. Auf Rechnern ohne NVIDIA-Grafikkarte läuft die "
-                          "Erkennung über den Prozessor – dann ist „small“ deutlich schneller.\n\nKommt bei der "
-                          "Aufnahme nichts an? In Windows unter Einstellungen → System → Sound → Eingabe das "
-                          "Mikrofon prüfen (und ob es am Headset stummgeschaltet ist).", style="Muted.TLabel",
-                  wraplength=wrap).grid(row=6, column=0, columnspan=2, sticky="w", pady=(12, 0))
         t.columnconfigure(1, weight=1)
 
         # ---- System-Prompt
@@ -634,7 +617,6 @@ class App:
                 rows.append((f"grp:{group}", "  " + group.upper(), "group"))
                 last = group
             rows.append((c["id"], "  " + c["title"], "chat"))
-        rows = rows or [("grp:leer", "  Noch keine Chats", "group")]
         if rows != self._tree_rows:
             tree = self.chat_tree
             self._tree_rows, self._hover, self._dots = rows, None, set()
@@ -862,7 +844,7 @@ class App:
             gb = p.stat().st_size / 1024 ** 3
             self.model_list.insert(tk.END, f"  {p.stem}   ({gb:.1f} GB)")
         if self.models:
-            self.models_info.set(f"{len(self.models)} Modelle gefunden  –  Doppelklick lädt ein Modell")
+            self.models_info.set(f"{len(self.models)} Modelle gefunden")
             self.model_combo.configure(values=[p.stem for p in self.models])
         else:
             self.models_info.set("Keine Modelle gefunden")

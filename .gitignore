@@ -1,0 +1,24 @@
+# Von Python erzeugt
+__pycache__/
+*.pyc
+
+# Persönliche Einstellungen (können einen API-Schlüssel enthalten)
+config.json
+
+# Nutzerdaten – legt Monhip beim ersten Start selbst an
+chats/
+raeume/
+modelle/
+sicherungen/
+gedaechtnis.json
+erinnerungen.json
+*.gguf
+*.part
+
+# llama.cpp und whisper.cpp – lädt Monhip passend zur Grafikkarte
+server/
+
+# Installierte Fassung (vom Installer)
+installation.json
+_update/
+Monhip.exe

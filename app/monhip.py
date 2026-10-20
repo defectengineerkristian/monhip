@@ -32,6 +32,7 @@ from widgets import ModeSwitch, scrolled
 APP_DIR = Path(__file__).resolve().parent.parent  # Code in app/, Daten daneben
 CONFIG_FILE = APP_DIR / "config.json"
 MODEL_DIR = APP_DIR / "modelle"  # wird immer durchsucht, Ziel für Downloads
+ICON_FILE = Path(__file__).resolve().with_name("monhip.ico")
 MAX_ATTACHMENTS = 10
 
 DEFAULTS = {
@@ -131,6 +132,10 @@ class App:
         except tk.TclError:
             pass
         root.title("Monhip")
+        try:
+            root.iconbitmap(default=str(ICON_FILE))  # gilt auch für alle Dialoge
+        except tk.TclError:
+            pass
         root.geometry("1250x800")
         root.minsize(900, 600)
         root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -2166,6 +2171,7 @@ if __name__ == "__main__":
     try:
         import ctypes
         ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Monhip")  # Taskleiste: eigenes Symbol statt Python
     except Exception:
         pass
     root = tk.Tk()

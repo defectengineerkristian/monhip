@@ -37,7 +37,7 @@ THEMES = {
             "think_bg": "#2c2b28", "think_fg": "#aaa69b", "link": "#ec9f80", "rule": "#45433e",
             "error": "#ff7b72", "ok": "#7ec699",
             "kw": "#cc99cd", "str": "#9fd28a", "com": "#7d7a72", "num": "#f0a45d",
-            # Namensfarben der Teilnehmer im Gruppenchat (WebFusedAgentMod)
+            # Namensfarben der Teilnehmer im Gruppenchat (Teamwork)
             "people": ["#e3896a", "#7ec699", "#8fb4f0", "#d7a0e8", "#e8c46a", "#6fd1d1"],
         },
     },

@@ -1,4 +1,4 @@
-"""WebFusedAgentMod – Netzwerkteil. RoomServer läuft beim Gastgeber (Teilnehmer, Nachrichten, nummerierte
+"""Teamwork – Netzwerkteil. RoomServer läuft beim Gastgeber (Teilnehmer, Nachrichten, nummerierte
 Ereignisse, Long-Polling bis 20 s), RoomClient bei jedem Teilnehmer, auch beim Gastgeber.
 
 Sicherheit: Jede Anfrage ist HMAC-SHA256-signiert (Methode, Pfad, Zeit, Inhalt), der Schlüssel geht nie über

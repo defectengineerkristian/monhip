@@ -7,6 +7,7 @@ weil Fremde sie auslösen könnten. Nach MAX_CHAIN KI-Nachrichten ohne Mensch re
 
 import os
 import queue
+import re
 import secrets
 import threading
 import time
@@ -14,13 +15,16 @@ import tkinter as tk
 import zlib
 from collections import deque
 from datetime import datetime
+from tkinter import font as tkfont
 from tkinter import ttk
 
 import dialogs
 import room
-from agent import Agent, describe_call, format_args, result_ok, run_conversation
+from agent import Agent, describe_call, format_args, result_ok, run_conversation, tool_budget
+from themes import mix_hex
 
 MAX_CHAIN = 6          # so viele KI-Nachrichten hintereinander, danach reagieren KIs nur noch auf Menschen
+TYPE_MS = 20           # Takt, in dem Antworten fremder KIs „getippt“ werden (kommen in Paketen alle ~0,3 s)
 CONTEXT_MESSAGES = 40  # so viele letzte Nachrichten sieht die KI höchstens
 ALL_NAMES = {"alle", "all", "kis", "everyone"}
 
@@ -80,6 +84,162 @@ class _Patcher:
                         time.sleep(1)
 
 
+class _Mentions:
+    """Vorschläge beim Tippen von „@“ im Eingabefeld (nur im Raum): kleine Liste über dem Feld mit den KIs der
+    Teilnehmer und „@alle“. ↑/↓ wählen, Enter/Tab oder Klick übernehmen, Esc schließt. Die Tasten fängt ein
+    eigener Bindtag vor dem des Feldes ab – nur solange die Liste offen ist, sonst gehen sie normal weiter."""
+
+    MAX = 8
+    TAG = "RoomMentions"
+    AT_RE = re.compile(r"(?<![\w@])@([A-Za-z0-9ÄÖÜäöüß._-]{0,24})$")  # wie room.mentions, auch schon nur „@“
+    QUIET = {"Up", "Down", "Return", "Tab", "Escape", "Shift_L", "Shift_R", "Control_L", "Control_R",
+             "Alt_L", "Alt_R"}
+
+    def __init__(self, mode: "RoomMode"):
+        self.mode, self.app = mode, mode.app
+        self.box: tk.Text = mode.app.input
+        self.frame: tk.Frame | None = None
+        self.items: list[tuple[str, str]] = []   # (KI-Name, Beschreibung)
+        self.rows: list[tuple] = []
+        self.sel = 0
+        self.key = None        # (Position des „@“, Fragment) der gezeigten Liste
+        self.closed = None     # Position des „@“, für das Esc gedrückt wurde
+        self.font = tkfont.Font(root=self.box, family="Segoe UI", size=10, weight="bold")  # Verweis halten
+        self.box.bindtags((self.TAG,) + self.box.bindtags())
+        bind = lambda seq, fn: self.box.bind_class(self.TAG, seq, fn)
+        bind("<Up>", lambda e: self._move(-1))
+        bind("<Down>", lambda e: self._move(1))
+        bind("<Return>", lambda e: self._accept(self.sel) if self.visible else None)
+        bind("<Tab>", lambda e: self._accept(self.sel) if self.visible else None)
+        bind("<Escape>", self._escape)
+        bind("<KeyRelease>", lambda e: None if e.keysym in self.QUIET else self.update())
+        bind("<ButtonRelease-1>", lambda e: self.update())
+        bind("<FocusOut>", lambda e: self.hide())
+
+    @property
+    def visible(self) -> bool:
+        return bool(self.frame and self.frame.winfo_ismapped())
+
+    def _fragment(self) -> tuple[str, str] | None:
+        """(Position des „@“, bisher getippter Name) direkt vor der Schreibmarke – oder None."""
+        m = self.AT_RE.search(self.box.get("insert linestart", "insert"))
+        if not m:
+            return None
+        return self.box.index(f"insert-{len(m.group(1)) + 1}c"), m.group(1)
+
+    def _candidates(self, frag: str) -> list[tuple[str, str]]:
+        mode = self.mode
+        me = mode.client.member if mode.client else None
+        ready = lambda m: bool(m.get("online") and m.get("ai_ready"))
+        out = []
+        for m in sorted(mode.members.values(), key=lambda m: (not ready(m), m["ai"].lower())):
+            sub = "deine KI" if m["id"] == me else f"KI von {m['name']}"
+            if not m.get("online"):
+                sub += "  ·  offline"
+            elif not m.get("ai_ready"):
+                sub += "  ·  kein Modell geladen"
+            elif m.get("model"):
+                sub += f"  ·  {m['model']}"
+            out.append((m["ai"], sub))
+        if len(out) > 1:
+            out.append(("alle", "alle KIs im Raum"))
+        f = frag.lower()
+        hits = [c for c in out if c[0].lower().startswith(f)]
+        hits += [c for c in out if f and f in c[0].lower() and c not in hits]
+        if len(hits) == 1 and hits[0][0].lower() == f:
+            return []  # schon vollständig getippt – Enter soll dann senden
+        return hits[:self.MAX]
+
+    def update(self):
+        found = self._fragment() if self.app.mode == "room" and self.mode.client else None
+        if not found or found[0] == self.closed:
+            if not found:
+                self.closed = None
+            self.hide()
+            return
+        if self.visible and found == self.key:
+            return
+        items = self._candidates(found[1])
+        if not items:
+            self.hide()
+            return
+        self.key, self.items, self.sel = found, items, 0
+        self._show()
+
+    def hide(self):
+        if self.frame:
+            self.frame.place_forget()
+        self.key = None
+
+    def _show(self):
+        app, s = self.app, lambda v: round(v * self.app.ui_scale)
+        col = app.theme_chat()
+        bg = col["code_hdr"]
+        if self.frame is None:
+            self.frame = tk.Frame(app.root, padx=1, pady=1)   # 1 px Rahmen
+        self.frame.configure(background=col["rule"])
+        for w in self.frame.winfo_children():
+            w.destroy()
+        inner = tk.Frame(self.frame, background=bg, padx=s(4), pady=s(4))
+        inner.pack(fill=tk.BOTH)
+        self.rows = []
+        bold = self.font
+        width = -(-max(bold.measure(f"@{n}") for n, _ in self.items) // bold.measure("0"))  # Zeichen, aufgerundet
+        for i, (name, sub) in enumerate(self.items):
+            row = tk.Frame(inner, background=bg, cursor="hand2", padx=s(8), pady=s(4))
+            row.pack(fill=tk.X)
+            a = tk.Label(row, text=f"@{name}", font=bold, background=bg, foreground=col["fg"], width=width,
+                         anchor="w")  # gleich breit → Beschreibungen stehen bündig
+            b = tk.Label(row, text=sub, font=("Segoe UI", 9), background=bg, foreground=col["muted"])
+            a.pack(side=tk.LEFT)
+            b.pack(side=tk.LEFT, padx=(s(10), 0))
+            for w in (row, a, b):
+                w.bind("<Button-1>", lambda e, i=i: self._accept(i))
+                w.bind("<Enter>", lambda e, i=i: self._select(i))
+            self.rows.append((row, a, b))
+        self._select(self.sel)
+        # über dem Eingabefeld, links an der Stelle des „@“
+        root, field = app.root, self.box.master
+        self.frame.update_idletasks()
+        bbox = self.box.bbox(self.key[0]) or (0, 0, 0, 0)
+        x = self.box.winfo_rootx() - root.winfo_rootx() + bbox[0] - s(10)
+        x = max(s(8), min(x, root.winfo_width() - self.frame.winfo_reqwidth() - s(8)))
+        y = field.winfo_rooty() - root.winfo_rooty() - s(6)
+        self.frame.place(x=x, y=y, anchor="sw")
+        self.frame.lift()
+
+    def _select(self, i: int):
+        col = self.app.theme_chat()
+        self.sel = i
+        for k, widgets in enumerate(self.rows):
+            color = mix_hex(col["code_hdr"], col["accent"], 0.22) if k == i else col["code_hdr"]
+            for w in widgets:
+                w.configure(background=color)
+
+    def _move(self, step: int):
+        if not self.visible:
+            return None
+        self._select((self.sel + step) % len(self.items))
+        return "break"
+
+    def _accept(self, i: int):
+        if not self.key or i >= len(self.items):
+            return "break"
+        start = self.key[0]
+        self.box.delete(start, "insert")
+        self.box.insert(start, f"@{self.items[i][0]} ")
+        self.box.focus_set()
+        self.hide()
+        return "break"
+
+    def _escape(self, _e=None):
+        if not self.visible:
+            return None
+        self.closed = self.key[0]
+        self.hide()
+        return "break"
+
+
 class RoomMode:
     def __init__(self, app, side_parent, view):
         self.app, self.view = app, view
@@ -93,6 +253,8 @@ class RoomMode:
         self.slots: dict[str, str] = {}           # Nachrichten-ID → Slot in der Ansicht
         self.tools_shown: dict[str, int] = {}
         self.local: dict[str, dict] = {}          # Nonce → Antwort der eigenen KI (lokal dargestellt)
+        self.typing: dict[str, dict] = {}         # Nachrichten-ID → noch zu zeigende Teile fremder Antworten
+        self._type_job = None
         self.local_ids: set[str] = set()
         self.live_seq: int | None = None          # erst Ereignisse danach lösen die eigene KI aus
         self.queue: deque = deque()
@@ -106,6 +268,7 @@ class RoomMode:
         self.panel = ttk.Frame(side_parent, style="Sidebar.TFrame", padding=(10, 4, 10, 6))
         self.panel.pack(fill=tk.BOTH, expand=True)
         self.member_tree = None
+        self.mentions = _Mentions(self)
         self.refresh_panel()
         self.show_placeholder()
 
@@ -574,6 +737,7 @@ class RoomMode:
     # ================================================================ Darstellung
 
     def show_placeholder(self):
+        self.typing.clear()
         self.view.placeholder("Teamwork", "Links einen Raum erstellen oder beitreten. Eine KI antwortet, wenn du sie "
                                           "mit @Name ansprichst – @alle fragt alle KIs.")
 
@@ -581,6 +745,7 @@ class RoomMode:
         v = self.view
         v.clear()
         self.slots, self.tools_shown = {}, {}
+        self.typing.clear()  # alles bisher Empfangene steht in m["text"] und wird gleich ganz gezeichnet
         if not self.client:
             self.show_placeholder()
             return
@@ -588,13 +753,14 @@ class RoomMode:
         if not self.order and not self.local:
             v.placeholder(f"Raum „{self.info['room']}“", "Noch keine Nachrichten. Sprich eine KI mit @Name an.")
             return
-        for mid in self.order:
-            if mid not in running:  # gerade laufende eigene Antworten bekommen unten einen neuen Platz
-                self._render(self.messages[mid])
-        for loc in self.local.values():
-            loc["slot"], loc["think"], loc["tool"] = self._new_ai_slot(), None, None
-            if loc.get("id"):
-                self.slots[loc["id"]] = loc["slot"]
+        with v.batch():
+            for mid in self.order:
+                if mid not in running:  # gerade laufende eigene Antworten bekommen unten einen neuen Platz
+                    self._render(self.messages[mid])
+            for loc in self.local.values():
+                loc["slot"], loc["think"], loc["tool"] = self._new_ai_slot(), None, None
+                if loc.get("id"):
+                    self.slots[loc["id"]] = loc["slot"]
         v.scroll_end()
 
     def _render(self, m: dict):
@@ -605,7 +771,7 @@ class RoomMode:
         files = [{"name": f["name"], "info": f.get("info", "")} for f in m.get("files") or []]
         if m["kind"] == "human":
             if mine:
-                v.user(m["text"], files or None)
+                v.user(m["text"], files or None, actions={})  # nur „Kopieren“
             else:
                 v.sender(m["name"], self._time(m), self._color(m.get("owner") or m["name"]))
                 v.other(m["text"], files or None)
@@ -621,34 +787,82 @@ class RoomMode:
             if m["text"]:
                 v.md_append(m["text"])
             if m.get("done"):
-                v.md_finish()
+                self._footer(m["text"])
             else:
                 v.show_pending("schreibt …")
 
-    def _render_patch(self, m: dict, ev: dict):
-        sid = self.slots.get(m["id"])
-        if not sid:
-            return
+    def _footer(self, text: str):
+        """„⧉ Kopieren“ unter einer fertigen KI-Antwort (im aktuellen Slot)."""
         v = self.view
-        with v.slot(sid):
-            tools = m.get("tools") or []
-            shown = self.tools_shown.get(m["id"], 0)
-            # Werkzeugzeilen erst zeigen, wenn ihr Ergebnis (✓/✗) feststeht – bzw. spätestens am Ende
-            ready = shown
-            while ready < len(tools) and (tools[ready].get("ok") is not None or ev.get("done")):
-                ready += 1
-            if ready > shown:
-                v.hide_pending()
-                for t in tools[shown:ready]:
-                    v.tool_line(t.get("icon", "▤"), t.get("label", ""), t.get("detail", ""), t.get("ok"))
-                self.tools_shown[m["id"]] = ready
-                if not ev.get("done") and not ev.get("append"):
-                    v.show_pending("schreibt …")
-            if ev.get("append"):
-                v.md_append(ev["append"])
-            if ev.get("done"):
-                v.hide_pending()
-                v.md_finish()
+        v.md_finish()
+        if text.strip():
+            v.footer(text.strip())
+
+    def _render_patch(self, m: dict, ev: dict):
+        """Fortsetzung einer fremden Antwort. Nicht sofort zeichnen, sondern in die Warteschlange: _type_step
+        gibt den Text gleichmäßig aus, statt alle 0,3 s einen Sprung zu machen."""
+        if not self.slots.get(m["id"]):
+            return
+        tools = m.get("tools") or []
+        shown = self.tools_shown.get(m["id"], 0)
+        # Werkzeugzeilen erst zeigen, wenn ihr Ergebnis (✓/✗) feststeht – bzw. spätestens am Ende
+        ready = shown
+        while ready < len(tools) and (tools[ready].get("ok") is not None or ev.get("done")):
+            ready += 1
+        if ready > shown:
+            self._type(m["id"], ("tools", [dict(t) for t in tools[shown:ready]],
+                                 not ev.get("done") and not ev.get("append")))
+            self.tools_shown[m["id"]] = ready
+        if ev.get("append"):
+            self._type(m["id"], ("text", ev["append"]))
+        if ev.get("done"):
+            self._type(m["id"], ("done",))
+
+    def _type(self, mid: str, op: tuple):
+        entry = self.typing.setdefault(mid, {"ops": deque(), "gen": self.view.gen})
+        entry["ops"].append(op)
+        if not self._type_job:
+            self._type_job = self.app.root.after(TYPE_MS, self._type_step)
+
+    def _type_step(self):
+        """Ein Takt: von jeder laufenden fremden Antwort ein Stück – je größer der Rückstand, desto mehr."""
+        self._type_job = None
+        v = self.view
+        for mid, entry in list(self.typing.items()):
+            ops, m, sid = entry["ops"], self.messages.get(mid), self.slots.get(mid)
+            if not m or not sid or entry["gen"] != v.gen:  # Ansicht inzwischen neu aufgebaut
+                del self.typing[mid]
+                continue
+            backlog = sum(len(op[1]) for op in ops if op[0] == "text")
+            budget = max(4, -(-backlog // 8))
+            with v.slot(sid):
+                while ops:
+                    op = ops[0]
+                    if op[0] == "text":
+                        if budget <= 0:
+                            break
+                        piece = op[1][:budget]
+                        budget -= len(piece)
+                        if len(piece) < len(op[1]):
+                            ops[0] = ("text", op[1][len(piece):])
+                        else:
+                            ops.popleft()
+                        v.md_append(piece)
+                    elif op[0] == "tools":
+                        ops.popleft()
+                        v.hide_pending()
+                        for t in op[1]:
+                            v.tool_line(t.get("icon", "▤"), t.get("label", ""), t.get("detail", ""), t.get("ok"))
+                        if op[2]:
+                            v.show_pending("schreibt …")
+                    else:  # fertig
+                        ops.popleft()
+                        v.hide_pending()
+                        self._footer(m["text"])
+            if not ops:
+                del self.typing[mid]
+        if self.typing:
+            self._type_job = self.app.root.after(TYPE_MS, self._type_step)
 
     # ================================================================ Eigene KI
 
@@ -712,14 +926,18 @@ class RoomMode:
         self.ai_stop.clear()
         nonce = secrets.token_hex(6)
         self.local[nonce] = {"slot": self._new_ai_slot(), "id": None, "think": None, "tool": None,
-                             "finished": False}
+                             "finished": False, "parts": [""]}  # parts: Antworttext je Schritt (für „Kopieren“)
         agent = self._agent(trigger)
         system = self._system_prompt(agent)
         messages = [{"role": "system", "content": system}] + self._context(trigger["id"])
         client = self.client
         self._bg(lambda: client.update_member(busy=True))
         self.refresh_panel()
-        threading.Thread(target=self._ai_worker, args=(nonce, messages, params, agent, app.server.base_url),
+        try:
+            budget = tool_budget(int(app.ctx_var.get()))
+        except ValueError:
+            budget = tool_budget(16384)
+        threading.Thread(target=self._ai_worker, args=(nonce, messages, params, agent, app.server.base_url, budget),
                          daemon=True).start()
 
     def _agent(self, trigger: dict):
@@ -792,7 +1010,7 @@ class RoomMode:
             merged.insert(0, {"role": "user", "content": "[Bisheriger Verlauf des Gruppenchats]"})
         return merged
 
-    def _ai_worker(self, nonce, messages, params, agent, base_url):
+    def _ai_worker(self, nonce, messages, params, agent, base_url, budget=None):
         def emit(kind, data=None):
             self._put("room_ai", (nonce, kind, data))
 
@@ -826,7 +1044,7 @@ class RoomMode:
             emit(kind, data)
 
         try:
-            run_conversation(base_url, messages, params, agent, self.ai_stop, on_event)
+            run_conversation(base_url, messages, params, agent, self.ai_stop, on_event, budget=budget)
         except Exception as e:
             emit("error", str(e))
             patcher.add(f"\n\n*(Fehler auf dem Rechner von {self.me.get('name', '?')}: {e})*")
@@ -836,10 +1054,30 @@ class RoomMode:
         emit("done")
 
     def on_ai_event(self, data):
+        """Ereignisse der eigenen KI sammeln und gebündelt zeichnen (after_idle): ein Modell liefert Text in
+        einzelnen Tokens – so wird pro Durchlauf der Ereignisschleife nur einmal neu gezeichnet."""
         nonce, kind, payload = data
         loc = self.local.get(nonce)
         if not loc:
             return
+        q = loc.setdefault("events", [])
+        if q and kind in ("content", "reasoning") and q[-1][0] == kind:
+            q[-1] = (kind, q[-1][1] + payload)
+        else:
+            q.append((kind, payload))
+        if not loc.get("job"):
+            loc["job"] = self.app.root.after_idle(lambda: self._flush_ai(nonce))
+
+    def _flush_ai(self, nonce: str):
+        loc = self.local.get(nonce)
+        if not loc:
+            return
+        loc["job"] = None
+        events, loc["events"] = loc.get("events", []), []
+        for kind, payload in events:
+            self._ai_event(nonce, loc, kind, payload)
+
+    def _ai_event(self, nonce: str, loc: dict, kind: str, payload):
         v = self.view
         with v.slot(loc["slot"]):
             if kind == "id":
@@ -849,7 +1087,7 @@ class RoomMode:
             elif kind == "reasoning":
                 if loc["think"] is None:
                     if not payload.strip():
-                        return
+                        return  # nur Leerzeichen: (noch) keinen Block anlegen
                     loc["think"] = v.think_begin()
                 v.think_append(loc["think"], payload)
             elif kind in ("content", "tool_call", "tool_result", "error", "done", "assistant_start"):
@@ -858,6 +1096,7 @@ class RoomMode:
                     loc["think"] = None
                 if kind == "content":
                     v.md_append(payload)
+                    loc["parts"][-1] += payload
                 elif kind == "tool_call":
                     icon, label, detail = describe_call(*payload)
                     loc["tool"] = v.tool_begin(label, detail, format_args(payload[1]), icon)
@@ -869,9 +1108,10 @@ class RoomMode:
                 elif kind == "assistant_start":
                     v.md_finish()
                     v.show_pending("denkt nach …")
+                    loc["parts"].append("")
                 elif kind == "done":
                     v.hide_pending()
-                    v.md_finish()
+                    self._footer("\n\n".join(p.strip() for p in loc["parts"] if p.strip()))
         if kind == "done":
             loc["finished"] = True
             self.local.pop(nonce, None)

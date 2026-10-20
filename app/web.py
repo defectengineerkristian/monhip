@@ -5,6 +5,8 @@ import ipaddress
 import json
 import re
 import socket
+import threading
+import time
 import urllib.parse
 import urllib.request
 from html.parser import HTMLParser
@@ -152,7 +154,17 @@ def tidy(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 
 
-def fetch(url: str, max_chars: int = 8000) -> str:
+CACHE_SECS, CACHE_MAX = 600, 8
+_pages: dict[str, tuple[float, str, str, str]] = {}  # URL → (Zeit, Quelle, Titel, Text): Weiterlesen ohne Neuladen
+_pages_lock = threading.Lock()                       # Chat und eigene KI im Raum können gleichzeitig abrufen
+
+
+def _page(url: str) -> tuple[str, str, str]:
+    """(Quelle nach Weiterleitungen, Titel, Text) einer Seite – 10 Minuten zwischengespeichert."""
+    with _pages_lock:
+        hit = _pages.get(url)
+    if hit and time.time() - hit[0] < CACHE_SECS:
+        return hit[1:]
     _check_public(url)
     body, ctype, final = _get(url)
     if "html" in ctype:
@@ -160,7 +172,29 @@ def fetch(url: str, max_chars: int = 8000) -> str:
     elif ctype.startswith("text/") or "json" in ctype or "xml" in ctype:
         text, title = tidy(body), ""
     else:
-        return f"Inhaltstyp {ctype} kann nicht als Text gelesen werden."
-    if len(text) > max_chars:
-        text = text[:max_chars] + f"\n…(gekürzt, {len(text)} Zeichen insgesamt)"
-    return f"Quelle: {final}\nTitel: {title}\n\n{text}"
+        raise ValueError(f"Inhaltstyp {ctype} kann nicht als Text gelesen werden.")
+    with _pages_lock:
+        _pages[url] = (time.time(), final, title, text)
+        while len(_pages) > CACHE_MAX:
+            _pages.pop(next(iter(_pages)))
+    return final, title, text
+
+
+def fetch(url: str, max_chars: int = 8000, start: int = 0) -> str:
+    """Text einer Seite ab Zeichen start, höchstens max_chars – geschnitten an einem Zeilen- bzw. Wortende; der
+    Hinweis am Ende nennt den nächsten start."""
+    final, title, text = _page(url)
+    total = len(text)
+    start = max(0, min(int(start), total))
+    end = min(total, start + max_chars)
+    if end < total:
+        cut = text.rfind("\n", start + max_chars // 2, end)
+        if cut < 0:
+            cut = text.rfind(" ", start + max_chars // 2, end)
+        if cut > 0:
+            end = cut + 1
+    head = f"Quelle: {final}\nTitel: {title}\n\n"
+    if start == 0 and end == total:
+        return head + text
+    more = f" – weiter mit start={end}" if end < total else " – Ende der Seite"
+    return head + text[start:end].rstrip() + f"\n…(Zeichen {start}–{end} von {total}{more})"

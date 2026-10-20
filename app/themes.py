@@ -3,8 +3,12 @@
 Neue Designs: einfach einen weiteren Eintrag in THEMES mit denselben Schlüsseln anlegen.
 """
 
+import base64
+import math
+import struct
 import sys
 import tkinter as tk
+import zlib
 from tkinter import font as tkfont
 from tkinter import ttk
 
@@ -140,6 +144,64 @@ def _draw_checkbox(img: tk.PhotoImage, size: int, bg: str, border: str, fill: st
     img.put(" ".join(rows), to=(0, 0))
 
 
+def _png(w: int, h: int, rows: list[bytes]) -> str:
+    """PNG (RGB, base64) aus fertigen Bildzeilen."""
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+    raw = b"".join(b"\x00" + row for row in rows)
+    data = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+    return base64.b64encode(data).decode("ascii")
+
+
+def _pixels(w: int, h: int, color) -> list[bytes]:
+    """Bildzeilen aus color(x, y) -> (r, g, b), abgefragt in den Pixelmitten."""
+    return [bytes(c for x in range(w) for c in color(x + 0.5, y + 0.5)) for y in range(h)]
+
+
+def _rounded_png(r: int, mid: int, fill: str, border: str, under: str, bw: float) -> str:
+    """Rechteck mit runden, kantengeglätteten Ecken auf der Farbe under – als Vorlage für ein 9-Teile-Bildelement
+    (Rand r + 1). Bewusst undurchsichtig: halbtransparente Bilder mischt Tk unter Windows bei jedem Zeichnen neu.
+    Die Mitte ist mid Pixel groß, weil ttk sie kachelt statt dehnt – bei 1 Pixel wären das zehntausende
+    Zeichenaufrufe je Feld (Chatfeld: 2,7 s statt 0,1 ms)."""
+    fill_c, border_c, under_c = _rgb(fill), _rgb(border), _rgb(under)
+    k = r + 1
+    half = k + 0.5  # kleines Bild: 2k + 1 Pixel, Spalte/Zeile k ist die gerade Mitte
+
+    def color(x, y):
+        qx, qy = abs(x - half) - (half - r), abs(y - half) - (half - r)
+        d = math.hypot(max(qx, 0), max(qy, 0)) + min(max(qx, qy), 0) - r
+        outer = max(0.0, min(1.0, 0.5 - d))
+        if not outer:
+            return under_c
+        inner = max(0.0, min(1.0, 0.5 - (d + bw)))
+        return _mix(under_c, _mix(border_c, fill_c, inner / outer), outer)
+
+    small = _pixels(2 * k + 1, 2 * k + 1, color)
+    rows = [row[:3 * k] + row[3 * k:3 * k + 3] * mid + row[3 * k + 3:] for row in small]
+    rows = rows[:k] + rows[k:k + 1] * mid + rows[k + 1:]
+    return _png(2 * k + mid, 2 * k + mid, rows)
+
+
+def _chevron_png(w: int, h: int, x0: float, y0: float, aw: float, ah: float, color: str, under: str,
+                 stroke: float) -> str:
+    """Pfeil „⌄“ (Aufklappen) auf der Farbe under."""
+    col, under_c = _rgb(color), _rgb(under)
+    pts = ((x0, y0), (x0 + aw / 2, y0 + ah), (x0 + aw, y0))
+
+    def dist(px, py, a, b):
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        t = max(0.0, min(1.0, ((px - a[0]) * dx + (py - a[1]) * dy) / (dx * dx + dy * dy)))
+        return math.hypot(px - a[0] - t * dx, py - a[1] - t * dy)
+
+    def color(x, y):
+        d = min(dist(x, y, pts[0], pts[1]), dist(x, y, pts[1], pts[2]))
+        return _mix(under_c, col, max(0.0, min(1.0, stroke / 2 + 0.5 - d)))
+
+    return _png(w, h, _pixels(w, h, color))
+
+
 def _colorref(hex_color: str) -> int:
     """#RRGGBB -> Windows COLORREF (0x00BBGGRR)."""
     r, g, b = (int(hex_color[i:i + 2], 16) for i in (1, 3, 5))
@@ -217,6 +279,7 @@ class ThemeManager:
         self._combos: list[ttk.Combobox] = []
         self._menus: list[tk.Menu] = []
         self._windows: list[tk.Misc] = [root]
+        self._fields: list[ttk.Frame] = []
         self._orig: dict[str, dict] = {}
         self._roles: dict[str, str] = {}
         self._root_bg = root.cget("background")
@@ -227,6 +290,10 @@ class ThemeManager:
         self._img_off = tk.PhotoImage(master=root, width=self._check_size, height=self._check_size)
         self._img_on = tk.PhotoImage(master=root, width=self._check_size, height=self._check_size)
         self._check_element = False
+        # Abgerundete Bildelemente (Knöpfe, Felder, Kärtchen): Bilder werden beim Designwechsel neu gemalt
+        self.scale = max(1.0, float(root.tk.call("tk", "scaling")) / 1.333)
+        self._images: dict[str, tk.PhotoImage] = {}
+        self._elements: set[str] = set()
 
     # ------------------------------------------------------------ Registrierung
 
@@ -234,7 +301,8 @@ class ThemeManager:
         self._orig[str(w)] = {k: w.cget(k) for k in opts}
 
     def register_text(self, w: tk.Text, role: str = "field"):
-        """role "field": Eingabefeld mit Rahmen, "plain": randlos auf dem Hintergrund (Chatverlauf)."""
+        """role "field": Eingabefeld mit Rahmen, "plain": randlos auf dem Hintergrund (Chatverlauf),
+        "inner": randlos in einem abgerundeten Rahmen (register_field)."""
         self._remember(w, TEXT_OPTS)
         self._roles[str(w)] = role
         self._texts.append(w)
@@ -257,6 +325,16 @@ class ThemeManager:
         self._combos.append(cb)
         self._style_combo(cb)
         return cb
+
+    def register_field(self, frame: ttk.Frame, w: tk.Text):
+        """Textfeld mit runden Ecken: frame (Stil „Input.TFrame“) zeichnet Fläche und Rand, w liegt randlos darin."""
+        w.bind("<FocusIn>", lambda e: frame.state(["focus"]), add="+")
+        w.bind("<FocusOut>", lambda e: frame.state(["!focus"]), add="+")
+        frame.bind("<Button-1>", lambda e: w.focus_set())
+        self._fields.append(frame)
+        self.register_text(w, role="inner")
+        self._style_field(frame)
+        return w
 
     def register_window(self, win: tk.Toplevel):
         self._windows.append(win)
@@ -306,10 +384,10 @@ class ThemeManager:
             s.configure("SidebarTitle.TLabel", font=(FONT[0], 11, "bold"))
             s.configure("SidebarOk.TLabel", foreground="#26a269", font=(FONT[0], 8))
             s.configure("SidebarWarn.TLabel", foreground="#c01c28", font=(FONT[0], 8))
-            s.configure("Attach.TButton", font=(FONT[0], 15), padding=(6, 0))
+            s.configure("Attach.TButton", font=(FONT[0], 14), padding=(6, 0))
         for lst, fn in ((self._texts, self._style_text), (self._lists, self._style_list),
                         (self._combos, self._style_combo), (self._menus, self._style_menu),
-                        (self._windows, self._style_window)):
+                        (self._windows, self._style_window), (self._fields, self._style_field)):
             lst[:] = [w for w in lst if self._alive(w)]
             for w in lst:
                 fn(w)
@@ -336,11 +414,15 @@ class ThemeManager:
         if not p:
             w.configure(**self._orig[str(w)])
             return
-        plain = self._roles.get(str(w)) == "plain"
-        w.configure(background=p["bg"] if plain else p["surface"], foreground=p["fg"], insertbackground=p["fg"],
-                    selectbackground=p["select_bg"], selectforeground=p["select_fg"],
-                    highlightthickness=0 if plain else 1, highlightbackground=p["border"],
+        role = self._roles.get(str(w))
+        w.configure(background=p["bg"] if role == "plain" else p["surface"], foreground=p["fg"],
+                    insertbackground=p["fg"], selectbackground=p["select_bg"], selectforeground=p["select_fg"],
+                    highlightthickness=1 if role == "field" else 0, highlightbackground=p["border"],
                     highlightcolor=p["accent"], borderwidth=0, relief=tk.FLAT)
+
+    def _style_field(self, frame: ttk.Frame):
+        # Abstand zum runden Rand, damit das eckige Textfeld nicht über die Ecken ragt; „system“ bleibt nativ
+        frame.configure(padding=round(5 * self.scale) if self.pal else 0)
 
     def _style_menu(self, m: tk.Menu):
         p = self.pal
@@ -376,6 +458,35 @@ class ThemeManager:
         except tk.TclError:
             pass
 
+    def _image(self, name: str, data: str) -> tk.PhotoImage:
+        """Bild anlegen bzw. neu malen – die Elemente behalten so dasselbe Bild über Designwechsel hinweg."""
+        img = self._images.get(name)
+        if img is None:
+            img = self._images[name] = tk.PhotoImage(master=self.root, data=data, format="png")
+        else:
+            img.configure(data=data, format="png")
+        return img
+
+    def _round(self, element: str, r: float, under: str, looks: list, padding=1):
+        """Abgerundetes, mitwachsendes Bildelement. under = Farbe hinter dem Element (füllt die Ecken);
+        looks = [(zustand, füllung, rand), …]: der erste passende Zustand gewinnt, der letzte (None) ist normal."""
+        r = max(2, round(r * self.scale))
+        bw = max(1, round(self.scale))
+        imgs = [(state, self._image(f"{element}:{i}", _rounded_png(r, 64, fill, border, under, bw)))
+                for i, (state, fill, border) in enumerate(looks)]
+        if element not in self._elements:
+            # width/height: Mindestgröße – sonst wäre jeder Knopf so groß wie das Bild mit seiner breiten Mitte
+            self.style.element_create(element, "image", imgs[-1][1], *imgs[:-1], border=r + 1, padding=padding,
+                                      sticky="nsew", width=2 * r + 3, height=2 * r + 3)
+            self._elements.add(element)
+
+    def _round_button(self, style: str, element: str, r: float, under: str, looks: list):
+        """Knopf-Stil mit runden Ecken (die Fläche malt das Bild, Hintergrund-Optionen spielen keine Rolle)."""
+        self._round(element, r, under, looks)
+        self.style.layout(style, [(element, {"sticky": "nswe", "children": [
+            ("Button.padding", {"sticky": "nswe", "children": [
+                ("Button.label", {"sticky": "nswe"})]})]})])
+
     def _style_ttk(self, p: dict):
         s = self.style
         s.theme_use("clam")
@@ -392,35 +503,51 @@ class ThemeManager:
         s.configure("TLabel", background=p["bg"], foreground=p["fg"])
         s.configure("Muted.TLabel", foreground=p["muted"])
 
-        # Knöpfe
-        s.configure("TButton", background=p["raised"], foreground=p["fg"], bordercolor=p["border"],
-                    lightcolor=p["raised"], darkcolor=p["raised"], focuscolor=p["raised"],
-                    focusthickness=0, padding=(10, 3), anchor="center")
-        state_bg = [("disabled", p["bg"]), ("pressed", p["border"]), ("active", p["hover"])]
-        s.map("TButton", background=state_bg, lightcolor=state_bg, darkcolor=state_bg,
-              foreground=[("disabled", p["muted"])], bordercolor=[("focus", p["accent"])])
-        s.configure("Accent.TButton", background=p["accent"], foreground=p["accent_fg"],
-                    bordercolor=p["accent"], lightcolor=p["accent"], darkcolor=p["accent"],
-                    focuscolor=p["accent"], font=(FONT[0], 9, "bold"))
-        accent_bg = [("disabled", p["raised"]), ("pressed", p["accent_hover"]), ("active", p["accent_hover"])]
-        s.map("Accent.TButton", background=accent_bg, lightcolor=accent_bg, darkcolor=accent_bg,
-              bordercolor=accent_bg, foreground=[("disabled", p["muted"])])
+        # Knöpfe mit runden Ecken (Bildelemente, Ecken in der Farbe dahinter)
+        s.configure("TButton", foreground=p["fg"], padding=(10, 3), anchor="center")
+        s.map("TButton", foreground=[("disabled", p["muted"])])
+        self._round_button("TButton", "MS.Button.border", 7, p["bg"], [
+            ("disabled", p["bg"], p["border"]), ("pressed", p["border"], p["border"]),
+            ("active", p["hover"], p["hover"]), ("focus", p["raised"], p["accent"]),
+            (None, p["raised"], p["border"])])
+        s.configure("Accent.TButton", foreground=p["accent_fg"], font=(FONT[0], 9, "bold"))
+        s.map("Accent.TButton", foreground=[("disabled", p["muted"])])
+        self._round_button("Accent.TButton", "MS.Accent.border", 7, p["bg"], [
+            ("disabled", p["raised"], p["raised"]), ("pressed", p["accent_hover"], p["accent_hover"]),
+            ("active", p["accent_hover"], p["accent_hover"]), (None, p["accent"], p["accent"])])
 
-        # Eingabefelder
-        s.configure("TEntry", fieldbackground=p["surface"], foreground=p["fg"], insertcolor=p["fg"],
-                    bordercolor=p["border"], lightcolor=p["surface"], darkcolor=p["surface"], padding=(5, 2))
-        s.map("TEntry", bordercolor=[("focus", p["accent"])], lightcolor=[("focus", p["accent"])],
-              fieldbackground=[("disabled", p["bg"])])
-        s.configure("TCombobox", fieldbackground=p["surface"], background=p["raised"], foreground=p["fg"],
-                    arrowcolor=p["fg"], bordercolor=p["border"], lightcolor=p["surface"],
-                    darkcolor=p["surface"], padding=(5, 2))
+        # Eingabefelder und Auswahllisten: gemeinsamer runder Rahmen, Rand beim Darüberfahren heller
+        self._round("MS.Field.field", 7, p["bg"], [
+            ("disabled", p["bg"], p["border"]), ("focus", p["surface"], p["accent"]),
+            ("hover", p["surface"], mix_hex(p["border"], p["muted"], 0.45)), (None, p["surface"], p["border"])])
+        s.configure("TEntry", foreground=p["fg"], insertcolor=p["fg"], padding=(5, 2))
+        s.layout("TEntry", [("MS.Field.field", {"sticky": "nswe", "children": [
+            ("Entry.padding", {"sticky": "nswe", "children": [
+                ("Entry.textarea", {"sticky": "nswe"})]})]})])
+        # Pfeil „⌄“ statt des eckigen Pfeilknopfs (auf der Feldfarbe; gesperrt ist das Feld so hell wie bg)
+        k = self.scale
+        aw, ah, left, right = 9 * k, 4.5 * k, 4 * k, 9 * k
+        w, h = round(aw + left + right), round(ah + 6 * k)
+        arrows = [self._image(f"MS.Combobox.downarrow:{i}",
+                              _chevron_png(w, h, left, 3 * k, aw, ah, color, under, 1.4 * k))
+                  for i, (color, under) in enumerate(((mix_hex(p["muted"], p["bg"], 0.4), p["bg"]),
+                                                      (p["muted"], p["surface"])))]
+        if "MS.Combobox.downarrow" not in self._elements:
+            s.element_create("MS.Combobox.downarrow", "image", arrows[1], ("disabled", arrows[0]), sticky="")
+            self._elements.add("MS.Combobox.downarrow")
+        s.configure("TCombobox", foreground=p["fg"], padding=(5, 2))
+        s.layout("TCombobox", [("MS.Field.field", {"sticky": "nswe", "children": [
+            ("MS.Combobox.downarrow", {"side": "right", "sticky": ""}),
+            ("Combobox.padding", {"expand": "1", "sticky": "nswe", "children": [
+                ("Combobox.textarea", {"sticky": "nswe"})]})]})])
         s.map("TCombobox", fieldbackground=[("readonly", p["surface"])], foreground=[("readonly", p["fg"])],
-              selectbackground=[("readonly", p["surface"])], selectforeground=[("readonly", p["fg"])],
-              background=[("active", p["hover"]), ("pressed", p["hover"])],
-              bordercolor=[("focus", p["accent"])], lightcolor=[("focus", p["accent"])],
-              arrowcolor=[("disabled", p["muted"])])
+              selectbackground=[("readonly", p["surface"])], selectforeground=[("readonly", p["fg"])])
         s.configure("ComboboxPopdownFrame", background=p["surface"], bordercolor=p["border"],
                     relief="solid", borderwidth=1)
+        # Großes Eingabefeld im Chat (Rahmen um ein tk.Text, siehe register_field)
+        self._round("MS.Input.field", 12, p["bg"], [("focus", p["surface"], p["accent"]),
+                                                    (None, p["surface"], p["border"])])
+        s.layout("Input.TFrame", [("MS.Input.field", {"sticky": "nswe"})])
 
         # Häkchen (eigene Grafik statt des Kreuzes von "clam")
         n = self._check_size
@@ -473,10 +600,10 @@ class ThemeManager:
         sb = p["sidebar"]
         s.configure("Sidebar.TFrame", background=sb)
         s.configure("Sidebar.TLabel", background=sb, foreground=p["muted"], font=(FONT[0], 8, "bold"))
-        s.configure("Sidebar.TButton", background=sb, foreground=p["fg"], bordercolor=sb, lightcolor=sb,
-                    darkcolor=sb, focuscolor=sb, anchor="w", padding=(10, 6), font=(FONT[0], 10))
-        side_bg = [("pressed", p["side_sel"]), ("active", p["side_hover"])]
-        s.map("Sidebar.TButton", background=side_bg, lightcolor=side_bg, darkcolor=side_bg, bordercolor=side_bg)
+        s.configure("Sidebar.TButton", foreground=p["fg"], anchor="w", padding=(10, 6), font=(FONT[0], 10))
+        self._round_button("Sidebar.TButton", "MS.Sidebar.border", 8, sb, [
+            ("pressed", p["side_sel"], p["side_sel"]), ("active", p["side_hover"], p["side_hover"]),
+            (None, sb, sb)])
         s.configure("Sidebar.Treeview", background=sb, fieldbackground=sb, foreground=p["fg"], bordercolor=sb,
                     lightcolor=sb, darkcolor=sb, rowheight=self.row_height, font=(FONT[0], 10), borderwidth=0)
         s.map("Sidebar.Treeview", background=[("selected", p["side_sel"])], foreground=[("selected", p["fg"])])
@@ -501,13 +628,14 @@ class ThemeManager:
 
         # Anhänge über dem Eingabefeld („Kärtchen“) und Büroklammer-Knopf
         chip = p["raised"]
-        s.configure("Chip.TFrame", background=chip, relief="flat", borderwidth=0)
+        self._round("MS.Chip.field", 8, p["bg"], [(None, chip, chip)], padding=0)
+        s.configure("Chip.TFrame", relief="flat", borderwidth=0)
+        s.layout("Chip.TFrame", [("MS.Chip.field", {"sticky": "nswe"})])
         s.configure("Chip.TLabel", background=chip, foreground=p["fg"], font=(FONT[0], 9))
         s.configure("ChipInfo.TLabel", background=chip, foreground=p["muted"], font=(FONT[0], 8))
         s.configure("ChipError.TLabel", background=chip, foreground=p["chat"]["error"], font=(FONT[0], 8))
-        s.configure("Chip.TButton", background=chip, foreground=p["muted"], bordercolor=chip, lightcolor=chip,
-                    darkcolor=chip, focuscolor=chip, padding=(2, 0), width=2)
-        chip_bg = [("pressed", p["border"]), ("active", p["hover"])]
-        s.map("Chip.TButton", background=chip_bg, lightcolor=chip_bg, darkcolor=chip_bg, bordercolor=chip_bg,
-              foreground=[("active", p["fg"])])
-        s.configure("Attach.TButton", font=(FONT[0], 15), padding=(6, 0))
+        s.configure("Chip.TButton", foreground=p["muted"], padding=(2, 0), width=2)
+        s.map("Chip.TButton", foreground=[("active", p["fg"])])
+        self._round_button("Chip.TButton", "MS.Chip.border", 5, chip, [
+            ("pressed", p["border"], p["border"]), ("active", p["hover"], p["hover"]), (None, chip, chip)])
+        s.configure("Attach.TButton", font=(FONT[0], 14), padding=(6, 0))

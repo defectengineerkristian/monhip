@@ -22,7 +22,7 @@ import llamacpp
 import memory
 import reminders
 import speech
-from agent import Agent, describe_call, format_args, result_ok, run_conversation
+from agent import Agent, describe_call, format_args, result_ok, run_conversation, tool_budget
 from backend import LlamaServer, find_mmproj, find_models, thinking_title
 from chatview import ChatView
 from roomui import RoomMode
@@ -265,20 +265,22 @@ class App:
         ttk.Separator(main).pack(side=tk.TOP, fill=tk.X)
 
         # ---- Eingabe (zuerst packen, damit sie beim Verkleinern sichtbar bleibt)
-        inp = ttk.Frame(main, padding=(18, 8, 18, 14))
+        inp = ttk.Frame(main, padding=(18, 6, 18, 12))
         inp.pack(side=tk.BOTTOM, fill=tk.X)
         self._inp_frame = inp
-        self.send_btn = ttk.Button(inp, text="Senden", style="Accent.TButton", width=9, command=self._send_or_stop)
+        self.send_btn = ttk.Button(inp, text="Senden", style="Accent.TButton", width=8, command=self._send_or_stop)
         self.send_btn.pack(side=tk.RIGHT, fill=tk.Y, padx=(8, 0))
         ttk.Button(inp, text="+", style="Attach.TButton", width=2, command=self.pick_attachments).pack(
             side=tk.LEFT, fill=tk.Y, padx=(0, 8))
         self.mic_btn = ttk.Button(inp, text="🎤", style="Attach.TButton", width=2, command=self.toggle_dictation)
         self.mic_btn.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8))
-        self.input = tk.Text(inp, height=3, width=1, wrap=tk.WORD, font=("Segoe UI", 11), padx=10, pady=8)
-        self.input.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        field = ttk.Frame(inp, style="Input.TFrame")  # zeichnet Fläche und runden Rand um das Textfeld
+        field.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.input = tk.Text(field, height=2, width=1, wrap=tk.WORD, font=("Segoe UI", 11), padx=8, pady=4)
+        self.input.pack(fill=tk.BOTH, expand=True)
         self.input.bind("<Return>", self._on_enter)
         self.input.bind("<<Paste>>", self._on_paste)
-        self.theme.register_text(self.input)
+        self.theme.register_field(field, self.input)
         # Anhänge/Zitat – nur sichtbar, wenn etwas da ist
         self.attach_bar = ttk.Frame(main, padding=(18, 8, 18, 0))
 
@@ -310,6 +312,7 @@ class App:
         self.mode = self.cfg["mode"] = mode
         room = mode == "room"
         self.mode_switch.select(mode, animate=not first)
+        self.room.mentions.hide()
         (self.room_side if room else self.chat_side).tkraise()
         (self.room_frame if room else self.chat_frame).tkraise()
         self.send_btn.configure(text="■ Stopp" if self.busy and not room else "Senden")
@@ -801,24 +804,25 @@ class App:
             self._show_placeholder()
             return
         results = {m.get("tool_call_id"): m.get("content") or "" for m in self.history if m.get("role") == "tool"}
-        for i, m in enumerate(self.history):
-            role, content = m.get("role"), m.get("content") or ""
-            if role == "user":
-                self.view.user(m.get("_text", content), self._display_files(m.get("_files")), m.get("_quote"),
-                               self._msg_actions(i))
-            elif role == "assistant":
-                if m.get("_thinking"):
-                    self.view.think_static(m["_thinking"], m.get("_thinking_title"), m.get("_thinking_secs"))
-                if content:
-                    self.view.markdown(content)
-                for c in m.get("tool_calls") or []:
-                    fn = c.get("function", {})
-                    icon, label, detail = describe_call(fn.get("name", ""), fn.get("arguments", ""))
-                    res = results.get(c.get("id"))
-                    self.view.tool_static(label, detail, format_args(fn.get("arguments", "")), res,
-                                          result_ok(res), icon)
-                if content and not m.get("tool_calls"):
-                    self.view.footer(content)
+        with self.view.batch():  # erst am Ende einmal ans Ende scrollen
+            for i, m in enumerate(self.history):
+                role, content = m.get("role"), m.get("content") or ""
+                if role == "user":
+                    self.view.user(m.get("_text", content), self._display_files(m.get("_files")), m.get("_quote"),
+                                   self._msg_actions(i))
+                elif role == "assistant":
+                    if m.get("_thinking"):
+                        self.view.think_static(m["_thinking"], m.get("_thinking_title"), m.get("_thinking_secs"))
+                    if content:
+                        self.view.markdown(content)
+                    for c in m.get("tool_calls") or []:
+                        fn = c.get("function", {})
+                        icon, label, detail = describe_call(fn.get("name", ""), fn.get("arguments", ""))
+                        res = results.get(c.get("id"))
+                        self.view.tool_static(label, detail, format_args(fn.get("arguments", "")), res,
+                                              result_ok(res), icon)
+                    if content and not m.get("tool_calls"):
+                        self.view.footer(content)
         self.view.scroll_end()
 
     def _save_chat(self, touch: bool = True):
@@ -1690,12 +1694,16 @@ class App:
         self._set_busy(True)
         self.stop_event.clear()
         base_url = self.server.base_url
+        try:
+            budget = tool_budget(int(self.ctx_var.get()))  # ältere Werkzeug-Ergebnisse beim Senden kürzen
+        except ValueError:
+            budget = tool_budget(16384)
 
         def work():
             n_before = len(messages)
             try:
                 run_conversation(base_url, messages, params, agent, self.stop_event,
-                                 lambda k, t: self.events.put((k, t)))
+                                 lambda k, t: self.events.put((k, t)), budget=budget)
             except Exception as e:
                 self.events.put(("error", str(e)))
             # Neue Nachrichten (Antworten, Tool-Ergebnisse) in den Verlauf übernehmen
@@ -1838,7 +1846,8 @@ class App:
     def _poll_events(self):
         """Ereignisse aus den Threads abholen. Die nächste Runde wird zuerst geplant, damit es auch weitergeht,
         während ein Handler einen Dialog offen hält (verschachtelte Ereignisschleife)."""
-        self.root.after(15 if (self.busy or self.stream_q) else 50, self._poll_events)
+        fast = self.busy or self.stream_q or self.room.ai_busy  # während einer Antwort flüssiger
+        self.root.after(15 if fast else 50, self._poll_events)
         logs = []
         try:
             while True:

@@ -8,6 +8,7 @@ import fnmatch
 import functools
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -24,6 +25,9 @@ import web
 from backend import chat_turn
 
 MAX_OUTPUT = 20_000
+READ_LINES, READ_CHARS = 400, 12_000   # read_file: höchstens so viel je Aufruf (weiter mit start_line)
+KEEP_HEAD = 800                        # ältere Werkzeug-Ergebnisse: so viel vom Anfang bleibt (compact)
+LINE_NO = re.compile(r"^ *\d+\t")       # Zeilennummer aus read_file („  12<Tab>“)
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "target", ".idea", ".vs", ".gradle"}
 EXEC_SUFFIXES = {".exe", ".bat", ".cmd", ".com", ".ps1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".msi",
                  ".msc", ".scr", ".lnk", ".reg", ".hta", ".cpl", ".jar", ".py", ".pyw"}
@@ -44,12 +48,18 @@ FILE_TOOLS = [
     _tool("list_directory", "Zeigt Dateien (mit Größe) und Unterordner eines Ordners.", optional=("depth",),
           path={"type": "string", "description": "Ordner, z. B. '.' für den Arbeitsordner"},
           depth={"type": "integer", "description": "Wie viele Ebenen tief (1–4, Standard 1)"}),
-    _tool("read_file", "Liest eine Datei als Text. PDF, Word (.docx), Excel (.xlsx), PowerPoint (.pptx), "
-          "OpenDocument und RTF werden automatisch als Text ausgelesen.", path=PATH),
+    _tool("read_file", "Liest eine Datei als Text, höchstens 400 Zeilen je Aufruf; jede Zeile beginnt mit ihrer "
+          "Nummer und einem Tabulator (gehört nicht zum Inhalt). Längere Dateien abschnittsweise mit start_line/"
+          "end_line lesen – der Hinweis am Ende nennt die nächste Zeile. PDF, Word (.docx), Excel (.xlsx), "
+          "PowerPoint (.pptx), OpenDocument und RTF werden automatisch als Text ausgelesen.",
+          optional=("start_line", "end_line"), path=PATH,
+          start_line={"type": "integer", "description": "Erste Zeile (Standard 1)"},
+          end_line={"type": "integer", "description": "Letzte Zeile (Standard: 400 Zeilen ab start_line)"}),
     _tool("write_file", "Schreibt eine Textdatei (Code, Markdown, CSV, HTML …) neu oder überschreibt sie. "
           "Fehlende Ordner werden angelegt.", path=PATH, content=STR),
     _tool("edit_file", "Ändert eine bestehende Textdatei: ersetzt die Textstelle old_text (muss genau einmal "
-          "vorkommen, exakt wie in der Datei) durch new_text. Für kleine Änderungen statt write_file.",
+          "vorkommen, exakt wie in der Datei – ohne die Zeilennummern aus read_file) durch new_text. Für kleine "
+          "Änderungen statt write_file.",
           path=PATH, old_text=STR, new_text=STR),
     _tool("create_directory", "Legt einen Ordner an (auch mehrere Ebenen).", path=PATH),
     _tool("move_path", "Verschiebt oder benennt eine Datei bzw. einen Ordner um.", source=PATH, destination=PATH),
@@ -109,8 +119,10 @@ WEB_TOOLS = [
     _tool("web_search", "Sucht im Internet nach aktuellen Informationen. Liefert Titel, URL und Kurztext "
           "der Treffer. Für Details danach fetch_url auf die besten Treffer anwenden.",
           query={"type": "string", "description": "Suchbegriffe, präzise formuliert"}),
-    _tool("fetch_url", "Ruft eine Webseite ab und gibt ihren Textinhalt zurück.",
-          url={"type": "string", "description": "Vollständige http(s)-URL"}),
+    _tool("fetch_url", "Ruft eine Webseite ab und gibt ihren Textinhalt zurück (bis zu 8000 Zeichen je Aufruf). "
+          "Bei längeren Seiten nennt der Hinweis am Ende, mit welchem start es weitergeht.", optional=("start",),
+          url={"type": "string", "description": "Vollständige http(s)-URL"},
+          start={"type": "integer", "description": "Ab welchem Zeichen weiterlesen (Standard 0)"}),
 ]
 
 ID = {"type": "integer", "description": "Nummer aus den eckigen Klammern, z. B. 3"}
@@ -250,6 +262,42 @@ def _process_output(r: subprocess.CompletedProcess) -> str:
     return f"Exit-Code {r.returncode}\n{out or '(keine Ausgabe)'}"
 
 
+def _numbered(text: str, start_line=1, end_line=None) -> str:
+    """Ausschnitt mit Zeilennummern (höchstens READ_LINES Zeilen bzw. READ_CHARS Zeichen) und Hinweis, wie es
+    weitergeht – so kann das Modell auch lange Dateien vollständig lesen."""
+    lines = text.splitlines()
+    total = len(lines)
+    if not total:
+        return "(leere Datei)"
+    start = max(1, int(start_line or 1))
+    if start > total:
+        return f"Fehler: Die Datei hat nur {total} Zeilen."
+    end = min(total, int(end_line) if end_line else start + READ_LINES - 1, start + 4 * READ_LINES - 1)
+    width, out, used, last = len(str(end)), [], 0, start - 1
+    for i in range(start, end + 1):
+        line = lines[i - 1]
+        if used and used + len(line) > READ_CHARS:
+            break
+        if len(line) > READ_CHARS:
+            line = line[:READ_CHARS] + f" …(Zeile gekürzt, {len(line)} Zeichen)"
+        out.append(f"{i:>{width}}\t{line}")
+        used += len(line) + 1
+        last = i
+    if start == 1 and last == total:
+        return "\n".join(out)
+    more = f" – weiter mit start_line={last + 1}" if last < total else ""
+    return "\n".join(out) + f"\n…(Zeilen {start}–{last} von {total}{more})"
+
+
+def _has_line_numbers(text: str) -> bool:
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    return bool(lines) and all(LINE_NO.match(ln) for ln in lines)
+
+
+def _strip_line_numbers(text: str) -> str:
+    return "\n".join(LINE_NO.sub("", ln, count=1) for ln in text.split("\n"))
+
+
 def _preview(text: str, limit: int = 1500) -> str:
     return text if len(text) <= limit else text[:limit] + "\n…"
 
@@ -375,11 +423,13 @@ class Agent:
         walk(root, 0)
         return "\n".join(lines) if len(lines) > 1 else f"{root}\n(leer)"
 
-    def tool_read_file(self, path):
+    def tool_read_file(self, path, start_line=1, end_line=None):
         p = self._path(path)
         if p.suffix.lower() in documents.CONVERTED:  # PDF, Office, OpenDocument, RTF → als Text
-            return documents.read(p).text
-        return _read_text_file(p)
+            text = documents.read(p).text
+        else:
+            text = _read_text_file(p)
+        return _numbered(text, start_line, end_line)
 
     def tool_search_files(self, pattern="*", text="", path="."):
         base = self._path(path)
@@ -429,6 +479,10 @@ class Agent:
         if not old_text:
             raise ValueError("old_text darf nicht leer sein.")
         count = text.count(old_text)
+        if count == 0 and _has_line_numbers(old_text):  # Zeilennummern aus read_file mit abgeschrieben
+            old_text = _strip_line_numbers(old_text)
+            new_text = _strip_line_numbers(new_text) if _has_line_numbers(new_text) else new_text
+            count = text.count(old_text)
         if count == 0 and "\r\n" in text:  # Datei mit Windows-Zeilenenden, Modell schreibt \n
             old_crlf = old_text.replace("\r\n", "\n").replace("\n", "\r\n")
             if text.count(old_crlf):
@@ -608,8 +662,8 @@ class Agent:
     def tool_web_search(self, query):
         return web.search(query, self.brave_key)
 
-    def tool_fetch_url(self, url):
-        return web.fetch(url)
+    def tool_fetch_url(self, url, start=0):
+        return web.fetch(url, start=int(start or 0))
 
     # ------------------------------------------------------------ Bilder (nur mit Bildverständnis)
 
@@ -678,6 +732,10 @@ def describe_call(name: str, raw_args: str) -> tuple[str, str, str]:
             detail = f"[{a['id']}]"
         if name == "run_python":
             detail = next((ln.strip() for ln in str(a.get("code", "")).splitlines() if ln.strip()), "")
+        if name == "read_file" and (a.get("start_line") or a.get("end_line")):
+            detail = f"{detail}  ·  Zeile {a.get('start_line') or 1}" + (f"–{a['end_line']}" if a.get("end_line") else "")
+        elif name == "fetch_url" and a.get("start"):
+            detail = f"{detail}  ·  ab Zeichen {a['start']}"
     detail = detail.splitlines()[0] if detail else ""
     return ICONS.get(name, "▤"), label, detail if len(detail) <= 70 else detail[:69] + "…"
 
@@ -698,12 +756,63 @@ def result_ok(result: str | None) -> bool:
     return bool(result) and not result.startswith(("Fehler", "Vom Nutzer abgelehnt"))
 
 
-def run_conversation(base_url, messages, params, agent: Agent | None, stop, on_event, max_steps=25):
-    """Chat-Schleife. Ohne Werkzeuge: eine Antwort. Mit: so lange, bis keine Werkzeuge mehr gerufen werden."""
+def tool_budget(ctx: int) -> int:
+    """Wie viele Zeichen Werkzeug-Ergebnisse (samt langen Argumenten) vollständig mitgehen: ~40 % des Kontexts."""
+    return int(max(4096, ctx) * 3 * 0.4)
+
+
+def _shorten(text: str, what: str) -> str:
+    return text[:KEEP_HEAD].rstrip() + f"\n…({what} gekürzt, {len(text)} Zeichen – bei Bedarf erneut abrufen)"
+
+
+def _shorten_args(raw: str) -> str:
+    """Lange Texte in den Argumenten eines älteren Werkzeug-Aufrufs kürzen (z. B. der Inhalt von write_file)."""
+    try:
+        args = json.loads(raw)
+    except ValueError:
+        return raw
+    if not isinstance(args, dict):
+        return raw
+    short = {k: (v[:300] + f" …(gekürzt, {len(v)} Zeichen)" if isinstance(v, str) and len(v) > 600 else v)
+             for k, v in args.items()}
+    return json.dumps(short, ensure_ascii=False)
+
+
+def compact(messages: list, budget: int) -> list:
+    """Kopie des Verlaufs für den Server: Vom Neuesten her gehen Werkzeug-Ergebnisse und Argumente von
+    Werkzeug-Aufrufen vollständig mit, bis budget Zeichen erreicht sind – ältere werden gekürzt (das neueste
+    Ergebnis nie). Gespeichert und angezeigt wird weiter alles; kurze Verläufe bleiben unverändert (der
+    Prompt-Zwischenspeicher von llama.cpp bleibt so gültig)."""
+    out, used, newest = list(messages), 0, True
+    for i in range(len(out) - 1, -1, -1):
+        m = out[i]
+        if m.get("role") == "tool":
+            text = m.get("content") or ""
+            if newest or used + len(text) <= budget or len(text) <= KEEP_HEAD + 200:
+                used += len(text)
+            else:
+                out[i] = {**m, "content": _shorten(text, "älteres Ergebnis")}
+            newest = False
+        elif m.get("role") == "assistant" and m.get("tool_calls"):
+            size = sum(len(c["function"].get("arguments") or "") for c in m["tool_calls"])
+            if used + size <= budget:
+                used += size
+            else:
+                calls = [{**c, "function": {**c["function"], "arguments": _shorten_args(c["function"]["arguments"])}}
+                         for c in m["tool_calls"]]
+                out[i] = {**m, "tool_calls": calls}
+    return out
+
+
+def run_conversation(base_url, messages, params, agent: Agent | None, stop, on_event, max_steps=25,
+                     budget: int | None = None):
+    """Chat-Schleife. Ohne Werkzeuge: eine Antwort. Mit: so lange, bis keine Werkzeuge mehr gerufen werden.
+    budget: siehe compact() – messages selbst behält alles (wird gespeichert)."""
     tools = agent.tools if agent else None
     for _ in range(max_steps if tools else 1):
         on_event("assistant_start", "")
-        text, calls, reasoning = chat_turn(base_url, messages, params, tools, stop, on_event)
+        send = compact(messages, budget) if budget else messages
+        text, calls, reasoning = chat_turn(base_url, send, params, tools, stop, on_event)
         msg = {"role": "assistant", "content": text}
         if calls:
             msg["tool_calls"] = calls

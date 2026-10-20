@@ -2,12 +2,15 @@
 links, aufklappbare Denkprozess-/Werkzeug-Blöcke.
 
 Tags mit Nummer N (Infos in self.blocks[N]): hdr:N Kopfzeile, body:N Inhalt, cpy:N „Kopieren“, ccp:N „Code
-kopieren“, code:N, lnk:N, tbl:N. Geschrieben wird nur in `with self._edit():` (sonst schreibgeschützt).
+kopieren“, code:N, lnk:N, tbl:N. Geschrieben wird nur in `with self._edit():` (für den Nutzer schreibgeschützt).
+Das Textfeld selbst nie per configure ändern (state, cursor …): Tk vermisst danach den ganzen Verlauf neu.
 """
 
+import ctypes
 import math
 import os
 import re
+import sys
 import time
 import tkinter as tk
 import webbrowser
@@ -23,6 +26,7 @@ FAMILY, MONO = "Segoe UI", "Consolas"
 MAX_COLUMN = 820          # maximale Breite der Chatspalte (Pixel bei 100 %)
 PULSE_MS = 40
 BULLETS = ["•", "◦", "▪", "‣"]
+WIN_CURSORS = {"hand2": 32649, "xterm": 32513}  # IDC_HAND, IDC_IBEAM
 CLOSED, OPENED = "▸", "▾"
 # Farbe des Typ-Abzeichens auf Datei-Kärtchen (sonst Akzentfarbe des Designs)
 BADGE_COLORS = {"PDF": "#d0473a", "DOC": "#2b5fb4", "DOCX": "#2b5fb4", "ODT": "#2b5fb4", "RTF": "#2b5fb4",
@@ -84,6 +88,7 @@ class ChatView:
         self.is_placeholder = False
         self._n = 0
         self._depth = 0
+        self._batch = 0
         self._follow = False
         self._stick = True           # unten „kleben“ – wird nur durch eigenes Scrollen des Nutzers aufgehoben
         self._padx = None
@@ -111,7 +116,10 @@ class ChatView:
         self._make_tags()
 
         t = self.t
-        t.configure(state=tk.DISABLED, cursor="xterm")
+        t.configure(cursor="", insertontime=0)  # Mauszeiger vom Rahmen (_set_cursor), keine Schreibmarke (_readonly)
+        self._cursor = None
+        self._set_cursor("xterm")
+        self._readonly()
         t.bind("<Configure>", self._on_configure, add="+")
         t.bind("<MouseWheel>", self._on_wheel)
         t.bind("<Button-3>", self._on_context)
@@ -202,6 +210,8 @@ class ChatView:
         T("who", font=self.f_small_b, spacing1=s(16), spacing3=s(4))     # Absenderzeile im Gruppenchat
         T("who_sub", font=self.f_tiny)
         T("other", spacing3=s(8))                                         # Blase/Kärtchen anderer, links
+        T("other_a", spacing3=s(3))                                       # … mit „Kopieren“ darunter
+        T("oact", font=self.f_tiny, spacing3=s(8))
         T("slot_end", elide=True)
         T("placeholder", font=(FAMILY, 15), justify="center", spacing1=s(150), spacing3=s(6))
         T("placeholder_sub", font=(FAMILY, 10), justify="center")
@@ -257,12 +267,44 @@ class ChatView:
         self._refresh_actions()
         self._redraw_bubbles()
 
+    def _readonly(self):
+        """Verlauf für den Nutzer schreibgeschützt, ohne state=disabled: Jedes configure eines tk.Text (auch
+        state oder cursor) lässt Tk den ganzen Verlauf neu vermessen – im langen Chat ~10 ms je Schreibschritt.
+        Ein eigener Bindtag vor „Text“ verwirft daher alles, was den Inhalt ändern würde; Markieren, Kopieren und
+        Blättern bleiben."""
+        tag = "ChatReadOnly"
+        self.t.bindtags((tag,) + self.t.bindtags())
+        if self.t.bind_class(tag):
+            return  # schon eingerichtet (zweite ChatView)
+        nav = {"Left", "Right", "Up", "Down", "Prior", "Next", "Home", "End", "Shift_L", "Shift_R", "Control_L",
+               "Control_R", "Alt_L", "Alt_R", "Escape", "Caps_Lock"}
+
+        def key(e):
+            ctrl = e.state & 0x0004
+            if e.keysym in nav or (ctrl and e.keysym.lower() in ("c", "a", "insert", "slash")):
+                return None
+            return "break"
+
+        self.t.bind_class(tag, "<KeyPress>", key)
+        for seq in ("<<Paste>>", "<<Cut>>", "<<Clear>>", "<<PasteSelection>>", "<<Undo>>", "<<Redo>>"):
+            self.t.bind_class(tag, seq, lambda e: "break")
+
+    @contextmanager
+    def batch(self):
+        """Viele Blöcke auf einmal schreiben (gespeicherten Chat anzeigen): erst am Ende einmal ans Ende scrollen."""
+        self._batch += 1
+        try:
+            yield
+        finally:
+            self._batch -= 1
+            if not self._batch and self._stick:
+                self.t.see("end")
+
     @contextmanager
     def _edit(self, follow: bool | None = None):
         """Schreibzugriff. follow=None: ans Ende scrollen, solange der Nutzer nicht selbst hochgescrollt hat."""
         if self._depth == 0:
             self._follow = self._stick if follow is None else follow
-            self.t.configure(state=tk.NORMAL)
         elif follow:
             self._follow = True
         if follow:
@@ -272,10 +314,8 @@ class ChatView:
             yield
         finally:
             self._depth -= 1
-            if self._depth == 0:
-                self.t.configure(state=tk.DISABLED)
-                if self._follow:
-                    self.t.see("end")
+            if self._depth == 0 and self._follow and not self._batch:
+                self.t.see("end")
 
     def _at_bottom(self) -> bool:
         return self.t.dlineinfo("end-1c") is not None
@@ -285,7 +325,7 @@ class ChatView:
         def command(*args):
             self.t.yview(*args)
             self._stick = self._at_bottom()
-        sb.configure(command=command)
+        sb.configure(command=command, cursor="arrow")  # sonst erbte er den Zeiger des Rahmens (_set_cursor)
 
     def _new(self, kind: str, **info) -> int:
         self._n += 1
@@ -348,8 +388,8 @@ class ChatView:
     def user(self, text: str, files: list[dict] | None = None, quote: str | None = None,
              actions: dict | None = None):
         """Nutzernachricht rechts: optional ein Zitat (Antwort auf eine markierte Stelle) und Datei-Kärtchen (name,
-        info, path), darunter die Sprechblase. actions={"on_edit": f(neuer_text) -> bool} zeigt beim Darüberfahren
-        „Kopieren“ und „Bearbeiten“ unter der Blase."""
+        info, path), darunter die Sprechblase. actions zeigt beim Darüberfahren „Kopieren“ unter der Blase,
+        mit {"on_edit": f(neuer_text) -> bool} auch „Bearbeiten“ (actions={} = nur Kopieren)."""
         self._ensure()
         self.md_finish()
         self.hide_pending()
@@ -381,7 +421,7 @@ class ChatView:
                 c.bind("<Button-3>", lambda e, s=text: self._on_bubble_menu(e, s))
                 self.bubbles.append((c, "bubble", text))
                 self._draw_bubble(c, text)
-                if actions:
+                if actions is not None:
                     self._embed(c, "user_a" if first else "user_after_a")
                     self._user_actions(c, text, actions, hover + [c])
                 else:
@@ -389,14 +429,14 @@ class ChatView:
 
     # ---------------------------------------------------------------- Kopieren / Bearbeiten eigener Nachrichten
 
-    def _user_actions(self, bubble: tk.Canvas, text: str, actions: dict, hover: list):
+    def _user_actions(self, bubble: tk.Canvas, text: str, actions: dict, hover: list, base: str = "uact"):
         """Zeile „⧉ Kopieren   ✎ Bearbeiten“ unter der Blase – unsichtbar (Hintergrundfarbe), bis die Maus über
-        der Nachricht ist."""
+        der Nachricht ist. base "oact": linksbündig unter der Blase eines anderen (Gruppenchat)."""
         cur, count = actions.get("versions") or (0, 1)
         n = self._new("umsg", text=text, canvas=bubble, on_edit=actions.get("on_edit"), shown=False, cur=cur,
-                      on_version=actions.get("on_version"))
+                      on_version=actions.get("on_version"), base=base)
         tag, line = f"uact:{n}", f"uline:{n}"   # uact: ein-/ausgeblendet; uline: ganze Zeile (beim Bearbeiten weg)
-        self.t.insert(self._at, "⧉ Kopieren", ("uact", "clickable", f"ucp:{n}", tag, line))
+        self.t.insert(self._at, "⧉ Kopieren", (base, "clickable", f"ucp:{n}", tag, line))
         if actions.get("on_edit"):
             self.t.insert(self._at, "      ", ("uact", tag, line))
             self.t.insert(self._at, "✎ Bearbeiten", ("uact", "clickable", f"ued:{n}", tag, line))
@@ -407,7 +447,7 @@ class ChatView:
             self.t.insert(self._at, f" {cur + 1}/{count} ", ("uact", "uver", line))
             self.t.insert(self._at, "›", ("uact", "uver", "uver_arrow", line)
                           + (("clickable", f"uvn:{n}") if cur < count - 1 else ("uver_off",)))
-        self.t.insert(self._at, "\n", ("uact", tag, line))
+        self.t.insert(self._at, "\n", (base, tag, line))
         self.t.tag_configure(tag, foreground=self.bg)
         for w in hover:
             w.bind("<Enter>", lambda e: self._actions_show(n), add="+")
@@ -555,9 +595,11 @@ class ChatView:
             self.t.insert(self._at, "\n", "who")
 
     def other(self, text: str, files: list[dict] | None = None):
-        """Nachricht eines anderen Menschen: links, neutrale Blase (Kärtchen darüber)."""
+        """Nachricht eines anderen Menschen: links, neutrale Blase (Kärtchen darüber), beim Darüberfahren
+        „Kopieren“ darunter."""
         self._ensure()
         self.md_finish()
+        hover: list[tk.Canvas] = []
         with self._edit():
             if files:
                 c = self._canvas("arrow")
@@ -565,12 +607,14 @@ class ChatView:
                 self.bubbles.append((c, "files", files))
                 self._draw_files(c, files)
                 self._embed(c, "other")
+                hover.append(c)
             if text:
                 c = self._canvas("arrow")
                 c.bind("<Button-3>", lambda e, s=text: self._on_bubble_menu(e, s))
                 self.bubbles.append((c, "obubble", text))
                 self._draw_bubble(c, text, other=True)
-                self._embed(c, "other")
+                self._embed(c, "other_a")
+                self._user_actions(c, text, {}, hover + [c], base="oact")
 
     def tool_line(self, icon: str, label: str, detail: str, ok: bool | None):
         """Werkzeugaufruf einer fremden KI (nur Kopfzeile – Eingaben/Ergebnisse bleiben auf deren Rechner)."""
@@ -770,8 +814,8 @@ class ChatView:
                 self.t.insert(self._at, "\n", "gap")
                 self.t.mark_set(self.md["mark"], self._at)
             self.t.delete(self.md["mark"], self._at)
-            for line in lines:
-                self._md_line(line, partial=False)
+            for k, line in enumerate(lines):
+                self._md_line(line, partial=False, following=lines[k + 1] if k + 1 < len(lines) else None)
                 self.t.mark_set(self.md["mark"], self._at)
             if md["line"]:
                 self._md_line(md["line"], partial=True)
@@ -790,7 +834,9 @@ class ChatView:
                 self.t.delete(f"{self._at}-1c")
         self.md = None
 
-    def _md_line(self, line: str, partial: bool):
+    def _md_line(self, line: str, partial: bool, following: str | None = None):
+        """following: die nächste schon fertige Zeile (falls bekannt) – folgen weitere Tabellenzeilen, wird die
+        Tabelle erst nach der letzten gesetzt statt nach jeder Zeile neu (gespeicherte Chats öffnen)."""
         md = self.md
         ins = self.t.insert
         if md["code"] is not None:
@@ -818,7 +864,7 @@ class ChatView:
         if kind == "fence":
             self._code_start(info, gap)
         elif kind == "table":
-            self._table_row(line, gap)
+            self._table_row(line, gap, defer=following is not None and classify(following)[0] == "table")
         elif kind == "heading":
             tag = f"md_h{min(info['level'], 3)}"
             self._inline(info["text"], (tag,), fonts=False, partial=partial)
@@ -916,7 +962,7 @@ class ChatView:
 
     # ---------------------------------------------------------------- Tabellen
 
-    def _table_row(self, line: str, gap: bool):
+    def _table_row(self, line: str, gap: bool, defer: bool = False):
         md = self.md
         tb = md["table"]
         if tb is None:
@@ -925,11 +971,11 @@ class ChatView:
                 self.t.insert(self._at, "\n", "gap")
             self.t.mark_set(f"tbl:{tb['n']}", self._at)
             self.t.mark_gravity(f"tbl:{tb['n']}", "left")
-        else:
-            self.t.delete(f"tbl:{tb['n']}", self._at)  # Tabelle mit der neuen Zeile komplett neu setzen
         tb["rows"].append(line)
-        self._render_table(tb)
         md["blank"] = True
+        if not defer:
+            self.t.delete(f"tbl:{tb['n']}", self._at)  # Tabelle mit der neuen Zeile komplett neu setzen
+            self._render_table(tb)
 
     def _render_table(self, tb: dict):
         rows = [split_row(r) for r in tb["rows"]]
@@ -1290,8 +1336,25 @@ class ChatView:
             self._scroll_job = None
         self._scroll_left = 0.0
 
+    def _set_cursor(self, name: str):
+        """Mauszeiger über dem Verlauf – gesetzt am Rahmen um das Textfeld, das ihn erbt (kostet ~0,1 ms statt
+        ~10 ms im langen Chat). Unter Windows zusätzlich sofort, sonst erst bei der nächsten Mausbewegung."""
+        if name == self._cursor:
+            return
+        self._cursor = name
+        self.t.master.configure(cursor=name)
+        if sys.platform == "win32":
+            try:
+                user32 = ctypes.windll.user32
+                user32.LoadCursorW.restype = ctypes.c_void_p
+                user32.SetCursor.argtypes = [ctypes.c_void_p]
+                if self.t.winfo_containing(*self.t.winfo_pointerxy()) is self.t:
+                    user32.SetCursor(user32.LoadCursorW(None, WIN_CURSORS[name]))
+            except (OSError, AttributeError, KeyError, tk.TclError):
+                pass
+
     def _on_enter_click(self, _e=None):
-        self.t.configure(cursor="hand2")
+        self._set_cursor("hand2")
         for tag in self.t.tag_names("current"):
             if tag.startswith("hdr:"):
                 r = self.t.tag_ranges(tag)
@@ -1299,7 +1362,7 @@ class ChatView:
                     self.t.tag_add("hover", r[0], r[-1])
 
     def _on_leave_click(self, _e=None):
-        self.t.configure(cursor="xterm")
+        self._set_cursor("xterm")
         self.t.tag_remove("hover", "1.0", "end")
 
     def _on_click(self, _e=None):
@@ -1321,7 +1384,7 @@ class ChatView:
                 webbrowser.open(b["url"])
             elif kind == "ucp":
                 self._copy(b["text"])
-                self._flash(tag, "✓ Kopiert", ("uact", "clickable", f"uact:{n}"))
+                self._flash(tag, "✓ Kopiert", (b["base"], "clickable", f"uact:{n}"))
             elif kind == "ued":
                 self._begin_edit(n)
             elif kind in ("uvp", "uvn") and b.get("on_version"):

@@ -13,6 +13,7 @@ from tkinter import filedialog, ttk
 from tkinter import font as tkfont
 
 import chats
+import context
 import dialogs
 import documents
 import downloads
@@ -21,13 +22,15 @@ import images
 import llamacpp
 import memory
 import reminders
+import room as room_net
 import speech
 from agent import Agent, describe_call, format_args, result_ok, run_conversation, tool_budget
-from backend import LlamaServer, find_mmproj, find_models, thinking_title
+from backend import AUTO_MAX_CTX, AUTO_MIN_CTX, AUTO_TARGET_CTX, LlamaServer, auto_context, find_mmproj, \
+    find_models, gguf_info, thinking_title
 from chatview import ChatView
-from roomui import RoomMode
-from themes import THEMES, ThemeManager, label_to_key
-from widgets import ModeSwitch, scrolled
+from roomui import RISKY_SUFFIXES, RoomMode
+from themes import THEMES, ThemeManager, label_to_key, mix_hex
+from widgets import ModeSwitch, rounded, scrolled
 
 APP_DIR = Path(__file__).resolve().parent.parent  # Code in app/, Daten daneben
 CONFIG_FILE = APP_DIR / "config.json"
@@ -39,7 +42,7 @@ DEFAULTS = {
     "folders": [],                 # weitere Modellordner
     "extra_models": [],
     "server_exe": "",
-    "ctx": 16384,
+    "ctx": "auto",                 # „auto“ = so viel, wie neben dem Modell in den Speicher passt
     "ngl": "auto",
     "temperature": 0.7,
     "max_tokens": 4096,
@@ -48,6 +51,7 @@ DEFAULTS = {
     "image_tokens": 2048,
     "system_prompt": "Du bist ein hilfreicher Assistent. Antworte auf Deutsch.",
     "think_titles": True,
+    "auto_compress": True,         # ältere Unterhaltung zusammenfassen, wenn der Kontext knapp wird
     "agent_enabled": False,        # Dateien & Ordner
     "agent_commands": True,        # PowerShell & Python
     "agent_workspace": str(Path.home() / "Desktop" / "Agent-Arbeitsordner"),
@@ -118,6 +122,9 @@ class App:
         self._draining = False
         self.attachments: list[dict] = []
         self.quote: str | None = None    # „Antworten“ auf eine markierte Stelle
+        self._ctx: tuple[int | None, bool] = (None, False)  # Kontextanzeige: (belegte Tokens, genau gemessen?)
+        self._meter_gen = 0              # spätere Schätzungen überschreiben keine neueren Messungen
+        self._meter_cache: dict = {}
         self._hover = None
         self._pointer = None             # Chat unter dem Mauszeiger
         self._menu_item = None           # Chat mit offenem Menü
@@ -265,7 +272,14 @@ class App:
         ttk.Separator(main).pack(side=tk.TOP, fill=tk.X)
 
         # ---- Eingabe (zuerst packen, damit sie beim Verkleinern sichtbar bleibt)
-        inp = ttk.Frame(main, padding=(18, 6, 18, 12))
+        meter = ttk.Frame(main, padding=(18, 0, 18, 6))  # Kontextanzeige ganz unten, rechts
+        meter.pack(side=tk.BOTTOM, fill=tk.X)
+        self.ctx_bar = tk.Canvas(meter, width=round(64 * self.ui_scale), height=max(4, round(5 * self.ui_scale)),
+                                 highlightthickness=0, borderwidth=0)
+        self.ctx_bar.pack(side=tk.RIGHT, padx=(8, 0))
+        self.ctx_text = tk.StringVar()
+        ttk.Label(meter, textvariable=self.ctx_text, style="Muted.TLabel", font=("Segoe UI", 8)).pack(side=tk.RIGHT)
+        inp = ttk.Frame(main, padding=(18, 6, 18, 4))
         inp.pack(side=tk.BOTTOM, fill=tk.X)
         self._inp_frame = inp
         self.send_btn = ttk.Button(inp, text="Senden", style="Accent.TButton", width=8, command=self._send_or_stop)
@@ -313,6 +327,7 @@ class App:
         room = mode == "room"
         self.mode_switch.select(mode, animate=not first)
         self.room.mentions.hide()
+        self._draw_meter()  # nur im normalen Chat
         (self.room_side if room else self.chat_side).tkraise()
         (self.room_frame if room else self.chat_frame).tkraise()
         self.send_btn.configure(text="■ Stopp" if self.busy and not room else "Senden")
@@ -417,14 +432,32 @@ class App:
         self.maxtok_var = tk.StringVar(value=str(self.cfg["max_tokens"]))
         self.vision_var = tk.BooleanVar(value=self.cfg["vision"])
         self.imgtok_var = tk.StringVar(value=str(self.cfg["image_tokens"]))
-        rows = [("Kontext (Tokens)", self.ctx_var, "Mindestens 16384 für Websuche"),
-                ("GPU-Layers", self.ngl_var, "„auto“ passt das Modell an den Grafikspeicher an"),
+        rows = [("GPU-Layers", self.ngl_var, "„auto“ passt das Modell an den Grafikspeicher an"),
                 ("Extra-Argumente", self.extra_var, "z. B. --n-cpu-moe 10 oder -fa on"),
                 ("Temperatur", self.temp_var, "niedriger = sachlicher, höher = kreativer"),
                 ("Max. Antwort-Tokens", self.maxtok_var, ""),
                 ("Max. Tokens pro Bild", self.imgtok_var, "mehr = Details und kleine Schrift besser erkennbar, "
                                                           "braucht aber mehr Kontext")]
-        r = 3
+        # Kontext: „auto“ oder eine Zahl; darunter der Vorschlag für das gewählte Modell (_suggest_context)
+        ttk.Label(t, text="Kontext (Tokens)").grid(row=3, column=0, sticky="w", padx=(0, 12), pady=(3, 0))
+        ctx_combo = ttk.Combobox(t, textvariable=self.ctx_var, values=["auto", "8192", "16384", "32768", "65536"])
+        ctx_combo.grid(row=3, column=1, sticky="ew", pady=(3, 0))
+        self.theme.register_combo(ctx_combo)
+        lo, hi = (f"{n:,}".replace(",", ".") for n in (AUTO_TARGET_CTX, AUTO_MAX_CTX))
+        ttk.Label(t, text=f"„auto“ = {lo} bis {hi} – was nicht in den Grafikspeicher passt, kommt in den "
+                          "Arbeitsspeicher", style="Muted.TLabel").grid(row=4, column=1, sticky="w")
+        hint = ttk.Frame(t)
+        hint.grid(row=5, column=1, sticky="ew")
+        self.ctx_hint = tk.StringVar()
+        ttk.Label(hint, textvariable=self.ctx_hint, style="Muted.TLabel", wraplength=round(470 * self.ui_scale)
+                  ).pack(side=tk.LEFT)
+        self.ctx_take = ttk.Button(hint, text="Übernehmen", command=self._take_suggestion)
+        self._suggestion: dict | None = None
+        self._suggest_gen = 0
+        self._suggest_cache: dict = {}
+        self.ctx_var.trace_add("write", lambda *_: self._show_suggestion())
+        self.vision_var.trace_add("write", lambda *_: self._suggest_context())
+        r = 6
         for txt, var, hint in rows:
             ttk.Label(t, text=txt).grid(row=r, column=0, sticky="w", padx=(0, 12), pady=(3, 0))
             ttk.Entry(t, textvariable=var).grid(row=r, column=1, sticky="ew", pady=(3, 0))
@@ -434,6 +467,9 @@ class App:
                 r += 1
         ttk.Checkbutton(t, text="Bildverständnis laden (mmproj-Datei im Ordner des Modells, ca. 1 GB Grafikspeicher)",
                         variable=self.vision_var).grid(row=r, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        self.compress_var = tk.BooleanVar(value=self.cfg["auto_compress"])
+        ttk.Checkbutton(t, text="Ältere Unterhaltung automatisch zusammenfassen, wenn der Kontext knapp wird",
+                        variable=self.compress_var).grid(row=r + 1, column=0, columnspan=2, sticky="w", pady=(4, 0))
         t.columnconfigure(1, weight=1)
 
         # ---- Werkzeuge
@@ -586,6 +622,7 @@ class App:
             self._settings_placed = True
         self.theme.present(win, geometry)
         win.focus_set()
+        self._suggest_context()
 
     def close_settings(self):
         self.save_config()
@@ -609,6 +646,8 @@ class App:
             self.room.refresh_panel()  # Teilnehmerliste nutzt Farben aus dem Design
         muted = theme.get("muted", "#777777")
         self.chat_tree.tag_configure("group", foreground=muted)
+        self._meter_cache.clear()
+        self._draw_meter()
         self.chat_tree.tag_configure("hover", background=theme.get("side_hover", "#e8e8e8"))
         self.cfg["theme"] = self.theme.key
         if save:
@@ -775,6 +814,7 @@ class App:
         self._set_title("Neuer Chat")
         self._sync_tree_selection()
         self._show_placeholder()
+        self._estimate_context()
         self.input.focus_set()
 
     def open_chat(self, chat_id):
@@ -807,6 +847,9 @@ class App:
         with self.view.batch():  # erst am Ende einmal ans Ende scrollen
             for i, m in enumerate(self.history):
                 role, content = m.get("role"), m.get("content") or ""
+                if m.get("_summary_before"):  # alles davor kennt das Modell nur noch als Zusammenfassung
+                    self.view.think_static(m["_summary_before"], self._summary_title(m.get("_summary_count") or i),
+                                           icon="≡")
                 if role == "user":
                     self.view.user(m.get("_text", content), self._display_files(m.get("_files")), m.get("_quote"),
                                    self._msg_actions(i))
@@ -824,6 +867,7 @@ class App:
                     if content and not m.get("tool_calls"):
                         self.view.footer(content)
         self.view.scroll_end()
+        self._estimate_context()
 
     def _save_chat(self, touch: bool = True):
         if self.chat_data is None:
@@ -882,6 +926,7 @@ class App:
         self.model_list.selection_clear(0, tk.END)
         self.model_list.selection_set(idx)
         self.model_list.see(idx)
+        self._suggest_context()
 
     def _on_model_list_select(self, _e=None):
         sel = self.model_list.curselection()
@@ -1127,10 +1172,11 @@ class App:
                 self.open_settings("load")
                 self.download_server(confirm=False)
             return
+        raw = self.ctx_var.get().strip().lower()
         try:
-            ctx = int(self.ctx_var.get())
+            ctx = None if raw in ("", "auto") else int(raw)  # None = „auto“ (backend.LlamaServer.start)
         except ValueError:
-            dialogs.showerror("Monhip", "Kontext muss eine Zahl sein (Einstellungen → Laden).")
+            dialogs.showerror("Monhip", "Kontext muss „auto“ oder eine Zahl sein (Einstellungen → Laden).")
             return
         mmproj = find_mmproj(model) if self.vision_var.get() else None
         try:
@@ -1140,6 +1186,7 @@ class App:
             return
         self.cfg["last_model"] = str(model)
         self.save_config()
+        self.load_cancel.set()  # ein noch laufendes Laden (z. B. Doppelklick) still abbrechen
         cancel = self.load_cancel = threading.Event()
         ngl, extra = self.ngl_var.get().strip(), self.extra_var.get()
         self._set_load_buttons(tk.DISABLED)
@@ -1156,10 +1203,13 @@ class App:
             self.status_var.set("Laden fehlgeschlagen – Details unter ⚙ Einstellungen → Server-Log")
             dialogs.showerror("Monhip", err)
             return
-        self.status_var.set(f"✔ Geladen: {model.stem}" + ("  ·  versteht Bilder" if self.server.vision else ""))
+        self.status_var.set(f"✔ Geladen: {model.stem}" + ("  ·  versteht Bilder" if self.server.vision else "")
+                            + (f"  ·  Kontext {self.server.n_ctx:,}".replace(",", ".") if self.server.n_ctx else ""))
         if self.view.is_placeholder:
             self._show_placeholder()
         self.room.model_changed()
+        self._estimate_context()
+        self._suggest_context()
 
     def unload_model(self):
         self.load_cancel.set()
@@ -1171,6 +1221,94 @@ class App:
         if self.view.is_placeholder:
             self._show_placeholder()
         self.room.model_changed()
+        self._estimate_context()
+        self._suggest_context()
+
+    # ---------------------------------------------------------------- Kontextgröße: Wert und Vorschlag
+
+    def _ctx_value(self) -> int:
+        """Kontext in Tokens: der des geladenen Modells, sonst die Einstellung („auto“ → Untergrenze)."""
+        if self.server.n_ctx:
+            return self.server.n_ctx
+        try:
+            return int(self.ctx_var.get())
+        except ValueError:
+            return AUTO_MIN_CTX
+
+    def _suggest_context(self):
+        """Vorschlag für das gewählte Modell berechnen (llama-fit-params im Hintergrund, ~5 s) – nur bei offenen
+        Einstellungen und ohne geladenes Modell (das belegt sonst den Grafikspeicher und verfälscht die Rechnung)."""
+        self._suggest_gen += 1
+        gen, model, server = self._suggest_gen, self.sel_model, self._selected_server()
+        if not self.settings_win.winfo_viewable() or not model or not server:
+            return
+        if self.server.model:
+            self._suggestion = None
+            note = (f"Geladen mit {self.server.n_ctx:,} Tokens Kontext. ".replace(",", ".") if self.server.n_ctx else "")
+            self.ctx_hint.set(note + "Vorschläge für andere Modelle gibt es nach dem Entladen (das geladene Modell "
+                                     "belegt den Grafikspeicher).")
+            self._show_suggestion(text_only=True)
+            return
+        mmproj = find_mmproj(model) if self.vision_var.get() else None
+        ngl = self.ngl_var.get().strip()
+        key = (str(model), str(mmproj), ngl, server["exe"])
+        if key in self._suggest_cache:
+            self._suggestion = self._suggest_cache[key]
+            self._show_suggestion()
+            return
+        self._suggestion = None
+        self.ctx_hint.set(f"Vorschlag für {model.stem} wird berechnet …")
+        self._show_suggestion(text_only=True)
+
+        def work():
+            fit = auto_context(server["exe"], model, mmproj, ngl)
+            return fit and {**fit, **gguf_info(model), "model": model.stem}
+
+        def done(result, err):
+            if gen != self._suggest_gen:
+                return
+            self._suggest_cache[key] = None if err else result
+            self._suggestion = None if err else result
+            self._show_suggestion()
+
+        self.background(work, done)
+
+    def _show_suggestion(self, text_only: bool = False):
+        """Vorschlag anzeigen: „Auto ergibt …“ bei „auto“, sonst „Vorschlag …“ mit „Übernehmen“."""
+        s, auto = self._suggestion, self.ctx_var.get().strip().lower() in ("", "auto")
+        if not text_only:
+            if s:
+                fmt = lambda n: f"{n:,}".replace(",", ".")
+                ctx = min(s["ctx"], AUTO_MAX_CTX)
+                total, ngl = s.get("block_count"), s.get("ngl")
+                if ngl is None:
+                    where = ""
+                elif total and ngl > total:
+                    where = " · komplett auf der Grafikkarte"
+                elif total:
+                    where = f" · {ngl} von {total + 1} Schichten auf der Grafikkarte, Rest im Arbeitsspeicher"
+                else:
+                    where = f" · {ngl} Schichten auf der Grafikkarte"
+                if s.get("experts_on_cpu"):
+                    where += ", ein Teil der Experten im Arbeitsspeicher"
+                if s.get("host_mib", 0) >= 1024:
+                    where += f" (~{s['host_mib'] / 1024:.1f} GB)".replace(".", ",")
+                more = (f" (begrenzt – das Modell könnte bis {fmt(s['context_length'])})"
+                        if s["ctx"] > AUTO_MAX_CTX and s.get("context_length") else "")
+                self.ctx_hint.set(f"{'Auto ergibt' if auto else 'Vorschlag'} für {s['model']}: {fmt(ctx)} Tokens"
+                                  f"{where}{more}")
+            elif self.sel_model and not self.server.model:
+                self.ctx_hint.set("Kein Vorschlag möglich – dafür wird eine neuere llama.cpp-Version gebraucht "
+                                  "(„llama.cpp herunterladen / aktualisieren“). „auto“ nimmt dann 16.384.")
+        show = bool(self._suggestion) and not auto and not text_only
+        if show and not self.ctx_take.winfo_ismapped():
+            self.ctx_take.pack(side=tk.LEFT, padx=(8, 0))
+        elif not show and self.ctx_take.winfo_ismapped():
+            self.ctx_take.pack_forget()
+
+    def _take_suggestion(self):
+        if self._suggestion:
+            self.ctx_var.set(str(min(self._suggestion["ctx"], AUTO_MAX_CTX)))
 
     # ---------------------------------------------------------------- Freigegebene Ordner
 
@@ -1425,7 +1563,8 @@ class App:
                 continue
             att = {"path": p, "status": "loading", "doc": None, "error": ""}
             self.attachments.append(att)
-            self.background(lambda p=p, opts=self._speech_settings(): self._read_attachment(p, thumb, opts),
+            share = self.mode == "room"  # im Raum geht jede Datei – nicht lesbare nur zum Herunterladen
+            self.background(lambda p=p, opts=self._speech_settings(): self._read_attachment(p, thumb, opts, share),
                             lambda doc, err, att=att: self._attached(att, doc, err))
         self._render_attachments()
         if skipped:
@@ -1434,8 +1573,24 @@ class App:
         self.input.focus_set()
 
     @staticmethod
-    def _read_attachment(path: Path, thumb_size: int, speech_opts: tuple[str, str]) -> documents.Document:
-        """Läuft im Hintergrund-Thread."""
+    def _read_attachment(path: Path, thumb_size: int, speech_opts: tuple[str, str],
+                         share: bool = False) -> documents.Document:
+        """Läuft im Hintergrund-Thread. share (Teamwork): was sich nicht lesen lässt (Programm, Archiv …), wird
+        trotzdem angehängt – als Datei, die die anderen herunterladen können."""
+        try:
+            return App._read_readable(path, thumb_size, speech_opts)
+        except ValueError:
+            if not share or not path.is_file():
+                raise
+        if path.stat().st_size > room_net.MAX_FILE:
+            raise ValueError(f"Zu groß zum Teilen ({documents.human_size(path.stat().st_size)}, höchstens 100 MB).")
+        suffix = path.suffix.lower()
+        kind = ("Programm" if suffix in RISKY_SUFFIXES else "Archiv" if suffix in (".zip", ".7z", ".rar", ".tar", ".gz")
+                else "Bild" if images.is_image(path) else "Datei")
+        return documents.Document(path, kind, "", share_only=True)
+
+    @staticmethod
+    def _read_readable(path: Path, thumb_size: int, speech_opts: tuple[str, str]) -> documents.Document:
         if images.is_image(path):  # Vorschau als PNG, weil Tk kein JPG kann
             return images.read(path, images.TEMP_DIR / f"vorschau-{secrets.token_hex(4)}.png", thumb_size)
         if speech.is_audio(path):
@@ -1561,11 +1716,7 @@ class App:
         gekürzt, damit sie in den Kontext passen (grob 3 Zeichen pro Token, 60 % des Kontexts)."""
         if not docs:
             return text, []
-        try:
-            ctx = int(self.ctx_var.get())
-        except ValueError:
-            ctx = DEFAULTS["ctx"]
-        per_doc = max(4000, int(ctx * 0.6 * 3) // len(docs))
+        per_doc = max(4000, int(self._ctx_value() * 0.6 * 3) // len(docs))
         parts, meta = ([text] if text else []), []
         for doc in docs:
             body, note = doc.text, ""
@@ -1605,16 +1756,20 @@ class App:
         if not text and not docs:
             return
         pics = [d for d in docs if d.image]
-        if pics and self.mode == "room":
-            dialogs.showinfo("Monhip", "Bilder können im Gruppenchat noch nicht geteilt werden – "
-                             "bitte die Bilder entfernen (✕).")
-            return
         quote = self.quote if text else None  # ein Zitat allein ist keine Nachricht
-        if self.mode == "room":  # Gruppenchat: Nachricht geht an den Raum, Antworten kommen von den KIs dort
-            content, files_meta = self._compose_message(text, docs)
-            if self.room.send(text, self._with_quote(quote, content), files_meta):
+        if self.mode == "room":  # Gruppenchat: Text + lesbare Dokumente an die KIs, jede Datei zum Herunterladen
+            content, _meta = self._compose_message(text, [d for d in docs if not d.image and not d.share_only])
+            notes = [f"[{'Bild' if d.image else 'Datei'} geteilt: {d.name}]" for d in docs if d.image or d.share_only]
+            content = "\n\n".join(p for p in (content, "\n".join(notes)) if p)
+            shares = [{"path": str(d.path), "name": d.name, "info": d.info, "image": bool(d.image)} for d in docs]
+            if self.room.send(text, self._with_quote(quote, content), shares):
                 self.input.delete("1.0", tk.END)
                 self._clear_compose()
+            return
+        only_shared = [d.name for d in docs if d.share_only]
+        if only_shared:
+            dialogs.showinfo("Monhip", "„" + "“, „".join(only_shared) + "“ kann das Modell nicht lesen – solche "
+                             "Dateien lassen sich nur in Teamwork teilen. Bitte entfernen (✕).")
             return
         if pics and self.server.model and not self.server.vision:
             dialogs.showinfo("Monhip", "Das geladene Modell kann keine Bilder ansehen. Dafür muss neben "
@@ -1664,52 +1819,140 @@ class App:
             dialogs.showerror("Monhip", "Temperatur / Max. Tokens ungültig (Einstellungen → Laden).")
             return None
 
-        agent = None
+        if (self.agent_var.get() or self.cmd_var.get()):
+            try:
+                Path(self.ws_var.get()).mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                dialogs.showerror("Monhip", f"Arbeitsordner nicht verfügbar: {e}")
+                return None
+        return params, self._make_agent()
+
+    def _make_agent(self) -> Agent | None:
+        """Werkzeuge nach den aktuellen Einstellungen (ohne Prüfungen – die macht _prepare_turn)."""
         files, commands, web_access = self.agent_var.get(), self.cmd_var.get(), self.web_var.get()
         mem, rem = self.memory_var.get(), self.reminder_var.get()
         shots = self.screen_var.get() and self.server.vision
-        if files or commands or web_access or mem or rem or shots:
-            if files or commands:
-                try:
-                    Path(self.ws_var.get()).mkdir(parents=True, exist_ok=True)
-                except OSError as e:
-                    dialogs.showerror("Monhip", f"Arbeitsordner nicht verfügbar: {e}")
-                    return None
-            agent = Agent(self._confirm_from_worker, files=files, commands=commands, workspace=self.ws_var.get(),
-                          folders=self.extra_folders, confirm_actions=self.confirm_var.get(),
-                          web_access=web_access, brave_key=self.brave_var.get(), memory=mem, reminders=rem,
-                          vision=self.server.vision, screenshot=self._screenshot_from_worker if shots else None)
-        return params, agent
+        if not (files or commands or web_access or mem or rem or shots):
+            return None
+        return Agent(self._confirm_from_worker, files=files, commands=commands, workspace=self.ws_var.get(),
+                     folders=self.extra_folders, confirm_actions=self.confirm_var.get(),
+                     web_access=web_access, brave_key=self.brave_var.get(), memory=mem, reminders=rem,
+                     vision=self.server.vision, screenshot=self._screenshot_from_worker if shots else None)
 
-    def _launch_turn(self, params: dict, agent: Agent | None):
-        """Lässt das Modell auf den Verlauf antworten (im Hintergrund-Thread; Ergebnis kommt als „done“)."""
-        self.turn = {"step": 0, "think": None, "thinks": [], "tool": None, "tps": None}
+    def _system_prompt(self, agent: Agent | None) -> str:
         system = self.sys_text.get("1.0", tk.END).strip()
         system += datetime.now().strftime("\n\nHeutiges Datum: %d.%m.%Y, %H:%M Uhr.")
-        if agent:
-            system = (system + "\n\n" + agent.system_prompt()).strip()
-        messages = ([{"role": "system", "content": system}] if system else []) + \
-            [self._api_message(m) for m in self.history]
+        return (system + "\n\n" + agent.system_prompt()).strip() if agent else system.strip()
+
+    def _image_tokens(self) -> int:
+        """Höchstens so viele Tokens kostet ein Bild im Verlauf (0 ohne Bildverständnis)."""
+        if not self.server.vision:
+            return 0
+        try:
+            return int(self.imgtok_var.get())
+        except ValueError:
+            return DEFAULTS["image_tokens"]
+
+    def _launch_turn(self, params: dict, agent: Agent | None):
+        """Lässt das Modell auf den Verlauf antworten (im Hintergrund-Thread; Ergebnis kommt als „done“). Wird der
+        Kontext knapp, fasst context.Window vorher die älteren Nachrichten zusammen (Ereignis „compressed“) – auch noch
+        mitten in der Antwort, wenn der Server „Kontext voll“ meldet."""
+        self.turn = {"step": 0, "think": None, "thinks": [], "tool": None, "tps": None}
+        system = self._system_prompt(agent)
+        api_msgs = [self._api_message(m) for m in self.history]
+        history = self.history  # bleibt bis „done“ unverändert (Bearbeiten/Fassungen sind solange gesperrt)
 
         self._set_busy(True)
         self.stop_event.clear()
         base_url = self.server.base_url
-        try:
-            budget = tool_budget(int(self.ctx_var.get()))  # ältere Werkzeug-Ergebnisse beim Senden kürzen
-        except ValueError:
-            budget = tool_budget(16384)
+        n_ctx = self._ctx_value()
+        budget = tool_budget(n_ctx)  # ältere Werkzeug-Ergebnisse beim Senden kürzen
+        auto, image_tokens, tools = self.compress_var.get(), self._image_tokens(), agent.tools if agent else None
+        put = lambda k, t: self.events.put((k, t))
+        window = context.Window(base_url, system, history, api_msgs, tools, n_ctx, params.get("max_tokens") or 0,
+                                image_tokens, self.stop_event, put, auto, budget)
 
         def work():
+            try:
+                messages = window.begin()  # fasst vor dem Senden zusammen, wenn der Verlauf zu voll ist
+            except Exception as e:  # z. B. Server beim Zählen nicht erreichbar – dann eben ohne Zusammenfassen
+                put("error", f"Kontext konnte nicht geprüft werden: {e}")
+                messages = window.plain()
+            if self.stop_event.is_set():  # beim Zusammenfassen gestoppt
+                put("done", [])
+                return
             n_before = len(messages)
             try:
-                run_conversation(base_url, messages, params, agent, self.stop_event,
-                                 lambda k, t: self.events.put((k, t)), budget=budget)
+                # meldet der Server mitten in der Antwort „Kontext voll“, komprimiert window und der Schritt
+                # wird wiederholt – die KI macht von selbst weiter
+                run_conversation(base_url, messages, params, agent, self.stop_event, put, budget=budget,
+                                 prepare=window.prepare, on_overflow=window.overflow)
             except Exception as e:
-                self.events.put(("error", str(e)))
+                put("error", str(e))
             # Neue Nachrichten (Antworten, Tool-Ergebnisse) in den Verlauf übernehmen
-            self.events.put(("done", messages[n_before:]))
+            put("done", messages[n_before:])
 
         threading.Thread(target=work, daemon=True).start()
+
+    # ---------------------------------------------------------------- Kontextanzeige
+
+    @staticmethod
+    def _summary_title(count: int) -> str:
+        return f"Ältere Unterhaltung zusammengefasst  ·  {count} Nachrichten"
+
+    def _estimate_context(self):
+        """Kontextanzeige für den gezeigten Chat neu bestimmen (zählt im Hintergrund mit dem Server). Genaue
+        Werte kommen nach jeder Antwort vom Server („usage“)."""
+        self._meter_gen += 1
+        gen, self._ctx = self._meter_gen, (None, False)
+        self._draw_meter()
+        if not (self.server.is_running() and self.server.model and self.server.n_ctx):
+            return
+        agent = self._make_agent()
+        start, summary = context.latest_summary(self.history)
+        msgs = [{"role": "system", "content": context.with_summary(self._system_prompt(agent), summary)}] + \
+            [self._api_message(m) for m in self.history[start:]]
+        base_url, tools, image_tokens = self.server.base_url, agent.tools if agent else None, self._image_tokens()
+
+        def done(total, err):
+            if gen == self._meter_gen and not err:
+                self._ctx = (total, False)
+                self._draw_meter()
+
+        self.background(lambda: context.measure(base_url, msgs, tools, image_tokens)[0], done)
+
+    def _set_context(self, used: int):
+        self._meter_gen += 1
+        self._ctx = (used, True)
+        self._draw_meter()
+
+    def _draw_meter(self):
+        """„Kontext 9.800 / 16.384 · 60 %“ mit kleinem Balken (grün, ab 75 % orange, ab 90 % rot)."""
+        c = self.ctx_bar
+        c.delete("all")
+        if self.theme.pal:
+            bg = self.theme.pal["bg"]
+        else:
+            bg = "#%02x%02x%02x" % tuple(v // 257 for v in self.root.winfo_rgb(self.root.cget("background")))
+        c.configure(background=bg)
+        total = self.server.n_ctx if self.server.model else None
+        used, exact = self._ctx
+        if self.mode != "chat" or not total:
+            self.ctx_text.set("")
+            return
+        fmt = lambda n: f"{n:,}".replace(",", ".")
+        if used is None:
+            self.ctx_text.set(f"Kontext … / {fmt(total)}")
+            return
+        frac = min(1.0, used / total)
+        self.ctx_text.set(f"Kontext {'' if exact else '≈ '}{fmt(used)} / {fmt(total)}  ·  {round(frac * 100)} %")
+        col = self.theme_chat()
+        color = col["ok"] if frac < 0.75 else col["warn"] if frac < 0.9 else col["error"]
+        w, h = int(c.cget("width")), int(c.cget("height"))
+        track = mix_hex(bg, col["muted"], 0.35)
+        rounded(c, self._meter_cache, 0, 0, w, h, h // 2, track, bg)
+        if frac > 0:
+            rounded(c, self._meter_cache, 0, 0, max(h, w * frac), h, h // 2, color, track)
 
     # ---------------------------------------------------------------- Bearbeiten, Kopieren, Zitieren
 
@@ -1841,7 +2084,7 @@ class App:
     # ================================================================ Event-Schleife
 
     STREAM_EVENTS = {"assistant_start", "reasoning", "content", "tool_call", "tool_result", "stats", "info",
-                     "error", "confirm", "done"}
+                     "error", "confirm", "done", "usage", "compress", "compressed", "context_full"}
 
     def _poll_events(self):
         """Ereignisse aus den Threads abholen. Die nächste Runde wird zuerst geplant, damit es auch weitergeht,
@@ -1948,6 +2191,24 @@ class App:
                 self.turn["tool"] = None
         elif kind == "stats":
             self.turn["tps"] = data
+        elif kind == "usage":
+            self._set_context(data)
+        elif kind == "context_full":  # mitten in der Antwort – statt der Server-Fehlermeldung
+            self._close_think()
+            view.hide_pending()
+            view.note(context.FULL_NOTE, "warn")
+            view.show_pending("Komprimiere die Unterhaltung …")
+        elif kind == "compress":
+            view.hide_pending()
+            view.show_pending("Fasse ältere Unterhaltung zusammen …")
+        elif kind == "compressed":  # Zusammenfassung an die erste vollständige Nachricht hängen (wird gespeichert)
+            index, summary, count = data
+            if 0 <= index < len(self.history):
+                self.history[index]["_summary_before"] = summary
+                self.history[index]["_summary_count"] = count
+                self._save_chat(touch=False)
+            view.hide_pending()
+            view.think_static(summary, self._summary_title(count), icon="≡")
         elif kind == "info":
             self._close_think()
             view.note(data)
@@ -2130,10 +2391,8 @@ class App:
 
     def save_config(self):
         server = self._selected_server()
-        try:
-            ctx = int(self.ctx_var.get())
-        except ValueError:
-            ctx = DEFAULTS["ctx"]
+        raw = self.ctx_var.get().strip().lower()
+        ctx = int(raw) if raw.isdigit() else "auto"
         self.cfg.update({
             "server_exe": server["exe"] if server else "",
             "ctx": ctx,
@@ -2145,6 +2404,7 @@ class App:
             "max_tokens": self.maxtok_var.get(),
             "system_prompt": self.sys_text.get("1.0", tk.END).strip(),
             "think_titles": self.think_title_var.get(),
+            "auto_compress": self.compress_var.get(),
             "agent_enabled": self.agent_var.get(),
             "agent_commands": self.cmd_var.get(),
             "agent_workspace": self.ws_var.get(),
@@ -2166,6 +2426,7 @@ class App:
 
     def on_close(self):
         self.save_config()
+        self.root.withdraw()  # sofort weg – Server beenden und Raum schließen dauert evtl. ein paar Sekunden
         self.stop_event.set()
         for cancel in self._downloads.values():
             cancel.set()

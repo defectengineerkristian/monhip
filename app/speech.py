@@ -162,7 +162,7 @@ class Recorder:
     """Aufnahme vom Standard-Mikrofon (winmm/MCI) als WAV 16 kHz mono – das Format, das Whisper erwartet.
     Nur aus dem Tk-Thread benutzen."""
 
-    ALIAS = "modellstudio_aufnahme"
+    ALIAS = "monhip_aufnahme"
 
     def __init__(self):
         self.active = False

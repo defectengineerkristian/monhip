@@ -45,6 +45,7 @@ class Document:
     unit: str = "Seite"   # bzw. "Folie" (PowerPoint) oder "Blatt" (Excel)
     image: tuple[int, int] | None = None  # Bilder (images.read): Breite, Höhe – dann ohne Text
     thumb: Path | None = None             # Bilder: Vorschaubild (PNG) für die Anzeige
+    share_only: bool = False              # Teamwork: nicht lesbar (z. B. Programm) – wird nur zum Herunterladen geteilt
 
     @property
     def name(self) -> str:
@@ -52,6 +53,11 @@ class Document:
 
     @property
     def info(self) -> str:
+        if self.share_only:
+            try:
+                return f"{self.kind} · {human_size(self.path.stat().st_size)}"
+            except OSError:
+                return self.kind
         if self.image:
             return f"{self.kind} · {self.image[0]} × {self.image[1]}"
         plural = {"Seite": "Seiten", "Folie": "Folien", "Blatt": "Blätter"}
@@ -60,6 +66,14 @@ class Document:
             parts.append(f"{self.pages} {self.unit if self.pages == 1 else plural[self.unit]}")
         parts.append(f"{len(self.text):,} Zeichen".replace(",", "."))
         return " · ".join(parts)
+
+
+def human_size(n: int) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}".replace(".", ",")
+        n /= 1024
+    return ""
 
 
 def decode_text(data: bytes) -> str:

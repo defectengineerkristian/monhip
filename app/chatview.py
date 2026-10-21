@@ -25,6 +25,7 @@ from widgets import rounded
 FAMILY, MONO = "Segoe UI", "Consolas"
 MAX_COLUMN = 820          # maximale Breite der Chatspalte (Pixel bei 100 %)
 PULSE_MS = 40
+THUMB_KEEP = 80           # so viele Vorschaubilder bleiben beim Leeren der Ansicht im Speicher
 BULLETS = ["•", "◦", "▪", "‣"]
 WIN_CURSORS = {"hand2": 32649, "xterm": 32513}  # IDC_HAND, IDC_IBEAM
 CLOSED, OPENED = "▸", "▾"
@@ -196,6 +197,7 @@ class ChatView:
         T("st_err")
         T("note", font=self.f_small_i, spacing1=s(4), spacing3=s(4))
         T("error", font=self.f_small, spacing1=s(4), spacing3=s(4))
+        T("warn", font=self.f_small, spacing1=s(6), spacing3=s(6))
         T("footer", font=self.f_tiny, spacing1=s(2), spacing3=s(10))
         T("user", justify="right", spacing1=s(20), spacing3=s(12))
         T("user_files", justify="right", spacing1=s(20), spacing3=s(6))   # Datei-Kärtchen über der Blase
@@ -256,6 +258,7 @@ class ChatView:
         T("st_err", foreground=col["error"])
         T("note", foreground=col["muted"])
         T("error", foreground=col["error"])
+        T("warn", foreground=col["warn"])
         T("footer", foreground=col["muted"])
         T("placeholder", foreground=col["fg"])
         T("placeholder_sub", foreground=col["muted"])
@@ -367,6 +370,10 @@ class ChatView:
             except tk.TclError:
                 pass
         self.bubbles.clear()
+        # Vorschaubilder: nur die zuletzt benutzten behalten (ein Neuaufbau derselben Ansicht lädt sie dann nicht
+        # neu, über viele Chats sammeln sie sich nicht an) – jetzt zeigt sie keine Zeichenfläche mehr
+        for key in list(self._thumbs)[:-THUMB_KEEP]:
+            del self._thumbs[key]
         for tag in self.t.tag_names():
             if ":" in tag:
                 self.t.tag_delete(tag)
@@ -406,7 +413,7 @@ class ChatView:
                 first = False
             if files:
                 c = self._canvas("arrow")
-                c.bind("<Double-Button-1>", lambda e, c=c: self._open_file(self._card_path(c)))
+                self._bind_cards(c)
                 c.bind("<Button-3>", lambda e, c=c: self._on_file_menu(e, self._card_path(c)))
                 self.bubbles.append((c, "files", files))
                 self._draw_files(c, files)
@@ -603,7 +610,7 @@ class ChatView:
         with self._edit():
             if files:
                 c = self._canvas("arrow")
-                c.bind("<Double-Button-1>", lambda e, c=c: self._open_file(self._card_path(c)))
+                self._bind_cards(c)
                 self.bubbles.append((c, "files", files))
                 self._draw_files(c, files)
                 self._embed(c, "other")
@@ -670,18 +677,21 @@ class ChatView:
         """Vorschaubild (PNG) eines angehängten Bildes, zwischengespeichert; zu breite werden verkleinert."""
         if not path or not os.path.exists(path):
             return None
-        if path not in self._thumbs:
+        if path in self._thumbs:
+            img = self._thumbs[path] = self._thumbs.pop(path)  # ans Ende: zuletzt benutzt (siehe clear)
+        else:
             try:
-                self._thumbs[path] = tk.PhotoImage(master=self.t, file=path)
+                img = tk.PhotoImage(master=self.t, file=path)
             except tk.TclError:
-                self._thumbs[path] = None
-        img = self._thumbs[path]
+                img = None
+            self._thumbs[path] = img
         if img is None or img.width() <= max_w:
             return img
         factor = min(8, -(-img.width() // max(1, max_w)))  # aufgerundet
-        if (path, factor) not in self._thumbs:
-            self._thumbs[(path, factor)] = img.subsample(factor)
-        return self._thumbs[(path, factor)]
+        key = (path, factor)
+        small = self._thumbs.pop(key, None) or img.subsample(factor)
+        self._thumbs[key] = small
+        return small
 
     def _draw_files(self, c: tk.Canvas, files: list[dict]):
         """Datei-Kärtchen: farbiges Typ-Abzeichen, Dateiname und Infozeile – bei Bildern stattdessen das
@@ -735,6 +745,33 @@ class ChatView:
             c.create_text(tx, ty + line1, text=info, anchor="nw", fill=self.col["muted"], font=self.f_tiny,
                           tags=(tag,))
         c.card_paths = [f.get("path", "") for f in files]
+        c.card_files = files
+        c.configure(cursor="hand2" if any(f.get("action") for f in files) else "arrow")
+
+    @staticmethod
+    def _card_at(c: tk.Canvas) -> dict | None:
+        for tag in c.gettags("current"):
+            if tag.startswith("card") and tag[4:].isdigit():
+                files = getattr(c, "card_files", [])
+                i = int(tag[4:])
+                return files[i] if i < len(files) else None
+        return None
+
+    def _bind_cards(self, c: tk.Canvas):
+        """Kärtchen mit "action" (Teamwork: Herunterladen) reagieren auf einen Klick; die übrigen öffnet ein
+        Doppelklick (angehängte Datei)."""
+        def click(_e):
+            card = self._card_at(c)
+            if card and card.get("action"):
+                card["action"]()
+
+        def double(_e):
+            card = self._card_at(c)
+            if not (card and card.get("action")):
+                self._open_file(self._card_path(c))
+
+        c.bind("<Button-1>", click)
+        c.bind("<Double-Button-1>", double)
 
     @staticmethod
     def _card_path(c: tk.Canvas) -> str:
@@ -744,6 +781,13 @@ class ChatView:
                 i = int(tag[4:])
                 return paths[i] if i < len(paths) else ""
         return ""
+
+    def redraw_cards(self, cards: list[dict]):
+        """Nur die Kärtchen-Zeilen neu zeichnen, die eines dieser Kärtchen enthalten (z. B. Vorschau nachgeladen)."""
+        wanted = {id(card) for card in cards}
+        for c, kind, data in self.bubbles:
+            if kind == "files" and c.winfo_exists() and any(id(f) in wanted for f in data):
+                self._draw_files(c, data)
 
     def _redraw_bubbles(self):
         self._bubble_w = self._bubble_max()
@@ -1117,7 +1161,7 @@ class ChatView:
                 secs = int(time.monotonic() - b["t0"])
                 return [(f"✻  Denkt nach …  {secs} s" if secs else "✻  Denkt nach …", ())]
             secs = f"  ·  {b['secs']} s" if b.get("secs") else ""
-            return [(f"✻  {b['title'] or 'Gedankengang'}{secs}   {chev}", ())]
+            return [(f"{b.get('icon', '✻')}  {b['title'] or 'Gedankengang'}{secs}   {chev}", ())]
         text = f"{b['icon']}  {b['label']}" + (f"  ·  {b['detail']}" if b["detail"] else "")
         if b["live"]:
             return [(text + "  …", ())]
@@ -1199,10 +1243,13 @@ class ChatView:
         self._update_header(n)
         return b["secs"]
 
-    def think_static(self, text: str, title: str | None = None, secs: int | None = None) -> int:
+    def think_static(self, text: str, title: str | None = None, secs: int | None = None, icon: str = "✻") -> int:
+        """Fertiger, zugeklappter Block (Denkprozess eines gespeicherten Chats – oder mit icon „≡“ die
+        Zusammenfassung älterer Nachrichten)."""
         self._ensure()
         self.md_finish()
-        n = self._new("think", open=False, live=False, t0=0, title=title, secs=secs, started=True, held="")
+        n = self._new("think", open=False, live=False, t0=0, title=title, secs=secs, started=True, held="",
+                      icon=icon)
         self.t.tag_configure(f"body:{n}", elide=True)
         with self._edit():
             self._insert_header(n)
@@ -1274,7 +1321,7 @@ class ChatView:
             self.t.insert(self._at, "\n", "footer")
 
     def note(self, text: str, kind: str = "note"):
-        """kind "note" (grau, kursiv) oder "error" (rot)."""
+        """kind "note" (grau, kursiv), "warn" (Hinweis in Warnfarbe) oder "error" (rot)."""
         self._ensure()
         self.md_finish()
         self.hide_pending()

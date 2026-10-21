@@ -22,7 +22,7 @@ import office
 import projects
 import reminders
 import web
-from backend import chat_turn
+from backend import ContextFull, chat_turn
 
 MAX_OUTPUT = 20_000
 READ_LINES, READ_CHARS = 400, 12_000   # read_file: höchstens so viel je Aufruf (weiter mit start_line)
@@ -804,15 +804,47 @@ def compact(messages: list, budget: int) -> list:
     return out
 
 
+def cap_tools(messages: list, newest: int | None = None, older: int = 300) -> list:
+    """Nach „Kontext voll“: Werkzeug-Ergebnisse hart kürzen – ältere auf older Zeichen, das neueste auf newest
+    (None = unverändert) – und lange Argumente älterer Werkzeug-Aufrufe (der neueste bleibt)."""
+    out = list(messages)
+    tools = [i for i, m in enumerate(out) if m.get("role") == "tool"]
+    for i in tools:
+        text = out[i].get("content") or ""
+        keep = newest if i == tools[-1] else older
+        if keep and len(text) > keep + 100:
+            out[i] = {**out[i], "content": text[:keep].rstrip()
+                      + f"\n…(gekürzt, {len(text)} Zeichen – der Kontext war voll)"}
+    calls = [i for i, m in enumerate(out) if m.get("role") == "assistant" and m.get("tool_calls")]
+    for i in calls[:-1]:
+        out[i] = {**out[i], "tool_calls": [{**c, "function": {**c["function"],
+                                                              "arguments": _shorten_args(c["function"]["arguments"])}}
+                                           for c in out[i]["tool_calls"]]}
+    return out
+
+
 def run_conversation(base_url, messages, params, agent: Agent | None, stop, on_event, max_steps=25,
-                     budget: int | None = None):
+                     budget: int | None = None, prepare=None, on_overflow=None):
     """Chat-Schleife. Ohne Werkzeuge: eine Antwort. Mit: so lange, bis keine Werkzeuge mehr gerufen werden.
-    budget: siehe compact() – messages selbst behält alles (wird gespeichert)."""
+    budget: siehe compact() – messages selbst behält alles (wird gespeichert). prepare(messages) → was vor jedem
+    Schritt ans Modell geht (Standard: compact). on_overflow(messages, gesendet, ContextFull) → kleinere Fassung
+    zum Wiederholen oder None, wenn der Server mitten in der Antwort „Kontext voll“ meldet."""
     tools = agent.tools if agent else None
+    prepare = prepare or (lambda m: compact(m, budget) if budget else m)
     for _ in range(max_steps if tools else 1):
         on_event("assistant_start", "")
-        send = compact(messages, budget) if budget else messages
-        text, calls, reasoning = chat_turn(base_url, send, params, tools, stop, on_event)
+        send = prepare(messages)
+        for attempt in range(4):
+            try:
+                text, calls, reasoning = chat_turn(base_url, send, params, tools, stop, on_event)
+                break
+            except ContextFull as e:
+                retry = on_overflow(messages, send, e) if on_overflow and attempt < 3 else None
+                if stop.is_set():
+                    return
+                if retry is None:
+                    raise
+                send = retry
         msg = {"role": "assistant", "content": text}
         if calls:
             msg["tool_calls"] = calls

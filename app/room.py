@@ -10,6 +10,7 @@ import base64
 import hashlib
 import hmac
 import ipaddress
+import itertools
 import json
 import re
 import secrets
@@ -29,6 +30,8 @@ from pathlib import Path
 PROTOCOL = 1
 DEFAULT_PORT = 47821
 MAX_BODY = 4 * 1024 * 1024        # Bytes pro Anfrage
+MAX_FILE = 100 * 1024 * 1024      # Bytes pro geteilter Datei (/api/upload)
+MAX_ROOM_FILES = 2 * 1024 ** 3    # so viel speichert der Gastgeber an Dateien je Raum
 MAX_TEXT = 600_000                # Zeichen pro Nachricht (inkl. angehängter Dokumente)
 MAX_MESSAGES = 1500               # so viele Nachrichten behält der Gastgeber
 POLL_WAIT = 20                    # Sekunden, die /api/events auf Neues wartet
@@ -52,6 +55,17 @@ def new_key() -> str:
 def sign(key: str, method: str, path: str, ts: str, body: bytes) -> str:
     msg = f"{method}\n{path}\n{ts}\n".encode() + body
     return hmac.new(key.encode(), msg, hashlib.sha256).hexdigest()
+
+
+def safe_file_name(name: str) -> str:
+    """Dateiname ohne Pfad und ohne Zeichen, die Windows nicht erlaubt – für Anzeige und Speichern. Gespeichert
+    wird beim Gastgeber nie unter diesem Namen, sondern unter einer zufälligen ID."""
+    name = re.split(r"[\\/]", str(name or ""))[-1]
+    name = re.sub(r'[<>:"|?*\x00-\x1f]', "_", name).strip(" .")
+    stem = name.split(".")[0].upper()
+    if stem in ("CON", "PRN", "AUX", "NUL") or re.fullmatch(r"(COM|LPT)\d", stem):
+        name = "_" + name
+    return name[:120] or "Datei"
 
 
 def make_invite(host: str, port: int, key: str, room: str) -> str:
@@ -86,9 +100,10 @@ def _tailscale_exe() -> str | None:
     return exe if Path(exe).exists() else None
 
 
-def tailscale_status() -> str:
-    """"verbunden", "nicht verbunden" (installiert, aber z. B. nicht angemeldet) oder "" (nicht installiert)."""
-    if any(kind == "Tailscale" for _, kind in local_addresses()):
+def tailscale_status(addrs: list[tuple[str, str]] | None = None) -> str:
+    """"verbunden", "nicht verbunden" (installiert, aber z. B. nicht angemeldet) oder "" (nicht installiert).
+    addrs: schon ermittelte local_addresses() – spart den zweiten Aufruf von „tailscale ip“."""
+    if any(kind == "Tailscale" for _, kind in (local_addresses() if addrs is None else addrs)):
         return "verbunden"
     return "nicht verbunden" if _tailscale_exe() else ""
 
@@ -138,6 +153,7 @@ class RoomServer:
         self.seq = 0
         self._next = 0
         self._posts: dict[str, deque] = {}
+        self.files: dict[str, dict] = {}          # Datei-ID → name, size, sha256, author, time (liegt in _dateien/)
         self._dirty = False
         self.httpd: ThreadingHTTPServer | None = None
         self._load()
@@ -183,6 +199,7 @@ class RoomServer:
             data = json.loads(self.store.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return
+        self.files = {k: v for k, v in (data.get("files") or {}).items() if isinstance(v, dict)}
         for m in data.get("messages", [])[-MAX_MESSAGES:]:
             m["done"] = True
             self.messages[m["id"]] = m
@@ -192,7 +209,8 @@ class RoomServer:
         if not self.store:
             return
         with self.cond:
-            data = {"room": self.room, "messages": list(self.messages.values())}
+            data = {"room": self.room, "messages": [dict(m) for m in self.messages.values()],
+                    "files": {k: dict(v) for k, v in self.files.items()}}
             self._dirty = False
         try:
             self.store.parent.mkdir(parents=True, exist_ok=True)
@@ -242,32 +260,42 @@ class RoomServer:
         while len(self.messages) > MAX_MESSAGES:
             self.messages.pop(next(iter(self.messages)))
         self._dirty = True
-        self._emit({"type": "message", "message": msg})
+        # Kopie: _patch schreibt msg weiter – sonst enthielte das (später abgeholte) Ereignis schon den
+        # fortgesetzten Text, und der Teilnehmer hängte die Fortsetzung ein zweites Mal an
+        self._emit({"type": "message", "message": dict(msg)})
         return msg
 
     def snapshot(self) -> dict:
+        """Stand zum Zeitpunkt seq (nur mit self.cond aufrufen) – Kopien, weil die Antwort erst nach dem
+        Freigeben der Sperre verschickt wird und Fortsetzungen die Nachrichten sonst noch verändern könnten."""
         return {"room": self.room, "seq": self.seq, "members": self._public_members(),
-                "messages": list(self.messages.values())}
+                "messages": [dict(m) for m in self.messages.values()]}
 
     # ------------------------------------------------------------ HTTP
 
     def _dispatch(self, h: BaseHTTPRequestHandler, method: str):
         try:
+            route = urllib.parse.urlparse(h.path)
+            upload = (method, route.path) == ("POST", "/api/upload")  # Rohdaten statt JSON, eigene Grenze
             length = int(h.headers.get("Content-Length") or 0)
-            if length > MAX_BODY:
-                raise RoomError(413, "Anfrage zu groß.")
+            if length > (MAX_FILE if upload else MAX_BODY):
+                raise RoomError(413, "Datei zu groß (höchstens 100 MB)." if upload else "Anfrage zu groß.")
             body = h.rfile.read(length) if length else b""
             self._check_signature(h, method, body)
-            data = json.loads(body) if body else {}
-            route = urllib.parse.urlparse(h.path)
+            data = body if upload else (json.loads(body) if body else {})
             handler = {("POST", "/api/join"): self._join, ("GET", "/api/events"): self._events,
                        ("POST", "/api/post"): self._post, ("POST", "/api/patch"): self._patch,
                        ("POST", "/api/member"): self._member, ("POST", "/api/leave"): self._leave,
+                       ("POST", "/api/upload"): self._upload, ("GET", "/api/file"): self._file,
                        }.get((method, route.path))
             if not handler:
                 raise RoomError(404, "Unbekannter Pfad.")
             query = {k: v[0] for k, v in urllib.parse.parse_qs(route.query).items()}
-            self._reply(h, 200, handler(data, query))
+            result = handler(data, query)
+            if isinstance(result, Path):  # /api/file: Datei direkt von der Festplatte schicken
+                self._reply_file(h, result)
+            else:
+                self._reply(h, 200, result)
         except RoomError as e:
             self._reply(h, e.code, {"error": str(e)})
         except (ValueError, KeyError, TypeError) as e:
@@ -281,6 +309,15 @@ class RoomServer:
             raise RoomError(401, "Zeitstempel fehlt oder weicht zu stark ab (Uhrzeit der Rechner prüfen).")
         if not hmac.compare_digest(sig, sign(self.key, method, h.path, ts, body)):
             raise RoomError(401, "Falscher Raum-Schlüssel.")
+
+    @staticmethod
+    def _reply_file(h, path: Path):
+        h.send_response(200)
+        h.send_header("Content-Type", "application/octet-stream")
+        h.send_header("Content-Length", str(path.stat().st_size))
+        h.end_headers()
+        with open(path, "rb") as f:
+            shutil.copyfileobj(f, h.wfile, 1 << 20)
 
     @staticmethod
     def _reply(h, code: int, data: dict):
@@ -349,7 +386,10 @@ class RoomServer:
                 if remaining <= 0:
                     break
                 self.cond.wait(remaining)
-            return {"seq": self.seq, "events": [e for e in self.events if e["seq"] > since]}
+            # Die Nummern sind lückenlos: die neuen Ereignisse sind genau die letzten seq − since (statt bei jedem
+            # Aufwecken alle bis zu 8000 zu durchsuchen – das geschieht unter der Sperre)
+            new = list(itertools.islice(reversed(self.events), max(0, self.seq - since)))
+            return {"seq": self.seq, "events": new[::-1]}
 
     def _post(self, d: dict, _q) -> dict:
         kind = d.get("kind")
@@ -364,8 +404,15 @@ class RoomServer:
             if len(times) == times.maxlen and time.time() - times[0] < 60:
                 raise RoomError(429, "Zu viele Nachrichten – bitte kurz warten.")
             times.append(time.time())
-            files = [{"name": str(f.get("name", ""))[:200], "info": str(f.get("info", ""))[:200]}
-                     for f in (d.get("files") or [])[:10] if isinstance(f, dict)]
+            files = []
+            for f in (d.get("files") or [])[:10]:
+                if not isinstance(f, dict):
+                    continue
+                item = {"name": safe_file_name(f.get("name", "")), "info": str(f.get("info", ""))[:200]}
+                stored = self.files.get(str(f.get("id", "")))
+                if stored:  # geteilte Datei: Name und Größe vom Gastgeber, nicht vom Absender
+                    item.update(id=f["id"], name=stored["name"], size=stored["size"], image=bool(f.get("image")))
+                files.append(item)
             msg = self._add_message({
                 "kind": kind, "author": m["id"], "name": m["ai"] if kind == "ai" else m["name"],
                 "owner": m["name"], "text": text, "content": content, "files": files,
@@ -395,6 +442,42 @@ class RoomServer:
             self._dirty = True
             self._emit(event)
             return {"ok": True}
+
+    def _files_dir(self) -> Path | None:
+        return self.store.with_name(self.store.stem + "_dateien") if self.store else None
+
+    def _upload(self, body: bytes, q: dict) -> dict:
+        """Datei eines Teilnehmers speichern – unter einer zufälligen ID, nie unter dem mitgeschickten Namen."""
+        folder = self._files_dir()
+        if not folder:
+            raise RoomError(501, "Dieser Raum kann keine Dateien speichern.")
+        with self.cond:
+            m = self._get_member(q.get("member", ""))
+            if sum(f.get("size", 0) for f in self.files.values()) + len(body) > MAX_ROOM_FILES:
+                raise RoomError(507, "Im Raum ist kein Platz mehr für Dateien (höchstens 2 GB).")
+        fid = secrets.token_hex(12)
+        folder.mkdir(parents=True, exist_ok=True)
+        tmp = folder / f"{fid}.part"
+        tmp.write_bytes(body)
+        tmp.replace(folder / fid)
+        meta = {"name": safe_file_name(q.get("name", "")), "size": len(body), "sha256": hashlib.sha256(body).hexdigest(),
+                "author": m["id"], "time": datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}
+        with self.cond:
+            self.files[fid] = meta
+            self._dirty = True
+        return {"id": fid, **meta}
+
+    def _file(self, _d, q: dict) -> Path:
+        fid = str(q.get("id", ""))
+        if not re.fullmatch(r"[0-9a-f]{24}", fid):
+            raise RoomError(400, "Ungültige Datei-ID.")
+        with self.cond:
+            self._get_member(q.get("member", ""))
+            known = fid in self.files
+        path = (self._files_dir() or Path(".")) / fid
+        if not known or not path.is_file():
+            raise RoomError(404, "Die Datei gibt es beim Gastgeber nicht (mehr).")
+        return path
 
     def _member(self, d: dict, _q) -> dict:
         with self.cond:
@@ -431,14 +514,37 @@ class RoomClient:
 
     def _req(self, method: str, path: str, data: dict | None = None, timeout: float = 15) -> dict:
         body = json.dumps(data, ensure_ascii=False).encode("utf-8") if data is not None else b""
+        with self._open(method, path, body, "application/json", timeout) as r:
+            return json.loads(r.read() or b"{}")
+
+    def upload(self, path: Path, name: str) -> dict:
+        """Datei beim Gastgeber ablegen → {"id", "name", "size", "sha256", …}."""
+        data = Path(path).read_bytes()
+        if len(data) > MAX_FILE:
+            raise RoomError(413, f"„{name}“ ist zu groß zum Teilen (höchstens 100 MB).")
+        query = urllib.parse.urlencode({"member": self.member, "name": name})
+        with self._open("POST", f"/api/upload?{query}", data, "application/octet-stream", 600) as r:
+            return json.loads(r.read() or b"{}")
+
+    def download(self, fid: str, dest: Path):
+        """Geteilte Datei nach dest holen (erst als .part, dann umbenannt)."""
+        query = urllib.parse.urlencode({"member": self.member, "id": fid})
+        tmp = Path(dest).with_name(Path(dest).name + ".part")
+        try:
+            with self._open("GET", f"/api/file?{query}", b"", "application/json", 600) as r, open(tmp, "wb") as f:
+                shutil.copyfileobj(r, f, 1 << 20)
+            tmp.replace(dest)
+        finally:
+            tmp.unlink(missing_ok=True)
+
+    def _open(self, method: str, path: str, body: bytes, content_type: str, timeout: float):
         ts = str(int(time.time()))
-        headers = {"Content-Type": "application/json", "X-MS-Zeit": ts,
+        headers = {"Content-Type": content_type, "X-MS-Zeit": ts,
                    "X-MS-Signatur": sign(self.key, method, path, ts, body)}
         req = urllib.request.Request(self.base + path, data=body if method == "POST" else None,
                                      headers=headers, method=method)
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                return json.loads(r.read() or b"{}")
+            return urllib.request.urlopen(req, timeout=timeout)
         except urllib.error.HTTPError as e:
             try:
                 msg = json.loads(e.read() or b"{}").get("error") or e.reason

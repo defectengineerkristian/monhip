@@ -5,6 +5,7 @@ Vorschau und Zwischenablage über PowerShell/System.Drawing, weil Tk kein JPG ka
 import base64
 import subprocess
 import tempfile
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -85,7 +86,7 @@ try {{
 def cleanup_temp(max_age_hours: float = 24):
     """Alte Vorschaubilder/Screenshots aus TEMP_DIR entfernen (gesendete Bilder liegen längst im Chat)."""
     limit = time.time() - max_age_hours * 3600
-    for f in TEMP_DIR.glob("*") if TEMP_DIR.is_dir() else []:
+    for f in TEMP_DIR.rglob("*") if TEMP_DIR.is_dir() else []:  # auch teamwork/ (geteilte Bilder)
         try:
             if f.is_file() and f.stat().st_mtime < limit:
                 f.unlink()
@@ -93,10 +94,26 @@ def cleanup_temp(max_age_hours: float = 24):
             pass
 
 
+_urls: dict[tuple, str] = {}  # (Pfad, Änderungszeit, Größe) → data-URL
+_urls_lock = threading.Lock()   # Chat und eigene KI im Raum senden evtl. gleichzeitig
+URL_CACHE_CHARS = 64 * 1024 * 1024
+
+
 def data_url(path: Path) -> str:
-    """Bild als data-URL für die OpenAI-kompatible Schnittstelle von llama-server (image_url)."""
-    mime = SUFFIXES.get(path.suffix.lower(), "image/png")
-    return f"data:{mime};base64," + base64.b64encode(path.read_bytes()).decode("ascii")
+    """Bild als data-URL für die OpenAI-kompatible Schnittstelle von llama-server (image_url). Zwischengespeichert:
+    Jeder Schritt einer Antwort schickt alle Bilder des Verlaufs erneut (ein Bildschirmfoto kodieren ~12 ms)."""
+    st = path.stat()
+    key = (str(path), st.st_mtime_ns, st.st_size)
+    with _urls_lock:
+        url = _urls.get(key)
+    if url is None:
+        mime = SUFFIXES.get(path.suffix.lower(), "image/png")
+        url = f"data:{mime};base64," + base64.b64encode(path.read_bytes()).decode("ascii")
+        with _urls_lock:
+            _urls[key] = url
+            while len(_urls) > 1 and sum(len(u) for u in _urls.values()) > URL_CACHE_CHARS:
+                _urls.pop(next(iter(_urls)))  # die ältesten zuerst
+    return url
 
 
 def screenshot() -> tuple[Path, int, int]:

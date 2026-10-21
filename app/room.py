@@ -27,6 +27,8 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import projekt
+
 PROTOCOL = 1
 DEFAULT_PORT = 47821
 MAX_BODY = 4 * 1024 * 1024        # Bytes pro Anfrage
@@ -154,6 +156,10 @@ class RoomServer:
         self._next = 0
         self._posts: dict[str, deque] = {}
         self.files: dict[str, dict] = {}          # Datei-ID → name, size, sha256, author, time (liegt in _dateien/)
+        self.project: projekt.ProjectFolder | None = None  # gemeinsamer Projektordner (set_project)
+        # Nur der eigene Teilnehmer des Gastgebers kennt dieses Zeichen (geht nie übers Netz – er verbindet sich
+        # lokal); daran erkennt der Server den Gastgeber, statt dem Feld „host“ aus der Anfrage zu glauben
+        self.host_token = secrets.token_hex(16)
         self._dirty = False
         self.httpd: ThreadingHTTPServer | None = None
         self._load()
@@ -200,6 +206,9 @@ class RoomServer:
         except (OSError, ValueError):
             return
         self.files = {k: v for k, v in (data.get("files") or {}).items() if isinstance(v, dict)}
+        shared = data.get("project")
+        if isinstance(shared, dict) and Path(str(shared.get("root", ""))).is_dir():
+            self.project = projekt.ProjectFolder(Path(shared["root"]), shared.get("write", True), self._versions_dir())
         for m in data.get("messages", [])[-MAX_MESSAGES:]:
             m["done"] = True
             self.messages[m["id"]] = m
@@ -210,7 +219,8 @@ class RoomServer:
             return
         with self.cond:
             data = {"room": self.room, "messages": [dict(m) for m in self.messages.values()],
-                    "files": {k: dict(v) for k, v in self.files.items()}}
+                    "files": {k: dict(v) for k, v in self.files.items()},
+                    "project": {"root": str(self.project.root), "write": self.project.write} if self.project else None}
             self._dirty = False
         try:
             self.store.parent.mkdir(parents=True, exist_ok=True)
@@ -269,7 +279,20 @@ class RoomServer:
         """Stand zum Zeitpunkt seq (nur mit self.cond aufrufen) – Kopien, weil die Antwort erst nach dem
         Freigeben der Sperre verschickt wird und Fortsetzungen die Nachrichten sonst noch verändern könnten."""
         return {"room": self.room, "seq": self.seq, "members": self._public_members(),
-                "messages": [dict(m) for m in self.messages.values()]}
+                "messages": [dict(m) for m in self.messages.values()],
+                "project": self.project.info() if self.project else None}
+
+    def set_project(self, root: Path | None, write: bool = True, by: str = ""):
+        """Projektordner freigeben (root) bzw. die Freigabe beenden (None) – mit Hinweis im Verlauf. Der volle
+        Pfad bleibt beim Gastgeber; die anderen erfahren nur den Ordnernamen."""
+        with self.cond:
+            self.project = projekt.ProjectFolder(root, write, self._versions_dir()) if root else None
+            info = self.project.info() if self.project else None
+            text = (f"{by} hat den Projektordner „{info['name']}“ freigegeben – alle KIs dürfen dort "
+                    + ("lesen und schreiben." if info["write"] else "lesen (nur der Gastgeber auch schreiben).")
+                    if info else f"{by} hat die Freigabe des Projektordners beendet.")
+            self._add_message({"kind": "system", "author": "", "name": by, "text": text})
+            self._emit({"type": "project", "project": info})
 
     # ------------------------------------------------------------ HTTP
 
@@ -287,6 +310,7 @@ class RoomServer:
                        ("POST", "/api/post"): self._post, ("POST", "/api/patch"): self._patch,
                        ("POST", "/api/member"): self._member, ("POST", "/api/leave"): self._leave,
                        ("POST", "/api/upload"): self._upload, ("GET", "/api/file"): self._file,
+                       ("POST", "/api/project"): self._project,
                        }.get((method, route.path))
             if not handler:
                 raise RoomError(404, "Unbekannter Pfad.")
@@ -366,7 +390,8 @@ class RoomServer:
             self.members[mid] = {
                 "id": mid, "client": client, "name": name, "ai": ai, "model": str(d.get("model", ""))[:80],
                 "ai_ready": bool(d.get("ai_ready")), "busy": False, "tools": d.get("tools") or {},
-                "host": bool(d.get("host")), "online": True, "last_seen": time.time()}
+                "host": hmac.compare_digest(str(d.get("host_token", "")).encode(), self.host_token.encode()),
+                "online": True, "last_seen": time.time()}
             self._emit_members()
             if not old:
                 self._add_message({"kind": "system", "author": mid, "name": name,
@@ -445,6 +470,22 @@ class RoomServer:
 
     def _files_dir(self) -> Path | None:
         return self.store.with_name(self.store.stem + "_dateien") if self.store else None
+
+    def _versions_dir(self) -> Path | None:
+        """Alte Fassungen geänderter/gelöschter Dateien des Projektordners (nur beim Gastgeber)."""
+        return self.store.with_name(self.store.stem + "_projekt_alt") if self.store else None
+
+    def _project(self, d: dict, _q) -> dict:
+        """Dateiaktion einer KI im gemeinsamen Projektordner (projekt.ProjectFolder)."""
+        with self.cond:
+            m = self._get_member(d.get("member"))
+            folder = self.project
+        if not folder:
+            raise RoomError(404, "Der Gastgeber hat (gerade) keinen Projektordner freigegeben.")
+        try:
+            return folder.run(str(d.get("op", "")), d.get("args") or {}, m["id"], m["ai"], bool(m.get("host")))
+        except projekt.ProjectError as e:
+            raise RoomError(e.code, str(e)) from None
 
     def _upload(self, body: bytes, q: dict) -> dict:
         """Datei eines Teilnehmers speichern – unter einer zufälligen ID, nie unter dem mitgeschickten Namen."""
@@ -619,6 +660,10 @@ class RoomClient:
         if tools is not None:
             data["tools"] = tools
         self._req("POST", "/api/patch", data)
+
+    def project(self, op: str, args: dict) -> dict:
+        """Aktion im gemeinsamen Projektordner des Gastgebers (list, read, search, write, edit, mkdir, delete)."""
+        return self._req("POST", "/api/project", {"member": self.member, "op": op, "args": args}, timeout=120)
 
     def update_member(self, **fields):
         self.profile.update({k: v for k, v in fields.items() if k in ("model", "ai_ready", "tools")})

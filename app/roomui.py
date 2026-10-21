@@ -18,6 +18,9 @@ from datetime import datetime
 from tkinter import font as tkfont
 from tkinter import ttk
 
+import json
+from pathlib import Path
+
 import dialogs
 import room
 from agent import Agent, describe_call, format_args, result_ok, run_conversation, tool_budget
@@ -315,8 +318,9 @@ class RoomMode:
         """Seitenleiste aktualisieren. Neu aufgebaut wird nur, wenn sich der Aufbau ändert (verbunden/getrennt,
         Gastgeber, Wiederöffnen-Angebot) – Status und Stopp-Knopf werden an Ort und Stelle angepasst."""
         hosted, last = self.app.cfg.get("room_hosted"), self.app.cfg.get("room_last")
+        others = [] if self.connected or self.connecting else self._saved_rooms()
         key = (self.connected, self.connecting, bool(self.info and self.info["is_host"]),
-               (hosted or {}).get("room"), (last or {}).get("room"))
+               (hosted or {}).get("room"), (last or {}).get("room"), tuple(p.name for p in others))
         if key == getattr(self, "_panel_key", None):
             self._update_panel()
             return
@@ -342,6 +346,19 @@ class RoomMode:
                 indent = round(34 * self.app.ui_scale)
                 ttk.Label(p, text=sub, style="SidebarMuted.TLabel", wraplength=self._wrap() - indent).pack(
                     anchor="w", padx=(indent, 0))
+                if hosted:
+                    ttk.Button(p, text="✕   Raum löschen", style="Sidebar.TButton",
+                               command=lambda: self.delete_room(self._store_path(hosted["room"]), hosted["room"])
+                               ).pack(fill=tk.X, pady=(2, 0))
+                else:
+                    ttk.Button(p, text="✕   Aus der Liste entfernen", style="Sidebar.TButton",
+                               command=self.forget_last).pack(fill=tk.X, pady=(2, 0))
+            if others:  # Verläufe eigener Räume, die nicht mehr gemerkt sind (z. B. nach dem Beitritt woanders)
+                ttk.Label(p, text="WEITERE GESPEICHERTE RÄUME", style="Sidebar.TLabel").pack(anchor="w", pady=(14, 2))
+                for path in others:
+                    name = self._room_title(path)
+                    ttk.Button(p, text=f"✕   „{name}“ löschen", style="Sidebar.TButton",
+                               command=lambda pth=path, n=name: self.delete_room(pth, n)).pack(fill=tk.X)
             return
 
         info = self.info
@@ -573,8 +590,7 @@ class RoomMode:
         if not self.app.cfg.get("room_name"):
             self.dialog_create()
             return
-        safe = "".join(ch if ch.isalnum() else "_" for ch in room_name)[:40]
-        server = room.RoomServer(room_name, key, bind, port, self.app.app_dir / "raeume" / f"{safe}.json")
+        server = room.RoomServer(room_name, key, bind, port, self._store_path(room_name))
         try:
             server.start()
         except OSError as e:
@@ -661,6 +677,64 @@ class RoomMode:
         self.refresh_panel()
         self.show_placeholder()
         self.app.update_title()
+
+    # ---------------------------------------------------------------- Löschen / aus der Liste entfernen
+
+    def _store_path(self, room_name: str) -> Path:
+        """Hier speichert der Gastgeber den Verlauf eines Raums (gleicher Name = gleicher Verlauf)."""
+        safe = "".join(ch if ch.isalnum() else "_" for ch in room_name)[:40]
+        return self.app.app_dir / "raeume" / f"{safe}.json"
+
+    def _saved_rooms(self) -> list[Path]:
+        """Gespeicherte Verläufe eigener Räume außer dem gemerkten – sie lassen sich nur noch löschen."""
+        hosted = self.app.cfg.get("room_hosted")
+        skip = self._store_path(hosted["room"]) if hosted else None
+        try:
+            return sorted(p for p in (self.app.app_dir / "raeume").glob("*.json") if p != skip)
+        except OSError:
+            return []
+
+    @staticmethod
+    def _read_store(path: Path) -> dict:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _room_title(self, path: Path) -> str:
+        return str(self._read_store(path).get("room") or path.stem.replace("_", " "))
+
+    def delete_room(self, path: Path, name: str):
+        """Eigenen Raum endgültig löschen: Verlauf weg und – falls gemerkt – „Letzten Raum wieder öffnen“."""
+        if self.connected or self.connecting:
+            return
+        count = sum(1 for m in self._read_store(path).get("messages") or []  # ohne „… ist beigetreten“
+                    if isinstance(m, dict) and m.get("kind") in ("human", "ai"))
+        hosted = self.app.cfg.get("room_hosted")
+        remembered = bool(hosted) and self._store_path(hosted["room"]) == path
+        history = (f"Der gespeicherte Verlauf ({count} {'Nachricht' if count == 1 else 'Nachrichten'}) wird gelöscht"
+                   if count else "Es sind keine Nachrichten gespeichert")
+        code = " und der bisherige Einladungscode funktioniert nicht mehr." if remembered else "."
+        if not dialogs.askyesno("Raum löschen", f"Raum „{name}“ endgültig löschen?\n\n{history}{code}",
+                                parent=self.app.root):
+            return
+        try:
+            for f in (path, path.with_suffix(".tmp")):
+                f.unlink(missing_ok=True)
+        except OSError as e:
+            dialogs.showerror("Teamwork", f"Der Raum konnte nicht gelöscht werden ({e}).", parent=self.app.root)
+            return
+        if remembered:
+            self.app.cfg.pop("room_hosted", None)
+            self.app.save_config()
+        self.refresh_panel()
+
+    def forget_last(self):
+        """Fremden Raum aus „Letztem Raum wieder beitreten“ entfernen (der Raum selbst gehört dem Gastgeber)."""
+        self.app.cfg.pop("room_last", None)
+        self.app.save_config()
+        self.refresh_panel()
 
     def shutdown(self):
         """Verbindung trennen und ggf. eigenen Raum schließen (auch beim Beenden der App)."""

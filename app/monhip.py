@@ -21,6 +21,7 @@ import filedrop
 import images
 import llamacpp
 import memory
+import projekt
 import reminders
 import room as room_net
 import speech
@@ -28,7 +29,7 @@ from agent import Agent, describe_call, format_args, result_ok, run_conversation
 from backend import AUTO_MAX_CTX, AUTO_MIN_CTX, AUTO_TARGET_CTX, LlamaServer, auto_context, find_mmproj, \
     find_models, gguf_info, thinking_title
 from chatview import ChatView
-from roomui import RISKY_SUFFIXES, RoomMode
+from roomui import RoomMode
 from themes import THEMES, ThemeManager, label_to_key, mix_hex
 from widgets import ModeSwitch, rounded, scrolled
 
@@ -1584,10 +1585,7 @@ class App:
                 raise
         if path.stat().st_size > room_net.MAX_FILE:
             raise ValueError(f"Zu groß zum Teilen ({documents.human_size(path.stat().st_size)}, höchstens 100 MB).")
-        suffix = path.suffix.lower()
-        kind = ("Programm" if suffix in RISKY_SUFFIXES else "Archiv" if suffix in (".zip", ".7z", ".rar", ".tar", ".gz")
-                else "Bild" if images.is_image(path) else "Datei")
-        return documents.Document(path, kind, "", share_only=True)
+        return documents.Document(path, projekt.file_kind(path), "", share_only=True)
 
     @staticmethod
     def _read_readable(path: Path, thumb_size: int, speech_opts: tuple[str, str]) -> documents.Document:

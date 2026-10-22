@@ -299,7 +299,8 @@ class RoomServer:
     def _dispatch(self, h: BaseHTTPRequestHandler, method: str):
         try:
             route = urllib.parse.urlparse(h.path)
-            upload = (method, route.path) == ("POST", "/api/upload")  # Rohdaten statt JSON, eigene Grenze
+            # Rohdaten statt JSON, eigene Grenze: geteilte Datei bzw. Datei für den Projektordner
+            upload = method == "POST" and route.path in ("/api/upload", "/api/project/upload")
             length = int(h.headers.get("Content-Length") or 0)
             if length > (MAX_FILE if upload else MAX_BODY):
                 raise RoomError(413, "Datei zu groß (höchstens 100 MB)." if upload else "Anfrage zu groß.")
@@ -311,6 +312,8 @@ class RoomServer:
                        ("POST", "/api/member"): self._member, ("POST", "/api/leave"): self._leave,
                        ("POST", "/api/upload"): self._upload, ("GET", "/api/file"): self._file,
                        ("POST", "/api/project"): self._project,
+                       ("POST", "/api/project/upload"): self._project_upload,
+                       ("GET", "/api/project/file"): self._project_file,
                        }.get((method, route.path))
             if not handler:
                 raise RoomError(404, "Unbekannter Pfad.")
@@ -429,24 +432,29 @@ class RoomServer:
             if len(times) == times.maxlen and time.time() - times[0] < 60:
                 raise RoomError(429, "Zu viele Nachrichten – bitte kurz warten.")
             times.append(time.time())
-            files = []
-            for f in (d.get("files") or [])[:10]:
-                if not isinstance(f, dict):
-                    continue
-                item = {"name": safe_file_name(f.get("name", "")), "info": str(f.get("info", ""))[:200]}
-                stored = self.files.get(str(f.get("id", "")))
-                if stored:  # geteilte Datei: Name und Größe vom Gastgeber, nicht vom Absender
-                    item.update(id=f["id"], name=stored["name"], size=stored["size"], image=bool(f.get("image")))
-                files.append(item)
             msg = self._add_message({
                 "kind": kind, "author": m["id"], "name": m["ai"] if kind == "ai" else m["name"],
-                "owner": m["name"], "text": text, "content": content, "files": files,
+                "owner": m["name"], "text": text, "content": content, "files": self._clean_files(d.get("files")),
                 "done": kind == "human" or bool(d.get("done")), "model": m["model"] if kind == "ai" else "",
                 "nonce": str(d.get("nonce", ""))[:40]})
             return {"id": msg["id"]}
 
+    def _clean_files(self, files) -> list[dict]:
+        """Datei-Angaben einer Nachricht (höchstens 10): geteilte Dateien mit bekannter ID bekommen Name und Größe vom
+        Gastgeber, nicht vom Absender; unbekannte IDs werden nicht übernommen (nur cond-gesperrt aufrufen)."""
+        out = []
+        for f in (files if isinstance(files, list) else [])[:10]:
+            if not isinstance(f, dict):
+                continue
+            item = {"name": safe_file_name(f.get("name", "")), "info": str(f.get("info", ""))[:200]}
+            stored = self.files.get(str(f.get("id", "")))
+            if stored:
+                item.update(id=f["id"], name=stored["name"], size=stored["size"], image=bool(f.get("image")))
+            out.append(item)
+        return out
+
     def _patch(self, d: dict, _q) -> dict:
-        """Eine KI schreibt ihre (noch laufende) Antwort fort: Text anhängen, Werkzeuge, fertig."""
+        """Eine KI schreibt ihre (noch laufende) Antwort fort: Text anhängen, Werkzeuge, geteilte Dateien, fertig."""
         with self.cond:
             m = self._get_member(d.get("member"))
             msg = self.messages.get(d.get("id", ""))
@@ -462,6 +470,8 @@ class RoomServer:
                 msg["tools"] = [{k: str(t.get(k, ""))[:120] for k in ("icon", "label", "detail")} | {"ok": t.get("ok")}
                                 for t in d["tools"][:50] if isinstance(t, dict)]
                 event["tools"] = msg["tools"]
+            if isinstance(d.get("files"), list):  # von der KI geteilte Dateien (immer die ganze Liste)
+                msg["files"] = event["files"] = self._clean_files(d["files"])
             if d.get("done"):
                 msg["done"] = True
             self._dirty = True
@@ -479,13 +489,33 @@ class RoomServer:
         """Dateiaktion einer KI im gemeinsamen Projektordner (projekt.ProjectFolder)."""
         with self.cond:
             m = self._get_member(d.get("member"))
+        op = str(d.get("op", ""))
+        if op in ("put", "file"):  # nur über die eigenen Endpunkte (Rohdaten), nicht als JSON
+            raise RoomError(400, "Unbekannte Aktion.")
+        return self._project_run(m, op, d.get("args") or {})
+
+    def _project_run(self, m: dict, op: str, args: dict):
+        with self.cond:
             folder = self.project
         if not folder:
             raise RoomError(404, "Der Gastgeber hat (gerade) keinen Projektordner freigegeben.")
         try:
-            return folder.run(str(d.get("op", "")), d.get("args") or {}, m["id"], m["ai"], bool(m.get("host")))
+            return folder.run(op, args, m["id"], m["ai"], bool(m.get("host")))
         except projekt.ProjectError as e:
             raise RoomError(e.code, str(e)) from None
+
+    def _project_upload(self, body: bytes, q: dict) -> dict:
+        """Datei vom Rechner einer KI in den Projektordner (Rohdaten, höchstens MAX_FILE)."""
+        with self.cond:
+            m = self._get_member(q.get("member", ""))
+        return self._project_run(m, "put", {"path": q.get("path", ""), "data": body,
+                                            "overwrite": q.get("overwrite") == "1"})
+
+    def _project_file(self, _d, q: dict) -> Path:
+        """Datei aus dem Projektordner auf den Rechner einer KI (wird direkt von der Festplatte geschickt)."""
+        with self.cond:
+            m = self._get_member(q.get("member", ""))
+        return self._project_run(m, "file", {"path": q.get("path", "")})["path"]
 
     def _upload(self, body: bytes, q: dict) -> dict:
         """Datei eines Teilnehmers speichern – unter einer zufälligen ID, nie unter dem mitgeschickten Namen."""
@@ -569,10 +599,28 @@ class RoomClient:
 
     def download(self, fid: str, dest: Path):
         """Geteilte Datei nach dest holen (erst als .part, dann umbenannt)."""
-        query = urllib.parse.urlencode({"member": self.member, "id": fid})
-        tmp = Path(dest).with_name(Path(dest).name + ".part")
+        self._fetch_to(f"/api/file?{urllib.parse.urlencode({'member': self.member, 'id': fid})}", dest)
+
+    def project_upload(self, path: Path, target: str, overwrite: bool = False) -> dict:
+        """Datei von diesem Rechner in den Projektordner des Gastgebers (target relativ zum Projektordner)."""
+        data = Path(path).read_bytes()
+        if len(data) > MAX_FILE:
+            raise RoomError(413, f"„{Path(path).name}“ ist zu groß (höchstens 100 MB).")
+        query = urllib.parse.urlencode({"member": self.member, "path": target, "overwrite": "1" if overwrite else "0"})
+        with self._open("POST", f"/api/project/upload?{query}", data, "application/octet-stream", 600) as r:
+            return json.loads(r.read() or b"{}")
+
+    def project_download(self, rel: str, dest: Path):
+        """Datei aus dem Projektordner des Gastgebers nach dest auf diesem Rechner."""
+        self._fetch_to(f"/api/project/file?{urllib.parse.urlencode({'member': self.member, 'path': rel})}", dest)
+
+    def _fetch_to(self, path: str, dest: Path):
+        """GET path → Datei dest (erst als .part, dann umbenannt – ein Abbruch hinterlässt nichts Halbes)."""
+        dest = Path(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dest.with_name(dest.name + ".part")
         try:
-            with self._open("GET", f"/api/file?{query}", b"", "application/json", 600) as r, open(tmp, "wb") as f:
+            with self._open("GET", path, b"", "application/json", 600) as r, open(tmp, "wb") as f:
                 shutil.copyfileobj(r, f, 1 << 20)
             tmp.replace(dest)
         finally:
@@ -655,10 +703,13 @@ class RoomClient:
                                                "content": content if content is not None else text,
                                                "files": files or [], "done": done, "nonce": nonce})["id"]
 
-    def patch(self, msg_id: str, append: str = "", done: bool = False, tools: list | None = None):
+    def patch(self, msg_id: str, append: str = "", done: bool = False, tools: list | None = None,
+              files: list | None = None):
         data = {"member": self.member, "id": msg_id, "append": append, "done": done}
         if tools is not None:
             data["tools"] = tools
+        if files is not None:
+            data["files"] = files
         self._req("POST", "/api/patch", data)
 
     def project(self, op: str, args: dict) -> dict:

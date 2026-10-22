@@ -623,6 +623,19 @@ class ChatView:
                 self._embed(c, "other_a")
                 self._user_actions(c, text, {}, hover + [c], base="oact")
 
+    def cards(self, files: list[dict]):
+        """Datei-Kärtchen links – z. B. von einer KI geteilt (im Gruppenchat im Platz ihrer Antwort)."""
+        if not files:
+            return
+        self._ensure()
+        self.md_finish()
+        with self._edit():
+            c = self._canvas("arrow")
+            self._bind_cards(c)
+            self.bubbles.append((c, "files", files))
+            self._draw_files(c, files)
+            self._embed(c, "other")
+
     def tool_line(self, icon: str, label: str, detail: str, ok: bool | None):
         """Werkzeugaufruf einer fremden KI (nur Kopfzeile – Eingaben/Ergebnisse bleiben auf deren Rechner)."""
         self._ensure()

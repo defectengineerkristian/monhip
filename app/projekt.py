@@ -16,13 +16,18 @@ from datetime import datetime
 from pathlib import Path
 
 import documents
-from agent import EXEC_SUFFIXES, ToolError, _numbered, _read_text_file, list_directory, match_edit, search_files
+import images
+from agent import EXEC_SUFFIXES, SKIP_DIRS, ToolError, _numbered, _read_text_file, list_directory, match_edit, \
+    search_files
 
 READ_MAX = 20 * 1024 * 1024         # größere Dateien liest projekt_read nicht
 WRITE_MAX = 2 * 1024 * 1024         # Zeichen je projekt_write/edit (eine Anfrage an den Gastgeber hat höchstens 4 MB)
+FILE_MAX = 100 * 1024 * 1024        # je hoch- bzw. heruntergeladener Datei (wie room.MAX_FILE)
 ADDED_MAX = 500 * 1024 * 1024       # so viel dürfen die KIs seit der Freigabe insgesamt hinzufügen
+TREE_MAX = 2000                     # so viele Dateien listet „tree“ (ganzen Ordner herunterladen) höchstens
 KEEP_VERSIONS = 300                 # so viele alte Fassungen bleiben im Versionsordner
-WRITE_OPS = {"write", "edit", "mkdir", "delete"}
+WRITE_OPS = {"write", "edit", "mkdir", "delete", "put"}
+ARCHIVES = {".zip", ".7z", ".rar", ".tar", ".gz"}
 RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(10)), *(f"LPT{i}" for i in range(10))}
 MONHIP_DIR = Path(__file__).resolve().parent.parent
 # Programme/Skripte (und Office mit Makros): beim Herunterladen warnen, von Gästen geschrieben markieren
@@ -55,6 +60,16 @@ def mark_from_internet(path: Path):
             f.write(b"[ZoneTransfer]\r\nZoneId=3\r\n")
     except OSError:
         pass
+
+
+def file_kind(path: Path) -> str:
+    """Art einer Datei für Kärtchen: Bild, Programm, Archiv, bekannte Dokumentart oder einfach „Datei“."""
+    suffix = Path(path).suffix.lower()
+    if images.is_image(path):
+        return "Bild"
+    if suffix in RISKY_SUFFIXES:
+        return "Programm"
+    return "Archiv" if suffix in ARCHIVES else documents.KINDS.get(suffix, "Datei")
 
 
 def remove_tree(path: Path):
@@ -103,9 +118,12 @@ class ProjectFolder:
         return {"name": self.root.name, "write": self.write}
 
     def run(self, op: str, args: dict, member: str, who: str, host: bool) -> dict:
-        """Eine Aktion eines Teilnehmers (who = Name seiner KI) → {"text": …}; Fehler als ProjectError."""
+        """Eine Aktion eines Teilnehmers (who = Name seiner KI) → {"text": …}; Fehler als ProjectError.
+        Dazu „put“ (Datei hochladen: args data = Bytes, overwrite), „file“ (Herunterladen → {"path"}, nur beim
+        Gastgeber) und „tree“ (Dateien eines Ordners mit Größe, zum Herunterladen)."""
         fn = {"list": self._list, "read": self._read, "search": self._search, "write": self._write,
-              "edit": self._edit, "mkdir": self._mkdir, "delete": self._delete}.get(op)
+              "edit": self._edit, "mkdir": self._mkdir, "delete": self._delete, "put": self._put,
+              "file": self._file, "tree": self._tree}.get(op)
         if not fn:
             raise ProjectError(f"Unbekannte Aktion „{op}“.")
         if op in WRITE_OPS and not (self.write or host):
@@ -286,3 +304,64 @@ class ProjectFolder:
         self._keep_old(full, rel, who, move=True)
         self._changed[rel.lower()] = who
         return {"text": f"{rel} gelöscht (der Gastgeber kann es aus den alten Fassungen wiederherstellen)."}
+
+    # ------------------------------------------------------------ Dateien von/zu den Rechnern der KIs
+
+    def _put(self, a, member, who, host):
+        """Eine Datei vom Rechner einer KI ablegen (beliebige Art, auch Bilder/Programme). Eine vorhandene wird nur
+        mit overwrite ersetzt – die alte Fassung kommt in den Versionsordner."""
+        data = a.get("data")
+        if not isinstance(data, bytes):
+            raise ProjectError("Keine Daten.")
+        if len(data) > FILE_MAX:
+            raise ProjectError(f"Zu groß (höchstens {FILE_MAX // 1024 ** 2} MB je Datei).")
+        full, rel = self._path(a.get("path"))
+        if ".git" in rel.lower().split("/"):
+            raise Denied("Den Ordner .git (Versionsverwaltung des Gastgebers) ändern die KIs nicht.")
+        if rel == "." or full.is_dir():
+            example = "bild.png" if rel == "." else f"{rel}/bild.png"
+            raise ProjectError(f"„{rel}“ ist ein Ordner – bitte mit Dateinamen angeben, z. B. „{example}“.")
+        if full.exists():
+            if not a.get("overwrite"):
+                by = self._changed.get(rel.lower())
+                raise Conflict(f"„{rel}“ gibt es schon{f' (zuletzt von {by})' if by else ''} – zum Ersetzen "
+                               "overwrite=true angeben (die alte Fassung wird aufgehoben) oder einen anderen Namen wählen.")
+            delta = len(data) - full.stat().st_size
+            self._grow(delta)
+            self._keep_old(full, rel, who)
+        else:
+            delta = len(data)
+            self._grow(delta)
+            full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_bytes(data)
+        self._written(full, rel, data, delta, member, who, host)
+        return {"text": f"{rel} hochgeladen ({documents.human_size(len(data))})."}
+
+    def _file(self, a, member, who, host):
+        """Pfad einer Datei zum Herunterladen (geprüft) – nur für den Gastgeber selbst, nie im Netz."""
+        full, rel = self._path(a.get("path"))
+        if not full.is_file():
+            raise Missing(f"Die Datei „{rel}“ gibt es im Projektordner nicht.")
+        if full.stat().st_size > FILE_MAX:
+            raise ProjectError(f"„{rel}“ ist zu groß (höchstens {FILE_MAX // 1024 ** 2} MB je Datei).")
+        return {"path": full}
+
+    def _tree(self, a, member, who, host):
+        """Dateien unter einem Ordner (bzw. die eine Datei): [[Pfad relativ zum Projektordner, Größe], …] – ohne
+        Ordner wie .git oder node_modules (lassen sich beim Bauen neu erzeugen)."""
+        full, rel = self._path(a.get("path"))
+        if full.is_file():
+            return {"kind": "file", "base": rel, "files": [[rel, full.stat().st_size]]}
+        if not full.is_dir():
+            raise Missing(f"„{rel}“ gibt es im Projektordner nicht.")
+        files = []
+        for dirpath, dirnames, filenames in os.walk(full):
+            # keine Verknüpfungen nach draußen auflisten (Herunterladen ginge über _path ohnehin nicht)
+            dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS
+                                 and self.root in (Path(dirpath) / d).resolve().parents)
+            for name in sorted(filenames):
+                p = Path(dirpath) / name
+                if len(files) >= TREE_MAX:
+                    raise ProjectError(f"Zu viele Dateien (über {TREE_MAX}) – bitte einen Unterordner wählen.")
+                files.append([p.relative_to(self.root).as_posix(), p.stat().st_size])
+        return {"kind": "dir", "base": rel, "files": files}

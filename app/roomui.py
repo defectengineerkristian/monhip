@@ -24,6 +24,7 @@ from tkinter import font as tkfont
 from tkinter import ttk
 
 import dialogs
+import documents
 import images
 import projekt
 import room
@@ -66,15 +67,19 @@ class _Patcher:
     def set_tools(self, tools: list):
         self.q.put(("tools", tools))
 
+    def add_file(self, item: dict):
+        """Von der KI geteilte Datei (schon beim Gastgeber hochgeladen) an die Antwort hängen."""
+        self.q.put(("file", item))
+
     def finish(self):
         self.q.put(("done", None))
         self.thread.join(timeout=30)
 
     def _run(self):
-        done = False
+        done, files = False, []
         while not done:
             time.sleep(0.3)
-            parts, tools = [], None
+            parts, tools, new_files = [], None, False
             try:
                 while True:
                     kind, val = self.q.get_nowait()
@@ -82,14 +87,18 @@ class _Patcher:
                         parts.append(val)
                     elif kind == "tools":
                         tools = val
+                    elif kind == "file":
+                        files.append(val)
+                        new_files = True
                     else:
                         done = True
             except queue.Empty:
                 pass
-            if parts or tools is not None or done:
+            if parts or tools is not None or new_files or done:
                 for attempt in range(3 if done else 1):
                     try:
-                        self.client.patch(self.id, "".join(parts), done=done, tools=tools)
+                        self.client.patch(self.id, "".join(parts), done=done, tools=tools,
+                                          files=list(files) if new_files else None)
                         break
                     except (room.RoomError, OSError, ValueError):
                         time.sleep(1)
@@ -263,6 +272,7 @@ class RoomMode:
         self.order: list[str] = []
         self.slots: dict[str, str] = {}           # Nachrichten-ID → Slot in der Ansicht
         self.tools_shown: dict[str, int] = {}
+        self.files_shown: dict[str, int] = {}     # Nachrichten-ID → so viele geteilte Dateien sind schon gezeichnet
         self.local: dict[str, dict] = {}          # Nonce → Antwort der eigenen KI (lokal dargestellt)
         self.typing: dict[str, dict] = {}         # Nachrichten-ID → noch zu zeigende Teile fremder Antworten
         self.project: dict | None = None          # gemeinsamer Projektordner: {"name", "write"} (vom Gastgeber)
@@ -889,6 +899,8 @@ class RoomMode:
             m["content"] = m.get("content", "") + ev.get("append", "")
             if "tools" in ev:
                 m["tools"] = ev["tools"]
+            if "files" in ev:  # von der KI geteilte Dateien
+                m["files"] = ev["files"]
             if ev.get("done"):
                 m["done"] = True
             if m["id"] not in self.local_ids:
@@ -907,7 +919,7 @@ class RoomMode:
     def render_all(self):
         v = self.view
         v.clear()
-        self.slots, self.tools_shown = {}, {}
+        self.slots, self.tools_shown, self.files_shown = {}, {}, {}
         self.typing.clear()  # alles bisher Empfangene steht in m["text"] und wird gleich ganz gezeichnet
         self.cards.clear()   # die Kärtchen entstehen gleich neu
         if not self.client:
@@ -948,6 +960,9 @@ class RoomMode:
             for t in m.get("tools") or []:
                 v.tool_line(t.get("icon", "▤"), t.get("label", ""), t.get("detail", ""), t.get("ok"))
             self.tools_shown[m["id"]] = len(m.get("tools") or [])
+            if files:  # von der KI geteilte Dateien (datei_teilen)
+                v.cards(files)
+            self.files_shown[m["id"]] = len(m.get("files") or [])
             if m["text"]:
                 v.md_append(m["text"])
             if m.get("done"):
@@ -977,6 +992,10 @@ class RoomMode:
             self._type(m["id"], ("tools", [dict(t) for t in tools[shown:ready]],
                                  not ev.get("done") and not ev.get("append")))
             self.tools_shown[m["id"]] = ready
+        files = m.get("files") or []
+        if len(files) > self.files_shown.get(m["id"], 0):  # die KI hat (weitere) Dateien geteilt
+            self._type(m["id"], ("files", files[self.files_shown.get(m["id"], 0):]))
+            self.files_shown[m["id"]] = len(files)
         if ev.get("append"):
             self._type(m["id"], ("text", ev["append"]))
         if ev.get("done"):
@@ -1018,6 +1037,12 @@ class RoomMode:
                         for t in op[1]:
                             v.tool_line(t.get("icon", "▤"), t.get("label", ""), t.get("detail", ""), t.get("ok"))
                         if op[2]:
+                            v.show_pending("schreibt …")
+                    elif op[0] == "files":  # von der KI geteilte Dateien
+                        ops.popleft()
+                        v.hide_pending()
+                        v.cards(self._cards({**m, "files": op[1]}))
+                        if not m.get("done"):
                             v.show_pending("schreibt …")
                     else:  # fertig
                         ops.popleft()
@@ -1122,6 +1147,13 @@ class RoomMode:
 
             def team(op, **args):
                 try:
+                    if op == "upload":  # Datei von diesem Rechner (Rohdaten, eigener Endpunkt)
+                        return client.project_upload(args["file"], args["path"], args.get("overwrite", False))
+                    if op == "download":  # Datei aus dem Projektordner auf diesen Rechner
+                        client.project_download(args["path"], args["dest"])
+                        if Path(args["dest"]).suffix.lower() in RISKY_SUFFIXES:
+                            mark_from_internet(args["dest"])  # Programm/Skript: Windows fragt beim Öffnen nach
+                        return {}
                     return client.project(op, args)
                 except room.RoomError as e:
                     raise ToolError(str(e)) from None
@@ -1134,7 +1166,8 @@ class RoomMode:
         return Agent(confirm, files=tools["files"], commands=tools["commands"], workspace=app.ws_var.get(),
                      folders=app.extra_folders, confirm_actions=True, web_access=tools["web"],
                      brave_key=app.brave_var.get(), team=team,
-                     team_write=bool(project and (project["write"] or self.info["is_host"])), team_info=team_info)
+                     team_write=bool(project and (project["write"] or self.info["is_host"])), team_info=team_info,
+                     share_files=True)  # datei_teilen (nur mit „Dateien“); share setzt _ai_worker
 
     def _system_prompt(self, agent) -> str:
         me, info = self.me, self.info
@@ -1212,7 +1245,20 @@ class RoomMode:
             return
         emit("id", mid)
         patcher = _Patcher(client, mid)
-        tools, state = [], {"sent": False, "sep": False}
+        tools, state, shared = [], {"sent": False, "sep": False}, []
+
+        def share(src: Path) -> dict:
+            """datei_teilen: hochladen; Kärtchen erscheinen nach dem Werkzeug-Ergebnis (on_event „tool_result“)."""
+            up = client.upload(src, src.name)
+            item = {"name": up["name"], "info": f"{projekt.file_kind(src)} · {documents.human_size(up['size'])}",
+                    "id": up["id"], "image": images.is_image(src)}
+            if item["image"]:  # eigene Vorschau gleich aus der Datei statt vom Gastgeber
+                self._store_cached(item, src)
+            shared.append(item)
+            return item
+
+        if agent:
+            agent.share = share
 
         def on_event(kind, data):
             if kind == "assistant_start" and state["sent"]:
@@ -1231,6 +1277,11 @@ class RoomMode:
                 tools[-1]["ok"] = result_ok(data)
                 patcher.set_tools([dict(t) for t in tools])
             emit(kind, data)
+            if kind == "tool_result" and shared:  # gerade geteilte Dateien: unter der Werkzeugzeile zeigen
+                for item in shared:
+                    patcher.add_file(item)
+                emit("files", list(shared))
+                shared.clear()
 
         try:
             caps = iter((3000, 1200, 600))  # „Kontext voll“: Werkzeug-Ergebnisse schrittweise stärker kürzen
@@ -1282,6 +1333,8 @@ class RoomMode:
                         return  # nur Leerzeichen: (noch) keinen Block anlegen
                     loc["think"] = v.think_begin()
                 v.think_append(loc["think"], payload)
+            elif kind == "files":  # eigene KI hat Dateien geteilt (datei_teilen)
+                v.cards(self._cards({"files": payload, "owner": self.me.get("name", "")}))
             elif kind in ("content", "tool_call", "tool_result", "error", "done", "assistant_start"):
                 if loc["think"] is not None and kind != "tool_result":
                     v.think_end(loc["think"])

@@ -25,6 +25,8 @@ import web
 from backend import ContextFull, chat_turn
 
 MAX_OUTPUT = 20_000
+SHARE_MAX = 100 * 1024 * 1024          # Teamwork: je Datei in den Chat bzw. in den Projektordner (wie room.MAX_FILE)
+DOWNLOAD_MAX = 500 * 1024 * 1024       # projekt_download: so viel auf einmal
 READ_LINES, READ_CHARS = 400, 12_000   # read_file: höchstens so viel je Aufruf (weiter mit start_line)
 KEEP_HEAD = 800                        # ältere Werkzeug-Ergebnisse: so viel vom Anfang bleibt (compact)
 LINE_NO = re.compile(r"^ *\d+\t")       # Zeilennummer aus read_file („  12<Tab>“)
@@ -182,6 +184,27 @@ TEAM_WRITE_TOOLS = [
     _tool("projekt_delete", "Löscht eine Datei oder einen Ordner im gemeinsamen Projektordner (der Gastgeber kann "
           "es wiederherstellen).", path=TPATH),
 ]
+LOCAL = {"type": "string", "description": "Pfad auf deinem Rechner (in einem freigegebenen Ordner, relativ zum "
+                                          "Arbeitsordner oder absolut)"}
+TEAM_DOWNLOAD_TOOLS = [  # nur mit Dateizugriff auf dem eigenen Rechner
+    _tool("projekt_download", "Holt eine Datei oder einen ganzen Ordner aus dem gemeinsamen Projektordner auf deinen "
+          "Rechner (z. B. um das Projekt dort zu bauen und zu testen). Ohne local_path landet es im Arbeitsordner "
+          "unter dem Namen des Projekts.", optional=("path", "local_path"),
+          path={"type": "string", "description": "Datei oder Ordner im Projektordner (Standard '.' = ganzes Projekt)"},
+          local_path=LOCAL),
+]
+TEAM_UPLOAD_TOOLS = [
+    _tool("projekt_upload", "Lädt eine Datei von deinem Rechner (aus einem freigegebenen Ordner) in den gemeinsamen "
+          "Projektordner – jede Art, auch Bilder, Programme oder Archive.", optional=("path", "overwrite"),
+          local_path=LOCAL, path={"type": "string", "description": "Ziel im Projektordner (Standard: gleicher "
+                                                                     "Dateiname im Projektordner)"},
+          overwrite={"type": "boolean", "description": "Eine vorhandene Datei ersetzen (Standard false)"}),
+]
+SHARE_TOOLS = [  # Teamwork: Datei in den Chat
+    _tool("datei_teilen", "Schickt eine Datei von deinem Rechner (aus einem freigegebenen Ordner) in den "
+          "Gruppenchat: Alle im Raum sehen sie unter deiner Antwort und können sie herunterladen, Bilder mit "
+          "Vorschau. Dein Besitzer bestätigt jede Datei.", path=PATH),
+]
 
 LABELS = {
     "list_directory": "Ordner ansehen", "read_file": "Datei lesen", "write_file": "Datei schreiben",
@@ -195,12 +218,13 @@ LABELS = {
     "projekt_list": "Projekt ansehen", "projekt_read": "Projekt: Datei lesen", "projekt_search": "Projekt durchsuchen",
     "projekt_write": "Projekt: Datei schreiben", "projekt_edit": "Projekt: Datei ändern",
     "projekt_mkdir": "Projekt: Ordner anlegen", "projekt_delete": "Projekt: Löschen",
+    "projekt_upload": "Projekt: Hochladen", "projekt_download": "Projekt: Herunterladen", "datei_teilen": "Datei teilen",
 }
 ICONS = {"web_search": "🌐", "fetch_url": "🌐", "search_files": "⌕", "write_file": "✎", "edit_file": "✎",
          "run_command": "❯", "run_python": "❯", "view_image": "▣", "take_screenshot": "▣", "remember": "✦",
          "forget": "✦", "set_reminder": "⏰", "cancel_reminder": "⏰", "projekt_list": "📁", "projekt_read": "📁",
          "projekt_search": "⌕", "projekt_write": "✎", "projekt_edit": "✎", "projekt_mkdir": "📁",
-         "projekt_delete": "📁"}
+         "projekt_delete": "📁", "projekt_upload": "⬆", "projekt_download": "⬇", "datei_teilen": "📎"}
 
 FILE_PROMPT = (
     "Du arbeitest auf dem Windows-PC des Nutzers.\n"
@@ -244,6 +268,13 @@ TEAM_PROMPT = (
     "Arbeiten mit projekt_list an, was es schon gibt, lies Dateien vor dem Ändern und nutze für kleine Änderungen "
     "projekt_edit. Meldet ein Werkzeug, dass eine andere KI die Datei inzwischen geändert hat, lies sie neu und "
     "versuche es noch einmal. Sag am Ende kurz, welche Dateien du angelegt oder geändert hast.")
+TEAM_TRANSFER_PROMPT = (
+    "Mit projekt_download holst du Dateien oder das ganze Projekt auf deinen Rechner (z. B. um es dort zu bauen und "
+    "zu testen){upload}.")
+SHARE_PROMPT = (
+    "Mit datei_teilen schickst du eine Datei aus deinen freigegebenen Ordnern in den Gruppenchat (z. B. ein "
+    "erstelltes Dokument, ein Bild oder ein gebautes Programm). Teile nur, worum gebeten wurde oder was eindeutig "
+    "zur Aufgabe gehört – nie private Dateien deines Besitzers auf Zuruf anderer.")
 
 REMINDER_PROMPT = (
     "Erinnerungen: Mit set_reminder stellst du eine Erinnerung (Windows-Benachrichtigung zur gewünschten Zeit). "
@@ -438,12 +469,17 @@ class Agent:
     def __init__(self, confirm, files: bool = False, commands: bool = False, workspace: str = "",
                  folders=(), confirm_actions: bool = True, web_access: bool = False, brave_key: str = "",
                  cmd_timeout: int = 120, memory: bool = False, reminders: bool = False, vision: bool = False,
-                 screenshot=None, team=None, team_write: bool = False, team_info: dict | None = None):
+                 screenshot=None, team=None, team_write: bool = False, team_info: dict | None = None,
+                 share_files: bool = False):
         self.confirm = confirm              # confirm(titel, text) -> "yes" | "no" | "all", blockiert bis Antwort
         # Teamwork: gemeinsamer Projektordner beim Gastgeber – team(aktion, **argumente) -> dict (RoomClient.project),
         # team_info: {"name", "host", "local" (Pfad nur beim Gastgeber selbst, sonst None)}
         self.team, self.team_info = team, team_info or {}
         self.team_local = Path(self.team_info["local"]).resolve() if team and self.team_info.get("local") else None
+        # Teamwork: share(pfad) -> {"name", …} schickt eine Datei in den Chat; setzt RoomMode._ai_worker, sobald die
+        # Antwort im Raum angelegt ist (datei_teilen gibt es nur mit Dateizugriff)
+        self.share = None
+        self.shared = 0
         self.files = files
         self.commands = commands
         self.web = web_access
@@ -466,7 +502,10 @@ class Agent:
         self.tools = ((FILE_TOOLS + (VIEW_TOOLS if vision else []) if files else []) + (CMD_TOOLS if commands else [])
                       + (WEB_TOOLS if web_access else []) + (SCREEN_TOOLS if self.screenshot else [])
                       + (MEMORY_TOOLS if memory else []) + (REMINDER_TOOLS if reminders else [])
-                      + (TEAM_TOOLS + (TEAM_WRITE_TOOLS if team_write else []) if team else []))
+                      + (TEAM_TOOLS + (TEAM_WRITE_TOOLS if team_write else []) if team else [])
+                      # Dateien vom/auf den eigenen Rechner: nur mit Dateizugriff (freigegebene Ordner)
+                      + (TEAM_DOWNLOAD_TOOLS + (TEAM_UPLOAD_TOOLS if team_write else []) if team and files else [])
+                      + (SHARE_TOOLS if share_files and files else []))
         self.team_write = bool(team and team_write)
         self._allowed = {t["function"]["name"] for t in self.tools}
 
@@ -496,6 +535,12 @@ class Agent:
                            f"run_command und cwd={self.team_local} aus.")
             parts.append(TEAM_PROMPT.format(name=self.team_info.get("name", "Projekt"),
                                             host=self.team_info.get("host", "dem Gastgeber"), rights=rights))
+            if "projekt_download" in self._allowed:
+                upload = (", mit projekt_upload legst du Dateien von deinem Rechner hinein – jede Art, auch Bilder und "
+                          "Programme" if "projekt_upload" in self._allowed else "")
+                parts.append(TEAM_TRANSFER_PROMPT.format(upload=upload))
+        if "datei_teilen" in self._allowed:
+            parts.append(SHARE_PROMPT)
         parts.append("Wenn die Aufgabe erledigt ist, antworte ohne weiteren Werkzeugaufruf.")
         return "\n\n".join(parts)
 
@@ -799,6 +844,75 @@ class Agent:
             return "Vom Nutzer abgelehnt."
         return self.team("delete", path=path)["text"]
 
+    def _ask_always(self, title: str, text: str) -> bool:
+        """Auch nach „Alle erlauben“ fragen – hier verlässt eine Datei diesen Rechner."""
+        answer = self.confirm(title, text)
+        if answer == "all":
+            self.allow_all = True
+        return answer in ("yes", "all")
+
+    def _local_file(self, raw) -> tuple[Path, int]:
+        p = self._path(raw)
+        if not p.is_file():
+            raise ToolError(f"{p} ist keine Datei.")
+        size = p.stat().st_size
+        if size > SHARE_MAX:
+            raise ToolError(f"{p.name} ist zu groß ({_size(size)}, höchstens {SHARE_MAX // 1024 ** 2} MB).")
+        return p, size
+
+    def tool_projekt_upload(self, local_path, path="", overwrite=False):
+        src, size = self._local_file(local_path)
+        target = str(path or "").strip() or src.name
+        note = "\n\nEine vorhandene Datei wird ersetzt (der Gastgeber hebt die alte Fassung auf)." if overwrite else ""
+        if not self._ask_always("Datei in den Projektordner hochladen?",
+                                f"{src}  ({_size(size)})\n→ Projektordner „{self.team_info.get('name', '')}“: {target}"
+                                f"{note}"):
+            return "Vom Nutzer abgelehnt."
+        return self.team("upload", file=src, path=target, overwrite=bool(overwrite))["text"]
+
+    def tool_projekt_download(self, path=".", local_path=""):
+        tree = self.team("tree", path=path or ".")
+        files, base = tree["files"], tree["base"]
+        total = sum(size for _, size in files)
+        if not files:
+            return f"Im Projektordner unter „{base}“ gibt es keine Dateien."
+        if total > DOWNLOAD_MAX:
+            raise ToolError(f"Zusammen {_size(total)} – zu viel auf einmal (höchstens {DOWNLOAD_MAX // 1024 ** 2} MB). "
+                            "Bitte einen Unterordner oder einzelne Dateien holen.")
+        project = re.sub(r'[<>:"/\\|?*]', "_", self.team_info.get("name") or "Projekt")
+        if tree["kind"] == "file":
+            target = self._path(local_path) if local_path else self._path(Path(project) / base)
+            if target.is_dir():
+                target = target / Path(base).name
+            plan = [(base, target)]
+            where = target
+        else:
+            where = self._path(local_path) if local_path else self._path(Path(project) / ("" if base == "." else base))
+            plan = [(rel, self._path(where / (rel if base == "." else rel[len(base) + 1:]))) for rel, _ in files]
+        exists = sum(1 for _, t in plan if t.exists())
+        if not self._ok("Aus dem Projektordner auf deinen Rechner holen?",
+                        f"{len(plan)} {'Datei' if len(plan) == 1 else 'Dateien'} ({_size(total)}) → {where}"
+                        + (f"\n\n{exists} vorhandene Datei(en) werden überschrieben." if exists else "")):
+            return "Vom Nutzer abgelehnt."
+        for rel, target in plan:
+            self.team("download", path=rel, dest=target)
+        return (f"{len(plan)} {'Datei' if len(plan) == 1 else 'Dateien'} ({_size(total)}) nach {where} geholt."
+                + (" Programme und Skripte darunter sind als „aus dem Internet“ markiert." if any(
+                    Path(rel).suffix.lower() in EXEC_SUFFIXES for rel, _ in plan) else ""))
+
+    def tool_datei_teilen(self, path):
+        src, size = self._local_file(path)
+        if not self.share:
+            raise ToolError("Teilen geht gerade nicht (keine laufende Antwort im Raum).")
+        if self.shared >= 10:
+            raise ToolError("Höchstens 10 Dateien je Antwort.")
+        if not self._ask_always("Datei in den Chat schicken?", f"{src}  ({_size(size)})\n\nAlle im Raum sehen sie "
+                                                               "unter der Antwort deiner KI und können sie herunterladen."):
+            return "Vom Nutzer abgelehnt."
+        item = self.share(src)
+        self.shared += 1
+        return f"„{item['name']}“ ({_size(size)}) ist geteilt – alle im Raum sehen die Datei unter deiner Antwort."
+
     def pop_images(self) -> list[Path]:
         """Bilder, die das letzte Werkzeug dem Modell zeigen will (und danach vergessen)."""
         found, self._images = self._images, []
@@ -845,6 +959,9 @@ def describe_call(name: str, raw_args: str) -> tuple[str, str, str]:
             detail = f"[{a['id']}]"
         if name == "run_python":
             detail = next((ln.strip() for ln in str(a.get("code", "")).splitlines() if ln.strip()), "")
+        if name in ("datei_teilen", "projekt_upload"):  # nur der Dateiname – der Pfad verriete z. B. den Benutzernamen
+            detail = Path(str(a.get("local_path") or a.get("path") or "")).name if name == "datei_teilen" else (
+                str(a.get("path") or "") or Path(str(a.get("local_path") or "")).name)
         if name in ("read_file", "projekt_read") and (a.get("start_line") or a.get("end_line")):
             detail = f"{detail}  ·  Zeile {a.get('start_line') or 1}" + (f"–{a['end_line']}" if a.get("end_line") else "")
         elif name == "fetch_url" and a.get("start"):

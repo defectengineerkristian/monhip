@@ -200,6 +200,29 @@ TEAM_UPLOAD_TOOLS = [
                                                                      "Dateiname im Projektordner)"},
           overwrite={"type": "boolean", "description": "Eine vorhandene Datei ersetzen (Standard false)"}),
 ]
+DOC = {"type": "string", "description": "Datei wie in experte_liste (Pfad, Dateiname oder eindeutiger Teil davon)"}
+EXPERT_TOOLS = [  # Experten-Modus: ausgewerteter Dokumentenordner (nur lesend)
+    _tool("experte_suchen", "Durchsucht den vollen Text aller Dokumente des Experten-Ordners und liefert die "
+          "passendsten Stellen mit Datei und Seite. Für jede inhaltliche Frage zuerst suchen.", optional=("datei",),
+          suchbegriffe={"type": "string", "description": "Suchwörter, z. B. 'Kündigungsfrist Mietvertrag'"},
+          datei={"type": "string", "description": "Optional: nur in dieser Datei suchen"}),
+    _tool("experte_lesen", "Liest Seiten eines Dokuments im Wortlaut (bei Scans den abgeschriebenen Text), "
+          "höchstens 5 Seiten bzw. 12 000 Zeichen je Aufruf.", optional=("von", "bis"), datei=DOC,
+          von={"type": "integer", "description": "Erste Seite bzw. erster Abschnitt (Standard 1)"},
+          bis={"type": "integer", "description": "Letzte Seite bzw. letzter Abschnitt"}),
+    _tool("experte_zusammenfassung", "Zeigt die Zusammenfassung eines Dokuments (Kurzfassung, Kernpunkte, Zahlen).",
+          datei=DOC),
+    _tool("experte_liste", "Listet die Dokumente des Experten-Ordners mit Art und Kurzbeschreibung (je 60).",
+          optional=("seite", "filter"), seite={"type": "integer", "description": "Seite der Liste (Standard 1)"},
+          filter={"type": "string", "description": "Nur Dateien, deren Pfad diesen Text enthält"}),
+]
+EXPERT_START_TOOLS = [
+    _tool("ordner_auswerten", "Macht diesen Chat zum Experten für einen Ordner mit vielen Dokumenten (Experten-Modus): "
+          "Monhip wertet alle Dokumente darin im Hintergrund aus – das kann bei vielen Dateien Stunden dauern – und "
+          "danach kannst du darin suchen. Nur für Ordner in den freigegebenen Ordnern.", optional=("schwerpunkt",),
+          ordner=PATH, schwerpunkt={"type": "string", "description": "Optional: worauf jede Zusammenfassung besonders "
+                                                                     "achten soll, z. B. 'Kündigungsfristen'"}),
+]
 SHARE_TOOLS = [  # Teamwork: Datei in den Chat
     _tool("datei_teilen", "Schickt eine Datei von deinem Rechner (aus einem freigegebenen Ordner) in den "
           "Gruppenchat: Alle im Raum sehen sie unter deiner Antwort und können sie herunterladen, Bilder mit "
@@ -219,12 +242,15 @@ LABELS = {
     "projekt_write": "Projekt: Datei schreiben", "projekt_edit": "Projekt: Datei ändern",
     "projekt_mkdir": "Projekt: Ordner anlegen", "projekt_delete": "Projekt: Löschen",
     "projekt_upload": "Projekt: Hochladen", "projekt_download": "Projekt: Herunterladen", "datei_teilen": "Datei teilen",
+    "experte_suchen": "Dokumente durchsuchen", "experte_lesen": "Dokument lesen",
+    "experte_zusammenfassung": "Zusammenfassung", "experte_liste": "Dokumentliste", "ordner_auswerten": "Ordner auswerten",
 }
 ICONS = {"web_search": "🌐", "fetch_url": "🌐", "search_files": "⌕", "write_file": "✎", "edit_file": "✎",
          "run_command": "❯", "run_python": "❯", "view_image": "▣", "take_screenshot": "▣", "remember": "✦",
          "forget": "✦", "set_reminder": "⏰", "cancel_reminder": "⏰", "projekt_list": "📁", "projekt_read": "📁",
          "projekt_search": "⌕", "projekt_write": "✎", "projekt_edit": "✎", "projekt_mkdir": "📁",
-         "projekt_delete": "📁", "projekt_upload": "⬆", "projekt_download": "⬇", "datei_teilen": "📎"}
+         "projekt_delete": "📁", "projekt_upload": "⬆", "projekt_download": "⬇", "datei_teilen": "📎",
+         "experte_suchen": "⌕"}  # Experten-Modus sonst ohne Bildzeichen (schlicht, professionell)
 
 FILE_PROMPT = (
     "Du arbeitest auf dem Windows-PC des Nutzers.\n"
@@ -268,6 +294,12 @@ TEAM_PROMPT = (
     "Arbeiten mit projekt_list an, was es schon gibt, lies Dateien vor dem Ändern und nutze für kleine Änderungen "
     "projekt_edit. Meldet ein Werkzeug, dass eine andere KI die Datei inzwischen geändert hat, lies sie neu und "
     "versuche es noch einmal. Sag am Ende kurz, welche Dateien du angelegt oder geändert hast.")
+EXPERT_PROMPT = (
+    "Experten-Modus: Du bist Experte für den Dokumentenordner „{name}“ ({count} Dokumente{state}). Beantworte Fragen "
+    "auf Grundlage dieser Dokumente: Suche mit experte_suchen nach den passenden Stellen, lies wichtige Stellen mit "
+    "experte_lesen im Wortlaut nach und nenne als Quelle immer Datei und Seite. Für einen Überblick über einzelne "
+    "Dokumente gibt es experte_zusammenfassung, für die Liste aller Dokumente experte_liste. Steht etwas nicht in den "
+    "Dokumenten, sag das deutlich, statt zu raten.\n\nGrundwissen zum Ordner:\n{overview}")
 TEAM_TRANSFER_PROMPT = (
     "Mit projekt_download holst du Dateien oder das ganze Projekt auf deinen Rechner (z. B. um es dort zu bauen und "
     "zu testen){upload}.")
@@ -470,7 +502,7 @@ class Agent:
                  folders=(), confirm_actions: bool = True, web_access: bool = False, brave_key: str = "",
                  cmd_timeout: int = 120, memory: bool = False, reminders: bool = False, vision: bool = False,
                  screenshot=None, team=None, team_write: bool = False, team_info: dict | None = None,
-                 share_files: bool = False):
+                 share_files: bool = False, expert=None, expert_start=None):
         self.confirm = confirm              # confirm(titel, text) -> "yes" | "no" | "all", blockiert bis Antwort
         # Teamwork: gemeinsamer Projektordner beim Gastgeber – team(aktion, **argumente) -> dict (RoomClient.project),
         # team_info: {"name", "host", "local" (Pfad nur beim Gastgeber selbst, sonst None)}
@@ -480,6 +512,9 @@ class Agent:
         # Antwort im Raum angelegt ist (datei_teilen gibt es nur mit Dateizugriff)
         self.share = None
         self.shared = 0
+        # Experten-Modus: expert = experte.Library des Chats (lesend); expert_start(ordner, schwerpunkt) -> Meldung
+        # macht den Chat zum Experten-Chat (nur ohne expert und mit Dateizugriff)
+        self.expert, self.expert_start = expert, expert_start
         self.files = files
         self.commands = commands
         self.web = web_access
@@ -505,7 +540,9 @@ class Agent:
                       + (TEAM_TOOLS + (TEAM_WRITE_TOOLS if team_write else []) if team else [])
                       # Dateien vom/auf den eigenen Rechner: nur mit Dateizugriff (freigegebene Ordner)
                       + (TEAM_DOWNLOAD_TOOLS + (TEAM_UPLOAD_TOOLS if team_write else []) if team and files else [])
-                      + (SHARE_TOOLS if share_files and files else []))
+                      + (SHARE_TOOLS if share_files and files else [])
+                      + (EXPERT_TOOLS if expert else [])
+                      + (EXPERT_START_TOOLS if expert_start and files and not expert else []))
         self.team_write = bool(team and team_write)
         self._allowed = {t["function"]["name"] for t in self.tools}
 
@@ -541,6 +578,12 @@ class Agent:
                 parts.append(TEAM_TRANSFER_PROMPT.format(upload=upload))
         if "datei_teilen" in self._allowed:
             parts.append(SHARE_PROMPT)
+        if self.expert:
+            files = self.expert.info.get("dateien", {})
+            done = sum(1 for e in files.values() if e.get("status") == "ok")
+            state = "" if self.expert.info.get("fertig") else f", davon {done} schon ausgewertet – die Auswertung läuft noch"
+            parts.append(EXPERT_PROMPT.format(name=self.expert.source.name, count=len(files), state=state,
+                                              overview=self.expert.prompt_block()))
         parts.append("Wenn die Aufgabe erledigt ist, antworte ohne weiteren Werkzeugaufruf.")
         return "\n\n".join(parts)
 
@@ -913,6 +956,38 @@ class Agent:
         self.shared += 1
         return f"„{item['name']}“ ({_size(size)}) ist geteilt – alle im Raum sehen die Datei unter deiner Antwort."
 
+    # ------------------------------------------------------------ Experten-Modus
+
+    def _expert(self, fn, *args):
+        try:
+            return fn(*args)
+        except LookupError as e:
+            raise ToolError(str(e)) from None
+
+    def tool_experte_suchen(self, suchbegriffe, datei=""):
+        return self._expert(self.expert.search, suchbegriffe, datei)
+
+    def tool_experte_lesen(self, datei, von=1, bis=None):
+        return self._expert(self.expert.read, datei, von, bis)
+
+    def tool_experte_zusammenfassung(self, datei):
+        return self._expert(self.expert.summary, datei)
+
+    def tool_experte_liste(self, seite=1, filter=""):
+        return self._expert(self.expert.listing, seite, filter)
+
+    def tool_ordner_auswerten(self, ordner, schwerpunkt=""):
+        folder = self._path(ordner)
+        if not folder.is_dir():
+            raise ToolError(f"{folder} ist kein Ordner.")
+        focus = str(schwerpunkt or "").strip()
+        if not self._ok("Ordner auswerten (Experten-Modus)?",
+                        f"{folder}\n\nMonhip wertet alle Dokumente darin im Hintergrund aus – bei vielen Dateien kann "
+                        "das Stunden dauern. Dieser Chat wird danach zum Experten für den Ordner."
+                        + (f"\n\nSchwerpunkt: {focus}" if focus else "")):
+            return "Vom Nutzer abgelehnt."
+        return self.expert_start(folder, focus)
+
     def pop_images(self) -> list[Path]:
         """Bilder, die das letzte Werkzeug dem Modell zeigen will (und danach vergessen)."""
         found, self._images = self._images, []
@@ -953,8 +1028,8 @@ def describe_call(name: str, raw_args: str) -> tuple[str, str, str]:
     if "source" in a and "destination" in a:
         detail = f"{a['source']} → {a['destination']}"
     else:
-        detail = next((str(a[k]) for k in ("path", "command", "query", "url", "name", "pattern", "text") if a.get(k)),
-                      "")
+        detail = next((str(a[k]) for k in ("path", "command", "query", "url", "name", "pattern", "text", "suchbegriffe",
+                                           "datei", "ordner") if a.get(k)), "")
         if not detail and a.get("id") is not None:
             detail = f"[{a['id']}]"
         if name == "run_python":

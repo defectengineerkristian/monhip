@@ -17,6 +17,7 @@ import context
 import dialogs
 import documents
 import downloads
+import experte
 import filedrop
 import images
 import llamacpp
@@ -33,6 +34,7 @@ from roomui import RoomMode
 from themes import THEMES, ThemeManager, label_to_key, mix_hex
 from widgets import ModeSwitch, rounded, scrolled
 
+VERSION = "1.0"  # auf GitHub als Release „v1.0“ (danach richtet sich das Update im Installer)
 APP_DIR = Path(__file__).resolve().parent.parent  # Code in app/, Daten daneben
 CONFIG_FILE = APP_DIR / "config.json"
 MODEL_DIR = APP_DIR / "modelle"  # wird immer durchsucht, Ziel für Downloads
@@ -123,6 +125,10 @@ class App:
         self._draining = False
         self.attachments: list[dict] = []
         self.quote: str | None = None    # „Antworten“ auf eine markierte Stelle
+        self.expert_job: experte.Job | None = None   # laufende Auswertung (Experten-Modus, höchstens eine)
+        self._expert_job_chat: str | None = None      # … gestartet für diesen Chat
+        self._expert_text = ""                        # Fortschritt der laufenden Auswertung
+        self._expert_paused = False                   # … hält gerade an („Pausieren“ ist angekommen)
         self._ctx: tuple[int | None, bool] = (None, False)  # Kontextanzeige: (belegte Tokens, genau gemessen?)
         self._meter_gen = 0              # spätere Schätzungen überschreiben keine neueren Messungen
         self._meter_cache: dict = {}
@@ -280,6 +286,17 @@ class App:
         self.ctx_bar.pack(side=tk.RIGHT, padx=(8, 0))
         self.ctx_text = tk.StringVar()
         ttk.Label(meter, textvariable=self.ctx_text, style="Muted.TLabel", font=("Segoe UI", 8)).pack(side=tk.RIGHT)
+        # Experten-Modus (nur im Chat): Häkchen, Fortschritt der Auswertung, „Pausieren · Stoppen“ bzw. „Fortsetzen“
+        self.expert_bar = ttk.Frame(meter)
+        self.expert_bar.pack(side=tk.LEFT)
+        self.expert_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(self.expert_bar, text="Experten-Modus", variable=self.expert_var,
+                        command=self._toggle_expert).pack(side=tk.LEFT)
+        self.expert_status = tk.StringVar()
+        ttk.Label(self.expert_bar, textvariable=self.expert_status, style="Muted.TLabel", font=("Segoe UI", 8)).pack(
+            side=tk.LEFT, padx=(10, 0))
+        self.expert_links = ttk.Frame(self.expert_bar)
+        self.expert_links.pack(side=tk.LEFT)
         inp = ttk.Frame(main, padding=(18, 6, 18, 4))
         inp.pack(side=tk.BOTTOM, fill=tk.X)
         self._inp_frame = inp
@@ -329,6 +346,7 @@ class App:
         self.mode_switch.select(mode, animate=not first)
         self.room.mentions.hide()
         self._draw_meter()  # nur im normalen Chat
+        self._update_expert_row()
         (self.room_side if room else self.chat_side).tkraise()
         (self.room_frame if room else self.chat_frame).tkraise()
         self.send_btn.configure(text="■ Stopp" if self.busy and not room else "Senden")
@@ -368,7 +386,8 @@ class App:
         bar = ttk.Frame(outer)
         bar.pack(side=tk.BOTTOM, fill=tk.X, pady=(10, 0))
         ttk.Button(bar, text="Schließen", command=self.close_settings).pack(side=tk.RIGHT)
-        ttk.Label(bar, text="Änderungen werden automatisch gespeichert.", style="Muted.TLabel").pack(side=tk.LEFT)
+        ttk.Label(bar, text=f"Monhip v{VERSION}  ·  Änderungen werden automatisch gespeichert.",
+                  style="Muted.TLabel").pack(side=tk.LEFT)
         nb = ttk.Notebook(outer)
         nb.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         self.settings_nb = nb
@@ -664,7 +683,7 @@ class App:
             if group != last:
                 rows.append((f"grp:{group}", "  " + group.upper(), "group"))
                 last = group
-            rows.append((c["id"], "  " + c["title"], "chat"))
+            rows.append((c["id"], ("  Experte · " if c.get("expert") else "  ") + c["title"], "chat"))
         if rows != self._tree_rows:
             tree = self.chat_tree
             self._tree_rows, self._hover, self._dots = rows, None, set()
@@ -784,7 +803,7 @@ class App:
         if current is not None:
             self._set_title(title)
             if self.busy:  # wird nach der Antwort ohnehin gespeichert
-                self.chat_tree.item(chat_id, text="  " + title)
+                self.chat_tree.item(chat_id, text=("  Experte · " if current.get("experte") else "  ") + title)
                 return
             data["messages"] = self.history
         chats.save(data, touch=False)  # touch=False: Sortierung bleibt
@@ -797,6 +816,8 @@ class App:
         if is_current and self.busy:
             dialogs.showinfo("Monhip", "Dieser Chat läuft gerade noch. Bitte erst „Stopp“ drücken.")
             return
+        if self.expert_job and self._expert_job_chat == chat_id:  # Auswertung dieses Chats anhalten
+            self.expert_job.stop_event.set()
         chats.delete(chat_id)
         if is_current:
             self.chat_data = None
@@ -816,6 +837,7 @@ class App:
         self._sync_tree_selection()
         self._show_placeholder()
         self._estimate_context()
+        self._update_expert_row()
         self.input.focus_set()
 
     def open_chat(self, chat_id):
@@ -828,10 +850,17 @@ class App:
         self.history = data.get("messages", [])
         self._set_title(data.get("title", "Chat"))
         self._render_history()
+        self._update_expert_row()
         self.input.focus_set()
 
     def _show_placeholder(self):
-        if self.server.model:
+        expert = (self.chat_data or {}).get("experte")
+        if expert and self.server.model:
+            self.view.placeholder(f"Experte für „{Path(expert['quelle']).name}“",
+                                  "Stelle Fragen zu den Dokumenten im Ordner – die KI sucht die passenden Stellen und "
+                                  "nennt Datei und Seite.\n\nDie Auswertung steht unten im Fenster; Fragen gehen schon, "
+                                  "während sie läuft.")
+        elif self.server.model:
             what = "Dokumente und Bilder" if self.server.vision else "Dokumente"
             self.view.placeholder("Womit kann ich helfen?", f"Geladen: {self.server.model.stem}\n\n{what} "
                                   "anhängen: „+“ klicken, Dateien ins Fenster ziehen oder mit Strg+V einfügen")
@@ -1215,6 +1244,8 @@ class App:
     def unload_model(self):
         self.load_cancel.set()
         self.stop_event.set()
+        if self.expert_job:  # ohne Modell geht die Auswertung nicht weiter („Fortsetzen“ nach dem Laden)
+            self.expert_job.stop_event.set()
         self.server.model = None
         threading.Thread(target=self.server.stop, daemon=True).start()
         self.status_var.set("Kein Modell geladen")
@@ -1830,12 +1861,15 @@ class App:
         files, commands, web_access = self.agent_var.get(), self.cmd_var.get(), self.web_var.get()
         mem, rem = self.memory_var.get(), self.reminder_var.get()
         shots = self.screen_var.get() and self.server.vision
-        if not (files or commands or web_access or mem or rem or shots):
+        expert = (self.chat_data or {}).get("experte")
+        library = experte.Library(Path(expert["quelle"])) if expert else None  # Experten-Chat: Dokumente durchsuchen
+        if not (files or commands or web_access or mem or rem or shots or library):
             return None
         return Agent(self._confirm_from_worker, files=files, commands=commands, workspace=self.ws_var.get(),
                      folders=self.extra_folders, confirm_actions=self.confirm_var.get(),
                      web_access=web_access, brave_key=self.brave_var.get(), memory=mem, reminders=rem,
-                     vision=self.server.vision, screenshot=self._screenshot_from_worker if shots else None)
+                     vision=self.server.vision, screenshot=self._screenshot_from_worker if shots else None,
+                     expert=library, expert_start=self._expert_from_worker)
 
     def _system_prompt(self, agent: Agent | None) -> str:
         system = self.sys_text.get("1.0", tk.END).strip()
@@ -1856,6 +1890,8 @@ class App:
         Kontext knapp, fasst context.Window vorher die älteren Nachrichten zusammen (Ereignis „compressed“) – auch noch
         mitten in der Antwort, wenn der Server „Kontext voll“ meldet."""
         self.turn = {"step": 0, "think": None, "thinks": [], "tool": None, "tps": None}
+        if self.expert_job:  # Auswertung wartet, solange das Modell antwortet (beide teilen es sich)
+            self.expert_job.pause_chat.set()
         system = self._system_prompt(agent)
         api_msgs = [self._api_message(m) for m in self.history]
         history = self.history  # bleibt bis „done“ unverändert (Bearbeiten/Fassungen sind solange gesperrt)
@@ -1891,6 +1927,243 @@ class App:
             put("done", messages[n_before:])
 
         threading.Thread(target=work, daemon=True).start()
+
+    # ---------------------------------------------------------------- Experten-Modus (experte.py)
+
+    def _toggle_expert(self):
+        """Häkchen „Experten-Modus“: an → Ordner wählen und Auswertung starten, aus → Chat wieder normal."""
+        ok = self._expert_on() if self.expert_var.get() else self._expert_off()
+        if not ok:  # abgebrochen: Häkchen zurück
+            self.expert_var.set(not self.expert_var.get())
+
+    def _expert_on(self) -> bool:
+        if self.busy:
+            dialogs.showinfo("Experten-Modus", "Bitte warten, bis die laufende Antwort fertig ist.")
+            return False
+        if not (self.server.is_running() and self.server.model):
+            dialogs.showinfo("Experten-Modus", "Zuerst oben rechts ein Modell laden – es wertet die Dokumente aus.")
+            return False
+        if self.expert_job:
+            dialogs.showinfo("Experten-Modus", f"Es läuft schon eine Auswertung („{self.expert_job.source.name}“). "
+                                               "Bitte warten, bis sie fertig ist, oder sie unten im Fenster stoppen.")
+            return False
+        choice = self._expert_dialog()
+        if not choice:
+            return False
+        folder, focus = choice
+        if self.chat_data is None:  # neuer Chat: heißt wie der Ordner
+            self.chat_data = chats.new_chat()
+            self.chat_data["title"] = folder.name or str(folder)
+            self._set_title(self.chat_data["title"])
+        self.chat_data["experte"] = {"quelle": str(folder), "schwerpunkt": focus}
+        self._save_chat()
+        if not self.history:
+            self._show_placeholder()
+        self._start_expert_job()
+        return True
+
+    def _expert_off(self) -> bool:
+        cfg = (self.chat_data or {}).get("experte")
+        if not cfg:
+            return True
+        if self.busy:
+            dialogs.showinfo("Experten-Modus", "Bitte warten, bis die laufende Antwort fertig ist.")
+            return False
+        if self.expert_job and self._expert_job_chat == self.chat_data["id"]:
+            if not dialogs.askyesno("Experten-Modus beenden", "Die Auswertung läuft noch. Anhalten und den "
+                                    "Experten-Modus für diesen Chat beenden?\n\nDie bisherigen Ergebnisse bleiben "
+                                    "erhalten – beim erneuten Einschalten geht es dort weiter."):
+                return False
+            self.expert_job.stop_event.set()
+        self.chat_data.pop("experte", None)
+        self._save_chat(touch=False)
+        if self.view.is_placeholder:
+            self._show_placeholder()
+        self._update_expert_row()
+        return True
+
+    def _expert_dialog(self) -> tuple[Path, str] | None:
+        """Ordner wählen, dann kurzer Dialog mit Anzahl der Dokumente und optionalem Schwerpunkt."""
+        chosen = filedialog.askdirectory(title="Ordner mit den Dokumenten wählen", parent=self.root)
+        if not chosen:
+            return None
+        folder = Path(chosen).resolve()
+        count = len(experte.find_documents(folder))
+        if not count:
+            dialogs.showinfo("Experten-Modus", "In diesem Ordner wurden keine lesbaren Dokumente gefunden (PDF, Word, "
+                                               "Excel, PowerPoint, OpenDocument, RTF, Text).")
+            return None
+        status = experte.status_of(folder)
+        if status:
+            about = (f"{count} Dokumente – {status['ok']} davon sind schon ausgewertet; neue und geänderte werden "
+                     "ergänzt.")
+        else:
+            about = (f"{count} Dokumente. Jedes wird einzeln vom geladenen Modell zusammengefasst und für die Suche "
+                     "erfasst – bei vielen Dateien kann das Stunden dauern. Fragen gehen schon währenddessen.")
+        win = dialogs.window("Experten-Modus", self.root)
+        body = ttk.Frame(win, padding=18)
+        body.pack(fill=tk.BOTH, expand=True)
+        wrap = round(460 * self.ui_scale)
+        ttk.Label(body, text="Experten-Modus", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(body, text=str(folder), wraplength=wrap).pack(anchor="w", pady=(8, 0))
+        ttk.Label(body, text=about, style="Muted.TLabel", wraplength=wrap).pack(anchor="w", pady=(4, 12))
+        ttk.Label(body, text="Schwerpunkt (optional)").pack(anchor="w")
+        focus = tk.StringVar(value=(status or {}).get("schwerpunkt", ""))
+        entry = ttk.Entry(body, textvariable=focus, width=58)
+        entry.pack(fill=tk.X, pady=(4, 2))
+        ttk.Label(body, text="Zum Beispiel „Kündigungsfristen“ – jede Zusammenfassung arbeitet das zusätzlich heraus. "
+                             "Ein geänderter Schwerpunkt wertet alle Dokumente neu aus.", style="Muted.TLabel",
+                  wraplength=wrap).pack(anchor="w")
+        result = {}
+
+        def start(_e=None):
+            result["focus"] = focus.get().strip()
+            win.destroy()
+
+        bf = ttk.Frame(body)
+        bf.pack(fill=tk.X, pady=(16, 0))
+        ttk.Button(bf, text="Abbrechen", command=win.destroy).pack(side=tk.RIGHT)
+        ttk.Button(bf, text="Auswertung starten", style="Accent.TButton", command=start).pack(side=tk.RIGHT,
+                                                                                            padx=(0, 6))
+        entry.bind("<Return>", start)
+        win.bind("<Escape>", lambda e: win.destroy())
+        dialogs.present(win, self.root, modal=True, focus=entry)
+        return (folder, result["focus"]) if "focus" in result else None
+
+    def _start_expert_job(self, cfg: dict | None = None):
+        """Auswertung für den Experten-Chat starten bzw. fortsetzen (fertige Dokumente werden übersprungen)."""
+        cfg = cfg or (self.chat_data or {}).get("experte")
+        if not cfg or self.expert_job:
+            return
+        if not (self.server.is_running() and self.server.model):
+            dialogs.showinfo("Experten-Modus", "Zum Fortsetzen zuerst oben rechts ein Modell laden.")
+            return
+        holder = {}
+        job = experte.Job(Path(cfg["quelle"]), self.server.base_url, self._ctx_value(), self.server.vision,
+                          cfg.get("schwerpunkt", ""), lambda k, d: self.ui(self._expert_event, holder["job"], k, d))
+        holder["job"] = job
+        self.expert_job, self._expert_job_chat = job, self.chat_data["id"]
+        self._expert_text, self._expert_paused = f"Auswertung „{job.source.name}“ beginnt …", False
+        if self.busy:  # gestartet von der KI mitten in einer Antwort
+            job.pause_chat.set()
+        job.start()
+        self._update_expert_row()
+
+    def _expert_event(self, job, kind: str, data):
+        """Fortschritt der Auswertung (aus dem Job-Thread über self.ui)."""
+        if job is not self.expert_job:
+            return
+        name = job.source.name
+        if kind == "start":
+            self._expert_text = (f"Auswertung „{name}“: {data['total'] - data['todo']} von {data['total']} Dokumenten"
+                                 if data["todo"] else f"Auswertung „{name}“: alles aktuell, Überblick wird geprüft")
+        elif kind == "file":
+            if data["rel"]:
+                eta = data.get("eta")
+                left = "" if eta is None else (f" · noch ca. {eta / 3600:.1f} Std.".replace(".", ",") if eta >= 5400
+                                               else f" · noch ca. {max(1, round(eta / 60))} Min.")
+                self._expert_text = (f"Auswertung „{name}“: {data['done']} von {data['total']} · "
+                                     f"{Path(data['rel']).name}{left}")
+            else:
+                self._expert_text = f"Auswertung „{name}“: Gesamtüberblick wird erstellt"
+        elif kind in ("paused", "resumed"):
+            self._expert_paused = kind == "paused"
+        elif kind in ("finished", "stopped", "fatal"):
+            self.expert_job = None
+            if kind == "fatal":
+                note = str(data)
+            else:
+                extras = [f"{data[k]} {label}" for k, label in (("scan", "Scans ohne Bildverständnis nicht gelesen"),
+                                                                 ("fehler", "nicht lesbar"), ("leer", "ohne Text"))
+                          if data.get(k)]
+                note = ((f"Auswertung abgeschlossen: {data['ok']} von {data['total']} Dokumenten in „{name}“ "
+                         "ausgewertet" if kind == "finished" else
+                         f"Auswertung gestoppt: {data['ok']} von {data['total']} Dokumenten in „{name}“ ausgewertet – "
+                         "„Fortsetzen“ macht dort weiter") + (f" ({', '.join(extras)})" if extras else "") + ".")
+            if self.chat_data and self.chat_data["id"] == self._expert_job_chat and not self.busy:
+                self.view.note(note, "warn" if kind == "fatal" else "note")
+        self._update_expert_row()
+
+    def _update_expert_row(self):
+        """Leiste unten links: Häkchen nach dem Chat, Fortschritt bzw. Stand, passende Verweise."""
+        if self.mode == "room":
+            self.expert_bar.pack_forget()
+            return
+        if not self.expert_bar.winfo_ismapped():
+            self.expert_bar.pack(side=tk.LEFT)
+        cfg = (self.chat_data or {}).get("experte")
+        self.expert_var.set(bool(cfg))
+        for w in self.expert_links.winfo_children():
+            w.destroy()
+        job = self.expert_job
+        if job:
+            # Zusatz erst hier: ein schon unterwegs befindlicher Fortschritt überschreibt ihn sonst
+            pause = (" · angehalten" if self._expert_paused else " · wird angehalten …") if job.pause_user.is_set() else ""
+            self.expert_status.set(self._expert_text + pause)
+            self._expert_link("Fortsetzen" if job.pause_user.is_set() else "Pausieren", self._expert_pause)
+            self._expert_link("Stoppen", lambda: job.stop_event.set())
+            return
+        if not cfg:
+            self.expert_status.set("")
+            return
+        folder = Path(cfg["quelle"])
+        st = experte.status_of(folder)
+        if not folder.is_dir():
+            self.expert_status.set(f"Ordner „{folder.name}“ nicht gefunden")
+        elif st and st["fertig"]:
+            self.expert_status.set(f"Experte für „{folder.name}“ · {st['ok']} Dokumente")
+            self._expert_link("Aktualisieren", self._start_expert_job)
+        else:
+            self.expert_status.set(f"Auswertung „{folder.name}“ unvollständig ({st['ok'] if st else 0} von "
+                                   f"{st['dateien'] if st and st['dateien'] else '…'})")
+            self._expert_link("Fortsetzen", self._start_expert_job)
+
+    def _expert_link(self, text: str, command):
+        link = ttk.Label(self.expert_links, text=text, style="Muted.TLabel", font=("Segoe UI", 8, "underline"),
+                         cursor="hand2")
+        link.pack(side=tk.LEFT, padx=(8, 0))
+        link.bind("<Button-1>", lambda e: command())
+
+    def _expert_pause(self):
+        job = self.expert_job
+        if job:
+            if job.pause_user.is_set():
+                job.pause_user.clear()
+            else:
+                job.pause_user.set()
+            self._update_expert_row()
+
+    def _expert_from_worker(self, folder: Path, focus: str) -> str:
+        """Werkzeug ordner_auswerten (im Agenten-Thread): den Chat im Tk-Thread zum Experten-Chat machen."""
+        done, box = threading.Event(), {}
+
+        def run():
+            try:
+                box["msg"] = self._expert_start_from_ai(folder, focus)
+            except Exception as e:
+                box["msg"] = f"Fehler: {e}"
+            finally:
+                done.set()
+
+        self.ui(run)
+        done.wait()
+        return box["msg"]
+
+    def _expert_start_from_ai(self, folder: Path, focus: str) -> str:
+        if self.expert_job:
+            return (f"Fehler: Es läuft schon eine Auswertung („{self.expert_job.source.name}“) – erst danach ist eine "
+                    "weitere möglich.")
+        count = len(experte.find_documents(folder))
+        if not count:
+            return "Fehler: In diesem Ordner gibt es keine lesbaren Dokumente."
+        if self.chat_data is None:
+            return "Fehler: Kein Chat geöffnet."
+        self.chat_data["experte"] = {"quelle": str(Path(folder).resolve()), "schwerpunkt": focus}
+        self._save_chat(touch=False)
+        self._start_expert_job()
+        return (f"Experten-Modus gestartet: {count} Dokumente in „{Path(folder).name}“ werden im Hintergrund "
+                "ausgewertet (Fortschritt unten im Fenster). Die Werkzeuge zum Durchsuchen gibt es ab der nächsten "
+                "Nachricht; ausgewertete Dokumente sind sofort durchsuchbar.")
 
     # ---------------------------------------------------------------- Kontextanzeige
 
@@ -2221,6 +2494,8 @@ class App:
             self._finish_turn(data)
 
     def _finish_turn(self, new_messages: list):
+        if self.expert_job:
+            self.expert_job.pause_chat.clear()
         self._close_think()
         self.view.hide_pending()
         self.view.md_finish()
@@ -2426,6 +2701,8 @@ class App:
         self.save_config()
         self.root.withdraw()  # sofort weg – Server beenden und Raum schließen dauert evtl. ein paar Sekunden
         self.stop_event.set()
+        if self.expert_job:  # fertige Dateien sind gespeichert, beim nächsten Mal geht es dort weiter
+            self.expert_job.stop_event.set()
         for cancel in self._downloads.values():
             cancel.set()
         self.recorder.cancel()

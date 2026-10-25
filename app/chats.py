@@ -31,8 +31,11 @@ def save(chat: dict, touch: bool = True):
     CHAT_DIR.mkdir(exist_ok=True)
     if touch:
         chat["updated"] = datetime.now().isoformat(timespec="seconds")
+    # Nachrichten immer zuletzt: die Chatliste liest nur den Dateianfang (_meta) – dort muss z. B. „experte“ stehen
+    data = {k: v for k, v in chat.items() if k != "messages"}
+    data["messages"] = chat.get("messages", [])
     tmp = _file(chat["id"]).with_suffix(".tmp")
-    tmp.write_text(json.dumps(chat, indent=1, ensure_ascii=False), encoding="utf-8")
+    tmp.write_text(json.dumps(data, indent=1, ensure_ascii=False), encoding="utf-8")
     tmp.replace(_file(chat["id"]))
 
 
@@ -81,10 +84,13 @@ def _meta(f: Path) -> dict:
     with open(f, "rb") as fh:
         head = fh.read(2048).decode("utf-8", "ignore").split('"messages"')[0]
     found = {k: json.loads(v) for k, v in _HEAD.findall(head)}
+    expert = '"experte":' in head  # Experten-Chat (Experten-Modus)
     if "id" not in found or "updated" not in found:
         c = json.loads(f.read_text(encoding="utf-8"))
         found = {k: c.get(k, "") for k in ("id", "title", "updated")}
-    return {"id": found["id"], "title": found.get("title") or "Chat", "updated": found.get("updated", "")}
+        expert = bool(c.get("experte"))
+    return {"id": found["id"], "title": found.get("title") or "Chat", "updated": found.get("updated", ""),
+            "expert": expert}
 
 
 def list_all() -> list[dict]:

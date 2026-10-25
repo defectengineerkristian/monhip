@@ -34,7 +34,7 @@ from roomui import RoomMode
 from themes import THEMES, ThemeManager, label_to_key, mix_hex
 from widgets import ModeSwitch, rounded, scrolled
 
-VERSION = "1.0"  # auf GitHub als Release „v1.0“ (danach richtet sich das Update im Installer)
+VERSION = "1.1"  # auf GitHub als Release „v1.1“ (danach richtet sich das Update im Installer)
 APP_DIR = Path(__file__).resolve().parent.parent  # Code in app/, Daten daneben
 CONFIG_FILE = APP_DIR / "config.json"
 MODEL_DIR = APP_DIR / "modelle"  # wird immer durchsucht, Ziel für Downloads
@@ -150,11 +150,13 @@ class App:
             root.iconbitmap(default=str(ICON_FILE))  # gilt auch für alle Dialoge
         except tk.TclError:
             pass
-        root.geometry("1250x800")
         root.minsize(900, 600)
         root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.theme = ThemeManager(root)
         self.ui_scale = max(1.0, float(root.tk.call("tk", "scaling")) / 1.333)
+        # Startgröße: Platz für die ganze Teamwork-Seitenleiste – höchstens so groß wie der Bildschirm (Taskleiste)
+        root.geometry(f"{min(round(1320 * self.ui_scale), root.winfo_screenwidth() - 40)}x"
+                      f"{min(round(980 * self.ui_scale), root.winfo_screenheight() - 90)}")
         dialogs.setup(root, self.theme, self.ui_scale)
         self._chip_fonts = (tkfont.Font(font=("Segoe UI", 9)), tkfont.Font(font=("Segoe UI", 8)))
 
@@ -281,6 +283,7 @@ class App:
         # ---- Eingabe (zuerst packen, damit sie beim Verkleinern sichtbar bleibt)
         meter = ttk.Frame(main, padding=(18, 0, 18, 6))  # Kontextanzeige ganz unten, rechts
         meter.pack(side=tk.BOTTOM, fill=tk.X)
+        self._meter = meter  # feste Höhe: _fix_meter_height
         self.ctx_bar = tk.Canvas(meter, width=round(64 * self.ui_scale), height=max(4, round(5 * self.ui_scale)),
                                  highlightthickness=0, borderwidth=0)
         self.ctx_bar.pack(side=tk.RIGHT, padx=(8, 0))
@@ -345,7 +348,9 @@ class App:
         room = mode == "room"
         self.mode_switch.select(mode, animate=not first)
         self.room.mentions.hide()
-        self._draw_meter()  # nur im normalen Chat
+        self._draw_meter()  # im Teamwork: Kontext der eigenen KI
+        if room:
+            self.room.estimate(50)  # geschätzt wird nur im sichtbaren Bereich
         self._update_expert_row()
         (self.room_side if room else self.chat_side).tkraise()
         (self.room_frame if room else self.chat_frame).tkraise()
@@ -668,6 +673,7 @@ class App:
         self.chat_tree.tag_configure("group", foreground=muted)
         self._meter_cache.clear()
         self._draw_meter()
+        self._fix_meter_height()  # das Häkchen kann je Design anders hoch sein
         self.chat_tree.tag_configure("hover", background=theme.get("side_hover", "#e8e8e8"))
         self.cfg["theme"] = self.theme.key
         if save:
@@ -2197,8 +2203,17 @@ class App:
         self._ctx = (used, True)
         self._draw_meter()
 
+    def _fix_meter_height(self):
+        """Zeile unter der Eingabe mit fester Höhe: Der Moduswechsel blendet das Experten-Häkchen aus und ein – änderte
+        sich dabei ihre Höhe, vermaß Tk jedes Mal den ganzen Chatverlauf neu (~13 ms bei einem langen Chat)."""
+        m = self._meter
+        m.update_idletasks()
+        m.configure(height=max(w.winfo_reqheight() for w in m.winfo_children()) + 6)  # + Innenabstand unten
+        m.pack_propagate(False)
+
     def _draw_meter(self):
-        """„Kontext 9.800 / 16.384 · 60 %“ mit kleinem Balken (grün, ab 75 % orange, ab 90 % rot)."""
+        """„Kontext 9.800 / 16.384 · 60 %“ mit kleinem Balken (grün, ab 75 % orange, ab 90 % rot). Im Teamwork der
+        Kontext der eigenen KI (RoomMode.ctx)."""
         c = self.ctx_bar
         c.delete("all")
         if self.theme.pal:
@@ -2207,16 +2222,18 @@ class App:
             bg = "#%02x%02x%02x" % tuple(v // 257 for v in self.root.winfo_rgb(self.root.cget("background")))
         c.configure(background=bg)
         total = self.server.n_ctx if self.server.model else None
-        used, exact = self._ctx
-        if self.mode != "chat" or not total:
+        room = self.mode == "room"
+        used, exact = self.room.ctx if room else self._ctx
+        if self.mode not in ("chat", "room") or not total or (room and not self.room.connected):
             self.ctx_text.set("")
             return
         fmt = lambda n: f"{n:,}".replace(",", ".")
+        label = "Kontext deiner KI" if room else "Kontext"
         if used is None:
-            self.ctx_text.set(f"Kontext … / {fmt(total)}")
+            self.ctx_text.set(f"{label} … / {fmt(total)}")
             return
         frac = min(1.0, used / total)
-        self.ctx_text.set(f"Kontext {'' if exact else '≈ '}{fmt(used)} / {fmt(total)}  ·  {round(frac * 100)} %")
+        self.ctx_text.set(f"{label} {'' if exact else '≈ '}{fmt(used)} / {fmt(total)}  ·  {round(frac * 100)} %")
         col = self.theme_chat()
         color = col["ok"] if frac < 0.75 else col["warn"] if frac < 0.9 else col["error"]
         w, h = int(c.cget("width")), int(c.cget("height"))

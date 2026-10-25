@@ -2,7 +2,7 @@
 links, aufklappbare Denkprozess-/Werkzeug-Blöcke.
 
 Tags mit Nummer N (Infos in self.blocks[N]): hdr:N Kopfzeile, body:N Inhalt, cpy:N „Kopieren“, ccp:N „Code
-kopieren“, code:N, lnk:N, tbl:N. Geschrieben wird nur in `with self._edit():` (für den Nutzer schreibgeschützt).
+kopieren“, code:N, lnk:N, tbl:N, act:N anklickbare Zeile (action). Geschrieben wird nur in `with self._edit():` (für den Nutzer schreibgeschützt).
 Das Textfeld selbst nie per configure ändern (state, cursor …): Tk vermisst danach den ganzen Verlauf neu.
 """
 
@@ -347,6 +347,12 @@ class ChatView:
         """An eine Stelle scrollen (z. B. nach dem Wechsel einer Fassung dort bleiben, wo man war)."""
         self.t.update_idletasks()
         self.t.yview_moveto(fraction)
+        self._stick = self._at_bottom()
+
+    def scroll_to_index(self, index: str):
+        """Eine Textstelle oben ins Fenster holen (z. B. nach „Ältere Nachrichten anzeigen“ dort bleiben)."""
+        self.t.update_idletasks()
+        self.t.yview(index)
         self._stick = self._at_bottom()
 
     # ================================================================ Leeren / Platzhalter
@@ -1333,6 +1339,14 @@ class ChatView:
                 self.t.insert(self._at, f"      {tps:.1f} Tokens/s".replace(".", ","), "footer")
             self.t.insert(self._at, "\n", "footer")
 
+    def action(self, text: str, callback):
+        """Anklickbare Zeile (z. B. „Ältere Nachrichten anzeigen“); callback läuft nach dem Klick."""
+        self._ensure()
+        n = self._new("action", fn=callback)
+        with self._edit():
+            self.t.insert(self._at, text, ("footer", "clickable", f"act:{n}"))
+            self.t.insert(self._at, "\n", "footer")
+
     def note(self, text: str, kind: str = "note"):
         """kind "note" (grau, kursiv), "warn" (Hinweis in Warnfarbe) oder "error" (rot)."""
         self._ensure()
@@ -1449,6 +1463,8 @@ class ChatView:
                 self._begin_edit(n)
             elif kind in ("uvp", "uvn") and b.get("on_version"):
                 self.t.after_idle(lambda f=b["on_version"], k=b["cur"] + (1 if kind == "uvn" else -1): f(k))
+            elif kind == "act":  # nach dem Klick – die Aktion baut die Ansicht evtl. neu auf
+                self.t.after_idle(b["fn"])
             else:
                 continue
             return "break"

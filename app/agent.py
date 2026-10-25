@@ -223,6 +223,33 @@ EXPERT_START_TOOLS = [
           ordner=PATH, schwerpunkt={"type": "string", "description": "Optional: worauf jede Zusammenfassung besonders "
                                                                      "achten soll, z. B. 'Kündigungsfristen'"}),
 ]
+NOTES_MAX = 3000
+NOTES_TOOLS = [  # Teamwork: Arbeitsstand der eigenen KI (liegt nur auf dem Rechner ihres Besitzers)
+    _tool("arbeitsstand_speichern", "Speichert deinen Arbeitsstand in diesem Raum (ersetzt den bisherigen; du siehst "
+          "ihn bei jeder Antwort wieder): was erledigt ist, was als Nächstes kommt, offene Fragen, wichtige "
+          "Entscheidungen. Knapp in Stichpunkten.",
+          inhalt={"type": "string", "description": f"Der vollständige neue Arbeitsstand (höchstens {NOTES_MAX} Zeichen)"}),
+]
+TASK_NR = {"type": "integer", "description": "Nummer der Aufgabe, z. B. 3 für #3"}
+ROOM_TOOLS = [  # Teamwork: Zusammenarbeit der KIs (gemeinsame Aufgabenliste, Teamstand, Rückfragen)
+    _tool("aufgabe_anlegen", "Legt eine Aufgabe in der gemeinsamen Aufgabenliste des Raums an (alle sehen sie). Mit "
+          "fuer gleich jemandem zuweisen, sonst ist sie offen.", optional=("fuer",),
+          text={"type": "string", "description": "Die Aufgabe, kurz und eindeutig (höchstens 300 Zeichen)"},
+          fuer={"type": "string", "description": "Optional: wer sie übernimmt – KI- oder Personenname, z. B. 'Max-KI'"}),
+    _tool("aufgabe_uebernehmen", "Übernimmt eine Aufgabe für dich (Status „in Arbeit“) – vor dem Arbeiten daran, damit "
+          "niemand doppelt arbeitet.", nr=TASK_NR),
+    _tool("aufgabe_erledigt", "Markiert eine Aufgabe als erledigt, mit kurzem Ergebnis (z. B. dem Pfad der Datei im "
+          "Projektordner).", optional=("ergebnis",), nr=TASK_NR,
+          ergebnis={"type": "string", "description": "Kurzes Ergebnis (höchstens 300 Zeichen)"}),
+    _tool("aufgaben_liste", "Zeigt die ganze Aufgabenliste des Raums, auch die erledigten Aufgaben mit Ergebnis."),
+    _tool("status_setzen", "Setzt deine kurze Statuszeile für die anderen im Raum (Teamstand), z. B. 'schreibe Kapitel "
+          "2'. Leer = keine.", text={"type": "string", "description": "Höchstens 120 Zeichen"}),
+    _tool("ki_fragen", "Fragt eine andere KI im Raum und wartet auf ihre Antwort (bis zu 10 Minuten); danach arbeitest "
+          "du mit der Antwort weiter. Für Teilaufgaben, die eine andere KI besser oder nebenher erledigen kann. Knapp "
+          "formulieren: Auftrag, gewünschtes Ergebnis, Format.",
+          ki={"type": "string", "description": "Name der KI, z. B. 'Max-KI'"},
+          frage={"type": "string", "description": "Die Frage bzw. der Auftrag"}),
+]
 SHARE_TOOLS = [  # Teamwork: Datei in den Chat
     _tool("datei_teilen", "Schickt eine Datei von deinem Rechner (aus einem freigegebenen Ordner) in den "
           "Gruppenchat: Alle im Raum sehen sie unter deiner Antwort und können sie herunterladen, Bilder mit "
@@ -244,6 +271,9 @@ LABELS = {
     "projekt_upload": "Projekt: Hochladen", "projekt_download": "Projekt: Herunterladen", "datei_teilen": "Datei teilen",
     "experte_suchen": "Dokumente durchsuchen", "experte_lesen": "Dokument lesen",
     "experte_zusammenfassung": "Zusammenfassung", "experte_liste": "Dokumentliste", "ordner_auswerten": "Ordner auswerten",
+    "arbeitsstand_speichern": "Arbeitsstand speichern", "aufgabe_anlegen": "Aufgabe anlegen",
+    "aufgabe_uebernehmen": "Aufgabe übernehmen", "aufgabe_erledigt": "Aufgabe erledigt", "aufgaben_liste": "Aufgabenliste",
+    "status_setzen": "Teamstand", "ki_fragen": "KI fragen",
 }
 ICONS = {"web_search": "🌐", "fetch_url": "🌐", "search_files": "⌕", "write_file": "✎", "edit_file": "✎",
          "run_command": "❯", "run_python": "❯", "view_image": "▣", "take_screenshot": "▣", "remember": "✦",
@@ -502,7 +532,7 @@ class Agent:
                  folders=(), confirm_actions: bool = True, web_access: bool = False, brave_key: str = "",
                  cmd_timeout: int = 120, memory: bool = False, reminders: bool = False, vision: bool = False,
                  screenshot=None, team=None, team_write: bool = False, team_info: dict | None = None,
-                 share_files: bool = False, expert=None, expert_start=None):
+                 share_files: bool = False, expert=None, expert_start=None, notes=None, room=None):
         self.confirm = confirm              # confirm(titel, text) -> "yes" | "no" | "all", blockiert bis Antwort
         # Teamwork: gemeinsamer Projektordner beim Gastgeber – team(aktion, **argumente) -> dict (RoomClient.project),
         # team_info: {"name", "host", "local" (Pfad nur beim Gastgeber selbst, sonst None)}
@@ -515,6 +545,10 @@ class Agent:
         # Experten-Modus: expert = experte.Library des Chats (lesend); expert_start(ordner, schwerpunkt) -> Meldung
         # macht den Chat zum Experten-Chat (nur ohne expert und mit Dateizugriff)
         self.expert, self.expert_start = expert, expert_start
+        self.notes = notes                  # Teamwork: notes(text) -> Meldung speichert den Arbeitsstand der KI
+        # Teamwork: room.task(op, **args), room.task_list(), room.status(text), room.ask(ki, frage) -> Meldung
+        # (roomui._RoomTools – Aufgabenliste, Teamstand, Rückfragen an andere KIs)
+        self.room = room
         self.files = files
         self.commands = commands
         self.web = web_access
@@ -542,7 +576,8 @@ class Agent:
                       + (TEAM_DOWNLOAD_TOOLS + (TEAM_UPLOAD_TOOLS if team_write else []) if team and files else [])
                       + (SHARE_TOOLS if share_files and files else [])
                       + (EXPERT_TOOLS if expert else [])
-                      + (EXPERT_START_TOOLS if expert_start and files and not expert else []))
+                      + (EXPERT_START_TOOLS if expert_start and files and not expert else [])
+                      + (NOTES_TOOLS if notes else []) + (ROOM_TOOLS if room else []))
         self.team_write = bool(team and team_write)
         self._allowed = {t["function"]["name"] for t in self.tools}
 
@@ -988,6 +1023,35 @@ class Agent:
             return "Vom Nutzer abgelehnt."
         return self.expert_start(folder, focus)
 
+    def tool_arbeitsstand_speichern(self, inhalt):
+        """Ohne Rückfrage (wie das Gedächtnis): nur eine Notiz der KI in den Daten von Monhip, keine Datei des Nutzers."""
+        text = str(inhalt or "").strip()
+        if not text:
+            raise ToolError("Der Arbeitsstand ist leer.")
+        if len(text) > NOTES_MAX:
+            raise ToolError(f"Zu lang ({len(text)} Zeichen, höchstens {NOTES_MAX}) – bitte knapper zusammenfassen.")
+        return self.notes(text)
+
+    # Teamwork-Zusammenarbeit: ohne Rückfrage – nur Koordination im Raum, keine Aktion auf dem Rechner
+
+    def tool_aufgabe_anlegen(self, text, fuer=""):
+        return self.room.task("add", text=text, owner=fuer)
+
+    def tool_aufgabe_uebernehmen(self, nr):
+        return self.room.task("claim", nr=nr)
+
+    def tool_aufgabe_erledigt(self, nr, ergebnis=""):
+        return self.room.task("done", nr=nr, note=ergebnis)
+
+    def tool_aufgaben_liste(self):
+        return self.room.task_list()
+
+    def tool_status_setzen(self, text=""):
+        return self.room.status(text)
+
+    def tool_ki_fragen(self, ki, frage):
+        return self.room.ask(ki, frage)
+
     def pop_images(self) -> list[Path]:
         """Bilder, die das letzte Werkzeug dem Modell zeigen will (und danach vergessen)."""
         found, self._images = self._images, []
@@ -1029,9 +1093,11 @@ def describe_call(name: str, raw_args: str) -> tuple[str, str, str]:
         detail = f"{a['source']} → {a['destination']}"
     else:
         detail = next((str(a[k]) for k in ("path", "command", "query", "url", "name", "pattern", "text", "suchbegriffe",
-                                           "datei", "ordner") if a.get(k)), "")
+                                           "datei", "ordner", "ki") if a.get(k)), "")
         if not detail and a.get("id") is not None:
             detail = f"[{a['id']}]"
+        if not detail and a.get("nr") is not None:  # Aufgabe aus der Liste
+            detail = f"#{str(a['nr']).lstrip('#')}"
         if name == "run_python":
             detail = next((ln.strip() for ln in str(a.get("code", "")).splitlines() if ln.strip()), "")
         if name in ("datei_teilen", "projekt_upload"):  # nur der Dateiname – der Pfad verriete z. B. den Benutzernamen

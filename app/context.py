@@ -26,6 +26,14 @@ SUMMARY_PROMPT = (
     "Fakten, Zahlen, Namen, Entscheidungen und Ergebnisse, Dateinamen und Pfade, Code-Stände in Kurzform, offene "
     "Fragen und Aufgaben. Lass Höflichkeiten, Wiederholungen und Nebensächliches weg. Höchstens etwa 400 Wörter. "
     "Antworte nur mit der Zusammenfassung.")
+ROOM_SUMMARY_PROMPT = (  # Teamwork: {ai} = Name der eigenen KI
+    "Du fasst den bisherigen Verlauf eines Gruppenchats zusammen, in dem mehrere Menschen und ihre KIs schreiben, "
+    "damit die KI „{ai}“ ohne die alten Nachrichten nahtlos weitermachen kann. Zeilen „[Nutzer]“ stammen von den "
+    "anderen (ihr Name folgt in eckigen Klammern), „[Assistent]“ ist {ai} selbst. Schreibe auf Deutsch, sachlich und "
+    "knapp in Stichpunkten und nenne jeweils, wer etwas gesagt, gewünscht oder entschieden hat. Behalte alles, was "
+    "später noch wichtig sein kann: Ziele, Aufgaben und wer sie übernommen hat, Fakten, Zahlen, Namen, Entscheidungen "
+    "und Ergebnisse, Dateinamen und Pfade, offene Fragen. Lass Höflichkeiten, Wiederholungen und Nebensächliches weg. "
+    "Höchstens etwa 400 Wörter. Antworte nur mit der Zusammenfassung.")
 SYSTEM_NOTE = ("Zusammenfassung des früheren Teils dieser Unterhaltung – die älteren Nachrichten wurden aus "
                "Platzgründen zusammengefasst. Fehlen dir Einzelheiten daraus, frag kurz nach.\n\n{summary}")
 FALLBACK = "(Ältere Nachrichten wurden weggelassen, weil der Kontext voll war; eine Zusammenfassung war nicht möglich.)"
@@ -92,13 +100,14 @@ def _line(m: dict) -> str:
     return f"[{who}]: {text}"
 
 
-def _summarize_once(base_url: str, previous: str | None, part: str, max_out: int, stop) -> str:
+def _summarize_once(base_url: str, previous: str | None, part: str, max_out: int, stop,
+                    prompt: str = SUMMARY_PROMPT) -> str:
     user = ((f"<bisherige_zusammenfassung>\n{previous.strip()}\n</bisherige_zusammenfassung>\n\n" if previous else "")
             + f"<verlauf>\n{part.strip()}\n</verlauf>\n\n"
             + ("Fasse die bisherige Zusammenfassung und den Verlauf zu einer neuen Zusammenfassung zusammen."
                if previous else "Fasse diesen Verlauf zusammen."))
     params = {"max_tokens": max_out, "temperature": 0.2, "chat_template_kwargs": {"enable_thinking": False}}
-    text, _calls, _reasoning = chat_turn(base_url, [{"role": "system", "content": SUMMARY_PROMPT},
+    text, _calls, _reasoning = chat_turn(base_url, [{"role": "system", "content": prompt},
                                                     {"role": "user", "content": user}],
                                          params, None, stop, lambda kind, data: None)
     text = re.sub(r"(?s)<think>.*?(</think>|$)", "", text).strip()
@@ -107,7 +116,8 @@ def _summarize_once(base_url: str, previous: str | None, part: str, max_out: int
     return text
 
 
-def summarize(base_url: str, previous: str | None, old: list, n_ctx: int, stop) -> str | None:
+def summarize(base_url: str, previous: str | None, old: list, n_ctx: int, stop,
+              prompt: str = SUMMARY_PROMPT) -> str | None:
     """Zusammenfassung von previous + old. Passt old nicht in einen Durchgang, wird stückweise weitergeschrieben
     (jedes Stück mit der Zusammenfassung bis dahin). None = abgebrochen."""
     max_out = max(200, min(SUMMARY_TOKENS, int(n_ctx * 0.15)))
@@ -124,7 +134,7 @@ def summarize(base_url: str, previous: str | None, old: list, n_ctx: int, stop) 
     for part in pieces:
         if stop.is_set():
             return None
-        summary = _summarize_once(base_url, summary, part, max_out, stop)
+        summary = _summarize_once(base_url, summary, part, max_out, stop, prompt)
     return None if stop.is_set() else summary
 
 
@@ -140,10 +150,10 @@ class Window:
 
     def __init__(self, base_url: str, system: str, history: list, api_msgs: list, tools: list | None,
                  n_ctx: int | None, max_tokens: int, image_tokens: int, stop, report, auto: bool = True,
-                 budget: int | None = None):
+                 budget: int | None = None, prompt: str = SUMMARY_PROMPT):
         self.base_url, self.system, self.history, self.api_msgs = base_url, system, history, api_msgs
         self.tools, self.n_ctx, self.max_tokens, self.image_tokens = tools, n_ctx, max_tokens, image_tokens
-        self.stop, self.report, self.auto, self.budget = stop, report, auto, budget
+        self.stop, self.report, self.auto, self.budget, self.prompt = stop, report, auto, budget, prompt
         self.start, self.summary = latest_summary(history)
         self.head = 0             # so viele Nachrichten am Anfang von messages stammen aus dem Verlauf (samt System)
         self.newest_cap = None    # nach „Kontext voll“: höchstens so viele Zeichen für das neueste Werkzeug-Ergebnis
@@ -193,7 +203,7 @@ class Window:
         self.report("compress", None)
         try:
             new = summarize(self.base_url, self.summary, self.api_msgs[self.start:boundary], self.n_ctx or 4096,
-                            self.stop)
+                            self.stop, self.prompt)
         except Exception as e:  # Zusammenfassen nicht möglich → die ältesten Nachrichten fallen weg
             self.report("info", f"Zusammenfassen nicht möglich ({e}) – die älteren Nachrichten werden weggelassen.")
             new = (self.summary.strip() + "\n\n" if self.summary else "") + FALLBACK

@@ -39,7 +39,13 @@ MAX_MESSAGES = 1500               # so viele Nachrichten behält der Gastgeber
 POLL_WAIT = 20                    # Sekunden, die /api/events auf Neues wartet
 OFFLINE_AFTER = 45                # ohne Abfrage so lange → offline
 MAX_CLOCK_SKEW = 300              # erlaubte Zeitabweichung der Signatur (Sekunden)
+MAIN_MAX = 3000                   # Zeichen für den Hauptauftrag (geht bei jeder Antwort jeder KI mit)
+TASK_TEXT = 300                   # Zeichen je Aufgabe bzw. Ergebnisnotiz
+MAX_TASKS = 200                   # so viele offene Aufgaben je Raum
+KEEP_DONE = 100                   # so viele erledigte Aufgaben bleiben in der Liste
+STATUS_MAX = 120                  # Zeichen für den Teamstand einer KI
 NAME_RE = re.compile(r"^[A-Za-z0-9ÄÖÜäöüß._-]{2,24}$")
+RESERVED_NAMES = {"main"}         # „@main“ = Hauptauftrag des Raums
 
 
 class RoomError(Exception):
@@ -89,12 +95,33 @@ def parse_invite(code: str) -> dict:
 
 
 def valid_name(name: str) -> bool:
-    return bool(NAME_RE.match(name or ""))
+    return bool(NAME_RE.match(name or "")) and name.lower() not in RESERVED_NAMES
 
 
 def mentions(text: str) -> set[str]:
     """Alle @Namen einer Nachricht (kleingeschrieben)."""
     return {m.lower() for m in re.findall(r"(?<![\w@])@([A-Za-z0-9ÄÖÜäöüß._-]{2,24})", text or "")}
+
+
+def _clean_line(value, limit: int) -> str:
+    return " ".join(str(value or "").split())[:limit]
+
+
+def _clean_ask(value) -> dict | None:
+    """Rückfrage einer KI: {"chain": [KI-Namen, die gerade auf eine Antwort warten]} – gegen Rückfragen im Kreis."""
+    if not isinstance(value, dict) or not isinstance(value.get("chain"), list):
+        return None
+    return {"chain": [n for n in value["chain"][:10] if isinstance(n, str) and valid_name(n)]}
+
+
+def _clean_ctx(value) -> list[int] | None:
+    """[belegt, gesamt] als zwei plausible ganze Zahlen – alles andere wird verworfen."""
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        return None
+    used, total = value
+    if not all(isinstance(v, int) and not isinstance(v, bool) for v in (used, total)):
+        return None
+    return [used, total] if 0 <= used <= 10_000_000 and 0 < total <= 10_000_000 else None
 
 
 def _tailscale_exe() -> str | None:
@@ -157,6 +184,9 @@ class RoomServer:
         self._posts: dict[str, deque] = {}
         self.files: dict[str, dict] = {}          # Datei-ID → name, size, sha256, author, time (liegt in _dateien/)
         self.project: projekt.ProjectFolder | None = None  # gemeinsamer Projektordner (set_project)
+        self.main = {"text": "", "by": "", "time": ""}     # Hauptauftrag: legen die Menschen fest, KIs lesen ihn nur
+        self.tasks: list[dict] = []                        # gemeinsame Aufgabenliste (_task)
+        self._task_next = 0
         # Nur der eigene Teilnehmer des Gastgebers kennt dieses Zeichen (geht nie übers Netz – er verbindet sich
         # lokal); daran erkennt der Server den Gastgeber, statt dem Feld „host“ aus der Anfrage zu glauben
         self.host_token = secrets.token_hex(16)
@@ -209,6 +239,13 @@ class RoomServer:
         shared = data.get("project")
         if isinstance(shared, dict) and Path(str(shared.get("root", ""))).is_dir():
             self.project = projekt.ProjectFolder(Path(shared["root"]), shared.get("write", True), self._versions_dir())
+        main = data.get("main")
+        if isinstance(main, dict) and isinstance(main.get("text"), str):
+            self.main = {"text": main["text"][:MAIN_MAX], "by": str(main.get("by", ""))[:24],
+                         "time": str(main.get("time", ""))[:19]}
+        self.tasks = [t for t in data.get("tasks") or [] if isinstance(t, dict) and isinstance(t.get("nr"), int)
+                      and isinstance(t.get("text"), str)]
+        self._task_next = max((t["nr"] for t in self.tasks), default=0)
         for m in data.get("messages", [])[-MAX_MESSAGES:]:
             m["done"] = True
             self.messages[m["id"]] = m
@@ -220,7 +257,8 @@ class RoomServer:
         with self.cond:
             data = {"room": self.room, "messages": [dict(m) for m in self.messages.values()],
                     "files": {k: dict(v) for k, v in self.files.items()},
-                    "project": {"root": str(self.project.root), "write": self.project.write} if self.project else None}
+                    "project": {"root": str(self.project.root), "write": self.project.write} if self.project else None,
+                    "main": dict(self.main), "tasks": [dict(t) for t in self.tasks]}
             self._dirty = False
         try:
             self.store.parent.mkdir(parents=True, exist_ok=True)
@@ -256,7 +294,7 @@ class RoomServer:
         self.cond.notify_all()
 
     def _public_members(self) -> list[dict]:
-        keys = ("id", "name", "ai", "model", "ai_ready", "busy", "online", "host", "tools")
+        keys = ("id", "name", "ai", "model", "ai_ready", "busy", "online", "host", "tools", "ctx", "status")
         return [{k: m.get(k) for k in keys} for m in self.members.values()]
 
     def _emit_members(self):
@@ -280,7 +318,8 @@ class RoomServer:
         Freigeben der Sperre verschickt wird und Fortsetzungen die Nachrichten sonst noch verändern könnten."""
         return {"room": self.room, "seq": self.seq, "members": self._public_members(),
                 "messages": [dict(m) for m in self.messages.values()],
-                "project": self.project.info() if self.project else None}
+                "project": self.project.info() if self.project else None, "main": dict(self.main),
+                "tasks": [dict(t) for t in self.tasks]}
 
     def set_project(self, root: Path | None, write: bool = True, by: str = ""):
         """Projektordner freigeben (root) bzw. die Freigabe beenden (None) – mit Hinweis im Verlauf. Der volle
@@ -311,7 +350,8 @@ class RoomServer:
                        ("POST", "/api/post"): self._post, ("POST", "/api/patch"): self._patch,
                        ("POST", "/api/member"): self._member, ("POST", "/api/leave"): self._leave,
                        ("POST", "/api/upload"): self._upload, ("GET", "/api/file"): self._file,
-                       ("POST", "/api/project"): self._project,
+                       ("POST", "/api/main"): self._main, ("POST", "/api/task"): self._task,
+                       ("POST", "/api/stop"): self._stop, ("POST", "/api/project"): self._project,
                        ("POST", "/api/project/upload"): self._project_upload,
                        ("GET", "/api/project/file"): self._project_file,
                        }.get((method, route.path))
@@ -370,7 +410,8 @@ class RoomServer:
     def _join(self, d: dict, _q) -> dict:
         name, ai = str(d.get("name", "")).strip(), str(d.get("ai", "")).strip()
         if not valid_name(name) or not valid_name(ai):
-            raise RoomError(400, "Namen: 2–24 Zeichen, nur Buchstaben, Ziffern, Punkt, Binde- und Unterstrich.")
+            raise RoomError(400, "Namen: 2–24 Zeichen, nur Buchstaben, Ziffern, Punkt, Binde- und Unterstrich "
+                                 "(„main“ ist reserviert).")
         if name.lower() == ai.lower():
             raise RoomError(400, "Dein Name und der Name deiner KI müssen sich unterscheiden.")
         client = str(d.get("client", ""))[:40]
@@ -392,7 +433,8 @@ class RoomServer:
             mid = secrets.token_hex(8)
             self.members[mid] = {
                 "id": mid, "client": client, "name": name, "ai": ai, "model": str(d.get("model", ""))[:80],
-                "ai_ready": bool(d.get("ai_ready")), "busy": False, "tools": d.get("tools") or {},
+                "ai_ready": bool(d.get("ai_ready")), "busy": False, "tools": d.get("tools") or {}, "ctx": None,
+                "status": "",
                 "host": hmac.compare_digest(str(d.get("host_token", "")).encode(), self.host_token.encode()),
                 "online": True, "last_seen": time.time()}
             self._emit_members()
@@ -436,7 +478,10 @@ class RoomServer:
                 "kind": kind, "author": m["id"], "name": m["ai"] if kind == "ai" else m["name"],
                 "owner": m["name"], "text": text, "content": content, "files": self._clean_files(d.get("files")),
                 "done": kind == "human" or bool(d.get("done")), "model": m["model"] if kind == "ai" else "",
-                "nonce": str(d.get("nonce", ""))[:40]})
+                "nonce": str(d.get("nonce", ""))[:40],
+                # Antwort einer KI auf diese Nachricht (Rückfragen: ki_fragen wartet darauf); nur bekannte IDs
+                "reply_to": d["reply_to"] if isinstance(d.get("reply_to"), str) and d["reply_to"] in self.messages
+                else ""})
             return {"id": msg["id"]}
 
     def _clean_files(self, files) -> list[dict]:
@@ -472,6 +517,8 @@ class RoomServer:
                 event["tools"] = msg["tools"]
             if isinstance(d.get("files"), list):  # von der KI geteilte Dateien (immer die ganze Liste)
                 msg["files"] = event["files"] = self._clean_files(d["files"])
+            if d.get("ask") is not None:  # die Nachricht endet mit einer Rückfrage an eine andere KI (ki_fragen)
+                msg["ask"] = event["ask"] = _clean_ask(d["ask"])
             if d.get("done"):
                 msg["done"] = True
             self._dirty = True
@@ -556,8 +603,94 @@ class RoomServer:
             for k in ("model", "ai_ready", "busy", "tools"):
                 if k in d:
                     m[k] = d[k] if k != "model" else str(d[k])[:80]
+            if "ctx" in d:  # Füllstand des Kontexts der KI nach ihrer letzten Antwort: [belegt, gesamt] – nur Zahlen
+                m["ctx"] = _clean_ctx(d["ctx"])
+            if "status" in d:  # Teamstand: kurze Statuszeile der KI für die anderen
+                m["status"] = _clean_line(d["status"], STATUS_MAX)
             self._emit_members()
             return {"ok": True}
+
+    def _main(self, d: dict, _q) -> dict:
+        """Hauptauftrag setzen: jeder Teilnehmer darf (bewusst ohne Hinweis im Verlauf). Eine KI kann ihn nicht ändern –
+        dafür gibt es kein Werkzeug, nur den Dialog in der Oberfläche."""
+        text = str(d.get("text", "")).strip()
+        if len(text) > MAIN_MAX:
+            raise RoomError(413, f"Der Hauptauftrag ist zu lang (höchstens {MAIN_MAX} Zeichen).")
+        with self.cond:
+            m = self._get_member(d.get("member"))
+            self.main = {"text": text, "by": m["name"], "time": datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}
+            self._dirty = True
+            self._emit({"type": "main", "main": dict(self.main)})
+            return {"ok": True}
+
+    def _stop(self, d: dict, _q) -> dict:
+        """„Alle KIs stoppen“: jeder Rechner hält daraufhin die Antwort seiner KI an (nichts im Verlauf)."""
+        with self.cond:
+            m = self._get_member(d.get("member"))
+            self._emit({"type": "stop", "by": m["name"]})
+            return {"ok": True}
+
+    def _participant(self, name) -> str:
+        """Teilnehmer- oder KI-Name in der Schreibweise des Raums ("" = niemand); unbekannt → Fehler."""
+        name = str(name or "").strip().lstrip("@")
+        if not name:
+            return ""
+        for m in self.members.values():
+            for n in (m["name"], m["ai"]):
+                if n.lower() == name.lower():
+                    return n
+        raise RoomError(404, f"„{name}“ ist nicht im Raum.")
+
+    def _task(self, d: dict, _q) -> dict:
+        """Gemeinsame Aufgabenliste: add, claim, assign, done, reopen, edit, remove. who = wer handelt (der Teilnehmer
+        oder seine KI – KIs handeln über den Rechner ihres Besitzers)."""
+        op = str(d.get("op", ""))
+        with self.cond:
+            m = self._get_member(d.get("member"))
+            who = d.get("who") if d.get("who") in (m["name"], m["ai"]) else m["name"]
+            if op == "add":
+                text = _clean_line(d.get("text"), TASK_TEXT)
+                if not text:
+                    raise RoomError(400, "Die Aufgabe ist leer.")
+                if sum(1 for t in self.tasks if t["status"] != "erledigt") >= MAX_TASKS:
+                    raise RoomError(409, f"Schon {MAX_TASKS} offene Aufgaben – erst welche erledigen oder löschen.")
+                owner = self._participant(d.get("owner"))
+                self._task_next += 1
+                task = {"nr": self._task_next, "text": text, "status": "in Arbeit" if owner else "offen",
+                        "owner": owner, "by": who, "note": "", "time": datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}
+                self.tasks.append(task)
+            else:
+                try:
+                    nr = int(str(d.get("nr", "")).lstrip("#"))
+                except ValueError:
+                    nr = None
+                task = next((t for t in self.tasks if t["nr"] == nr), None)
+                if not task:
+                    raise RoomError(404, f"Aufgabe #{d.get('nr')} gibt es nicht.")
+                if op == "claim":
+                    task.update(status="in Arbeit", owner=who)
+                elif op == "assign":
+                    owner = self._participant(d.get("owner"))
+                    task.update(owner=owner, status="in Arbeit" if owner else "offen")
+                elif op == "done":
+                    task.update(status="erledigt", owner=task["owner"] or who, note=_clean_line(d.get("note"), TASK_TEXT))
+                elif op == "reopen":
+                    task.update(status="in Arbeit" if task["owner"] else "offen")
+                elif op == "edit":
+                    text = _clean_line(d.get("text"), TASK_TEXT)
+                    if not text:
+                        raise RoomError(400, "Die Aufgabe ist leer.")
+                    task["text"] = text
+                elif op == "remove":
+                    self.tasks.remove(task)
+                else:
+                    raise RoomError(400, "Unbekannte Aktion.")
+            done = [t for t in self.tasks if t["status"] == "erledigt"]
+            for t in done[:max(0, len(done) - KEEP_DONE)]:
+                self.tasks.remove(t)
+            self._dirty = True
+            self._emit({"type": "tasks", "tasks": [dict(t) for t in self.tasks]})
+            return {"ok": True, "task": dict(task)}
 
     def _leave(self, d: dict, _q) -> dict:
         with self.cond:
@@ -698,19 +831,34 @@ class RoomClient:
     # ------------------------------------------------------------ Aktionen
 
     def post(self, kind: str, text: str, content: str | None = None, files=None, done: bool = True,
-             nonce: str = "") -> str:
+             nonce: str = "", reply_to: str = "") -> str:
         return self._req("POST", "/api/post", {"member": self.member, "kind": kind, "text": text,
                                                "content": content if content is not None else text,
-                                               "files": files or [], "done": done, "nonce": nonce})["id"]
+                                               "files": files or [], "done": done, "nonce": nonce,
+                                               "reply_to": reply_to})["id"]
 
     def patch(self, msg_id: str, append: str = "", done: bool = False, tools: list | None = None,
-              files: list | None = None):
+              files: list | None = None, ask: dict | None = None):
         data = {"member": self.member, "id": msg_id, "append": append, "done": done}
         if tools is not None:
             data["tools"] = tools
         if files is not None:
             data["files"] = files
+        if ask is not None:
+            data["ask"] = ask
         self._req("POST", "/api/patch", data)
+
+    def stop_all(self):
+        """Alle KIs im Raum anhalten."""
+        self._req("POST", "/api/stop", {"member": self.member})
+
+    def task(self, op: str, who: str = "", **args) -> dict:
+        """Aufgabenliste ändern (op siehe RoomServer._task); who = Name des Teilnehmers oder seiner KI."""
+        return self._req("POST", "/api/task", {"member": self.member, "op": op, "who": who, **args})
+
+    def set_main(self, text: str):
+        """Hauptauftrag des Raums ersetzen (leer = keiner)."""
+        self._req("POST", "/api/main", {"member": self.member, "text": text})
 
     def project(self, op: str, args: dict) -> dict:
         """Aktion im gemeinsamen Projektordner des Gastgebers (list, read, search, write, edit, mkdir, delete)."""

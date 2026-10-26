@@ -2,7 +2,8 @@
 
 Job: jede Datei einzeln – eine frische Anfrage ans geladene Modell, also ohne die vorherigen im Kontext – zu einer
 kurzen Markdown-Zusammenfassung; lange Dateien stückweise (Notizen je Teil, dann zusammengefasst), eingescannte PDFs
-seitenweise über das Bildverständnis (die Seitenbilder rendert Windows selbst, Windows.Data.Pdf). Dazu ein
+seitenweise über das Bildverständnis (die Seitenbilder rendert Windows selbst, Windows.Data.Pdf, in Blöcken; jede
+abgeschriebene Seite wird gleich gemerkt – nach einem Stopp geht es dort weiter). Dazu ein
 Volltext-Index (SQLite FTS5) Seite für Seite, eine Übersicht und am Ende ein Gesamtüberblick. Fortsetzbar: fertige
 Dateien werden übersprungen, geänderte neu ausgewertet, gelöschte entfernt.
 Ablage: chats/experten/<Ordnername>-<Kennung>/ – der Datenordner selbst bleibt unverändert.
@@ -30,7 +31,8 @@ from backend import ContextFull, chat_turn
 DOC_SUFFIXES = set(documents.KINDS)       # PDF, Office, OpenDocument, RTF, HTML, CSV, JSON, Markdown, Text, XML, Log
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "$RECYCLE.BIN", "System Volume Information"}
 MAX_FILES = 5000
-SCAN_PAGES = 30                           # eingescannte PDFs: so viele Seiten werden gelesen
+SCAN_PAGES = 500                          # eingescannte PDFs: so viele Seiten werden gelesen (je Seite ~15–40 s)
+RENDER_BLOCK = 10                         # … als Bilder gerendert jeweils so viele auf einmal
 SUMMARY_TOKENS = 1200
 NOTE_TOKENS = 700
 OCR_TOKENS = 2000
@@ -120,7 +122,7 @@ def _md_path(store: Path, rel: str) -> Path:
 # ---------------------------------------------------------------- Seitenbilder (eingescannte PDFs)
 
 RENDER_SCRIPT = r"""
-param([string]$Pdf, [string]$Out, [int]$Max, [int]$Width)
+param([string]$Pdf, [string]$Out, [int]$From, [int]$Max, [int]$Width)
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
 $ext = [System.WindowsRuntimeSystemExtensions].GetMethods()
 $asTask = ($ext | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' })[0]
@@ -132,8 +134,8 @@ function Await($op, [Type]$t) { $task = $asTask.MakeGenericMethod($t).Invoke($nu
 $file = Await ([Windows.Storage.StorageFile]::GetFileFromPathAsync($Pdf)) ([Windows.Storage.StorageFile])
 $doc = Await ([Windows.Data.Pdf.PdfDocument]::LoadFromFileAsync($file)) ([Windows.Data.Pdf.PdfDocument])
 "SEITEN $($doc.PageCount)"
-$n = [Math]::Min([int]$doc.PageCount, $Max)
-for ($i = 0; $i -lt $n; $i++) {
+$n = [Math]::Min([int]$doc.PageCount, $From + $Max)
+for ($i = $From; $i -lt $n; $i++) {
   $page = $doc.GetPage($i)
   $opts = New-Object Windows.Data.Pdf.PdfPageRenderOptions
   $opts.DestinationWidth = $Width
@@ -142,25 +144,76 @@ for ($i = 0; $i -lt $n; $i++) {
   $png = Join-Path $Out ("seite-{0:D4}.png" -f ($i + 1))
   $src = [System.IO.WindowsRuntimeStreamExtensions]::AsStreamForRead($mem.GetInputStreamAt(0))
   $fs = [System.IO.File]::Create($png); $src.CopyTo($fs); $fs.Close(); $page.Dispose()
-  "BILD $png"
+  "BILD $($i + 1) $png"
 }
 """
 
 
-def render_pdf(pdf: Path, out: Path, max_pages: int = SCAN_PAGES, width: int = 1400) -> tuple[list[Path], int]:
-    """PDF-Seiten als PNG (Windows rendert selbst, ohne Zusatzprogramme) → ([Bilder], Seitenzahl insgesamt)."""
+def render_pdf(pdf: Path, out: Path, first: int = 1, count: int = RENDER_BLOCK,
+               width: int = 1400) -> tuple[list[tuple[int, Path]], int]:
+    """count PDF-Seiten ab Seite first als PNG (Windows rendert selbst, ohne Zusatzprogramme) →
+    ([(Seitennummer, Bild)], Seitenzahl insgesamt)."""
     out.mkdir(parents=True, exist_ok=True)
     script = out / "seiten.ps1"
     script.write_text(RENDER_SCRIPT, encoding="utf-8-sig")
     r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script),
-                        "-Pdf", str(pdf), "-Out", str(out), "-Max", str(max_pages), "-Width", str(width)],
+                        "-Pdf", str(pdf), "-Out", str(out), "-From", str(first - 1), "-Max", str(count),
+                        "-Width", str(width)],
                        capture_output=True, encoding="oem", errors="replace", timeout=600, creationflags=_NO_WINDOW)
     total = next((int(ln.split()[1]) for ln in r.stdout.splitlines() if ln.startswith("SEITEN ")), 0)
-    pngs = [Path(ln[5:].strip()) for ln in r.stdout.splitlines() if ln.startswith("BILD ")]
+    pngs = [(int(nr), Path(png)) for nr, png in
+            (ln[5:].strip().split(" ", 1) for ln in r.stdout.splitlines() if ln.startswith("BILD "))]
+    pngs = [(nr, p) for nr, p in pngs if p.is_file()]
     if not pngs:
         raise RuntimeError("Die Seiten ließen sich nicht als Bild darstellen" + (f": {r.stderr.strip()[:200]}"
                                                                                   if r.stderr.strip() else "."))
-    return [p for p in pngs if p.is_file()], total
+    return pngs, total
+
+
+class Transcript:
+    """Abschrift eines eingescannten PDFs, Seite für Seite als JSON-Zeilen in der Ablage – Stopp, Absturz oder ein
+    anderer Schwerpunkt machen dort weiter, statt alles neu abzuschreiben. Gilt nur für dieselbe Fassung der Datei
+    (erste Zeile: Datei, Größe, Änderungszeit; sonst beginnt sie neu)."""
+
+    def __init__(self, path: Path, key: dict):
+        self.path, self.total, self.pages = path, None, {}
+        try:
+            raw = path.read_text(encoding="utf-8")
+            lines = raw.splitlines()
+            if lines and json.loads(lines[0]) == key:
+                for line in lines[1:]:
+                    try:
+                        rec = json.loads(line)
+                        if "gesamt" in rec:
+                            self.total = int(rec["gesamt"])
+                        elif "seite" in rec:
+                            self.pages[int(rec["seite"])] = str(rec.get("text", ""))
+                    except (ValueError, TypeError, AttributeError):
+                        continue  # halb geschriebene Zeile (Absturz)
+                if not raw.endswith("\n"):
+                    self._append(None)
+                return
+        except (OSError, ValueError, TypeError):
+            pass
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(key, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    def _append(self, rec: dict | None):
+        with open(self.path, "a", encoding="utf-8") as f:
+            f.write((json.dumps(rec, ensure_ascii=False) if rec else "") + "\n")
+
+    def set_total(self, total: int):
+        if total != self.total:
+            self.total = total
+            self._append({"gesamt": total})
+
+    def add(self, nr: int, text: str):
+        self.pages[nr] = text
+        self._append({"seite": nr, "text": text})
+
+
+def _transcript_path(store: Path, rel: str) -> Path:
+    return store / "abschriften" / (hashlib.sha1(rel.encode("utf-8")).hexdigest()[:16] + ".jsonl")
 
 
 # ---------------------------------------------------------------- Auswertung
@@ -170,12 +223,14 @@ class ServerGone(Exception):
 
 
 class Stopped(Exception):
-    """„Stoppen“ – mitten in einer Datei; sie wird beim nächsten Mal neu ausgewertet."""
+    """„Stoppen“ – mitten in einer Datei; sie wird beim nächsten Mal neu ausgewertet (schon abgeschriebene Seiten
+    eines Scans bleiben, Transcript)."""
 
 
 class Job(threading.Thread):
     """Wertet einen Ordner im Hintergrund aus. report(art, daten) kommt aus diesem Thread – der Aufrufer leitet es in den
-    Tk-Thread weiter. Arten: start, file, paused, resumed, finished, stopped, fatal."""
+    Tk-Thread weiter. Arten: start, file, page (Scan: Seite abgeschrieben), paused, resumed, finished, stopped,
+    fatal."""
 
     def __init__(self, source: Path, base_url: str, n_ctx: int, vision: bool, focus: str, report):
         super().__init__(daemon=True)
@@ -186,6 +241,7 @@ class Job(threading.Thread):
         self.pause_user = threading.Event()   # „Pausieren“
         self.pause_chat = threading.Event()   # während einer Antwort im Chat (beide teilen sich das Modell)
         self._paused_for = 0.0
+        self._progress = {"done": 0, "total": 0, "rest": None}  # für „page“: Stand und Restzeit der übrigen Dateien
 
     # ------------------------------------------------------------ Ablauf
 
@@ -225,7 +281,10 @@ class Job(threading.Thread):
                 for k, rel in enumerate(todo):
                     self._wait()
                     done = len(rels) - len(todo) + k
-                    eta = (sum(durations[-20:]) / len(durations[-20:]) * (len(todo) - k)) if durations else None
+                    avg = sum(durations[-20:]) / len(durations[-20:]) if durations else None
+                    eta = avg * (len(todo) - k) if avg is not None else None
+                    rest = avg * (len(todo) - k - 1) if avg is not None else (0.0 if k == len(todo) - 1 else None)
+                    self._progress = {"done": done, "total": len(rels), "rest": rest}
                     self.report("file", {"done": done, "total": len(rels), "rel": rel, "eta": eta})
                     t0, self._paused_for = time.monotonic(), 0.0
                     self._process(con, info, rel, rels[rel])
@@ -321,20 +380,45 @@ class Job(threading.Thread):
                 raise
         if not self.vision:
             return None, 0, True
+        st = path.stat()
+        done = Transcript(_transcript_path(self.store, rel), {"datei": rel, "size": st.st_size, "mtime": int(st.st_mtime)})
         tmp = Path(tempfile.mkdtemp(prefix="experte-"))
         try:
-            pngs, total = render_pdf(path, tmp)
-            texts = []
-            for i, png in enumerate(pngs, 1):
-                self._wait()
-                page = self._ask([{"role": "user", "content": OCR_PROMPT, "_image_files": [str(png)]}], OCR_TOKENS)
-                if page.strip() and page.strip() != "(leer)":
-                    texts.append(f"--- Seite {i} ---\n{page.strip()}")
-            if total > len(pngs):
-                texts.append(f"--- Seite {len(pngs)} ---\n(Nur die ersten {len(pngs)} von {total} Seiten gelesen.)")
-            return "\n".join(texts), total, True
+            nr, times = 1, []
+            while done.total is None or nr <= min(done.total, SCAN_PAGES):
+                if done.total is not None and nr in done.pages:  # schon abgeschrieben (Fortsetzen, anderer Schwerpunkt)
+                    nr += 1
+                    continue
+                count = RENDER_BLOCK if done.total is None else min(RENDER_BLOCK, min(done.total, SCAN_PAGES) - nr + 1)
+                pngs, total = render_pdf(path, tmp, nr, count)
+                done.set_total(total)
+                limit = min(total, SCAN_PAGES)
+                for page_nr, png in pngs:
+                    if page_nr <= limit and page_nr not in done.pages:
+                        self._wait()
+                        t0 = time.monotonic()
+                        done.add(page_nr, self._ask([{"role": "user", "content": OCR_PROMPT,
+                                                      "_image_files": [str(png)]}], OCR_TOKENS))
+                        times.append(time.monotonic() - t0)
+                        self._report_page(rel, page_nr, limit, times, done)
+                    png.unlink(missing_ok=True)
+                nr = pngs[-1][0] + 1
+            limit = min(done.total, SCAN_PAGES)
+            texts = [f"--- Seite {i} ---\n{done.pages[i].strip()}" for i in range(1, limit + 1)
+                     if done.pages.get(i, "").strip() not in ("", "(leer)")]
+            if done.total > limit:
+                texts.append(f"--- Seite {limit} ---\n(Nur die ersten {limit} von {done.total} Seiten gelesen.)")
+            return "\n".join(texts), done.total, True
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+
+    def _report_page(self, rel: str, page: int, limit: int, times: list, done: Transcript):
+        """Fortschritt innerhalb eines Scans; Restzeit = offene Seiten × Zeit je Seite + die übrigen Dateien."""
+        left = sum(1 for i in range(page + 1, limit + 1) if i not in done.pages)
+        rest = self._progress["rest"]
+        eta = sum(times[-10:]) / len(times[-10:]) * left + rest if rest is not None else None
+        self.report("page", {"done": self._progress["done"], "total": self._progress["total"], "rel": rel,
+                             "page": page, "pages": limit, "eta": eta})
 
     def _summarize(self, rel: str, kind: str, pages: int, parts: list) -> str:
         focus = FOCUS_PART.format(focus=self.focus) if self.focus else ""
@@ -402,6 +486,7 @@ class Job(threading.Thread):
         con.commit()
         info["dateien"].pop(rel, None)
         _md_path(self.store, rel).unlink(missing_ok=True)
+        _transcript_path(self.store, rel).unlink(missing_ok=True)
 
     def _write_overview(self, info: dict):
         files = info["dateien"]

@@ -2065,13 +2065,13 @@ class App:
                                  if data["todo"] else f"Auswertung „{name}“: alles aktuell, Überblick wird geprüft")
         elif kind == "file":
             if data["rel"]:
-                eta = data.get("eta")
-                left = "" if eta is None else (f" · noch ca. {eta / 3600:.1f} Std.".replace(".", ",") if eta >= 5400
-                                               else f" · noch ca. {max(1, round(eta / 60))} Min.")
                 self._expert_text = (f"Auswertung „{name}“: {data['done']} von {data['total']} · "
-                                     f"{Path(data['rel']).name}{left}")
+                                     f"{Path(data['rel']).name}{self._eta_text(data.get('eta'))}")
             else:
                 self._expert_text = f"Auswertung „{name}“: Gesamtüberblick wird erstellt"
+        elif kind == "page":  # eingescanntes PDF: Seite für Seite
+            self._expert_text = (f"Auswertung „{name}“: {data['done']} von {data['total']} · {Path(data['rel']).name}"
+                                 f" · Seite {data['page']} von {data['pages']}{self._eta_text(data.get('eta'))}")
         elif kind in ("paused", "resumed"):
             self._expert_paused = kind == "paused"
         elif kind in ("finished", "stopped", "fatal"):
@@ -2089,6 +2089,14 @@ class App:
             if self.chat_data and self.chat_data["id"] == self._expert_job_chat and not self.busy:
                 self.view.note(note, "warn" if kind == "fatal" else "note")
         self._update_expert_row()
+
+    @staticmethod
+    def _eta_text(eta: float | None) -> str:
+        """„ · noch ca. 12 Min.“ bzw. „ · noch ca. 2,5 Std.“ (leer, solange die Restzeit unbekannt ist)."""
+        if eta is None:
+            return ""
+        return (f" · noch ca. {f'{eta / 3600:.1f}'.replace('.', ',')} Std." if eta >= 5400
+                else f" · noch ca. {max(1, round(eta / 60))} Min.")
 
     def _update_expert_row(self):
         """Leiste unten links: Häkchen nach dem Chat, Fortschritt bzw. Stand, passende Verweise."""

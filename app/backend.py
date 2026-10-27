@@ -8,9 +8,7 @@ import os
 import re
 import shlex
 import socket
-import struct
 import subprocess
-import sys
 import threading
 import time
 import urllib.error
@@ -104,134 +102,16 @@ def _free_port() -> int:
 
 # ---------------------------------------------------------------- Server-Prozess
 
-AUTO_MIN_CTX, AUTO_MAX_CTX = 16384, 65536  # Kontext „auto“: mindestens (Werkzeuge) / höchstens so viel
-AUTO_TARGET_CTX = 32768                    # „auto“ nimmt mindestens so viel – lagert dafür Schichten in den RAM aus
-FIT_MARGIN_MIB = 1024                      # so viel Grafikspeicher lässt --fit frei (wie llama.cpp)
-RAM_RESERVE_MIB = 4096                     # so viel Arbeitsspeicher bleibt für Windows und andere Programme
+FIT_MARGIN_MIB = 1024  # so viel Grafikspeicher lässt --fit beim Verteilen der Schichten frei (wie llama.cpp)
 
 
 def fit_margin(mmproj: Path | None) -> int:
-    """Reserve für --fit in MiB: 1 GB, mit Bildverständnis zusätzlich die mmproj-Datei (die rechnet llama.cpp beim
-    Anpassen nicht mit, llama-fit-params kennt sie gar nicht)."""
+    """Reserve für --fit (Verteilung der Schichten auf die Grafikkarte) in MiB: 1 GB, mit Bildverständnis zusätzlich
+    die mmproj-Datei (die rechnet llama.cpp beim Anpassen nicht mit)."""
     try:
         return FIT_MARGIN_MIB + (mmproj.stat().st_size // 2 ** 20 if mmproj else 0)
     except OSError:
         return FIT_MARGIN_MIB
-
-
-def fit_params(server_exe: str, model: Path, mmproj: Path | None = None, ngl: str | None = None,
-               min_ctx: int = AUTO_MIN_CTX, timeout: float = 90) -> dict | None:
-    """Was llama.cpp für dieses Modell auf diesem Rechner wählen würde – llama-fit-params rechnet das aus dem
-    freien Speicher, ohne die Gewichte zu laden (~2 s): {"ctx", "ngl", "experts_on_cpu"}. None = das Werkzeug fehlt
-    (ältere llama.cpp-Version) oder scheitert."""
-    exe = Path(server_exe).with_name("llama-fit-params.exe")
-    if not exe.is_file():
-        return None
-    args = [str(exe), "-m", str(model), "-fitc", str(min_ctx), "-fitt", str(fit_margin(mmproj))]
-    if ngl and ngl.lower() != "auto":
-        args += ["-ngl", ngl]
-    try:
-        r = subprocess.run(args, capture_output=True, timeout=timeout, cwd=str(exe.parent), stdin=subprocess.DEVNULL,
-                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    lines = r.stdout.decode("utf-8", "replace").strip().splitlines()
-    line = f" {lines[-1]} " if lines else ""  # z. B. „-c 16384 -ngl 54 -ot "blk\.26\.ffn_…=CPU"“
-    m = re.search(r"\s-c (\d+)\s", line)
-    if r.returncode != 0 or not m:
-        return None
-    n = re.search(r"\s-ngl (\d+)\s", line)
-    args = [t[1:-1] if len(t) > 1 and t[0] == t[-1] == '"' else t for t in shlex.split(line, posix=False)]
-    return {"ctx": int(m.group(1)), "ngl": int(n.group(1)) if n else None, "experts_on_cpu": " -ot " in line,
-            "args": args}
-
-
-def host_mib(server_exe: str, model: Path, fitted: list) -> int | None:
-    """So viel Arbeitsspeicher (MiB) bräuchte das Modell mit diesen Einstellungen (llama-fit-params --fit-print:
-    Zeile „Host Modell Kontext Rechnen“). None = unbekannt."""
-    exe = Path(server_exe).with_name("llama-fit-params.exe")
-    try:
-        r = subprocess.run([str(exe), "-m", str(model), *fitted, "-fitp", "on"], capture_output=True, timeout=90,
-                           cwd=str(exe.parent), stdin=subprocess.DEVNULL,
-                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    for line in r.stdout.decode("utf-8", "replace").splitlines():
-        parts = line.split()
-        if parts and parts[0] == "Host" and all(p.isdigit() for p in parts[1:]):
-            return sum(int(p) for p in parts[1:])
-    return None
-
-
-def free_ram_mib() -> int | None:
-    """Freier Arbeitsspeicher in MiB (Windows: GlobalMemoryStatusEx)."""
-    if sys.platform != "win32":
-        return None
-
-    class MEMORYSTATUSEX(ctypes.Structure):
-        _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
-                    ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
-                    ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
-                    ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
-                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
-
-    st = MEMORYSTATUSEX(dwLength=ctypes.sizeof(MEMORYSTATUSEX))
-    return st.ullAvailPhys // 2 ** 20 if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st)) else None
-
-
-def auto_context(server_exe: str, model: Path, mmproj: Path | None = None, ngl: str | None = None) -> dict | None:
-    """Kontext „auto“: mindestens AUTO_TARGET_CTX (was nicht in den Grafikspeicher passt, kommt in den RAM) –
-    reicht der freie Arbeitsspeicher dafür nicht, nur AUTO_MIN_CTX. Ergebnis wie fit_params, dazu "host_mib"."""
-    free, best = free_ram_mib(), None
-    for floor in (AUTO_TARGET_CTX, AUTO_MIN_CTX):
-        fit = fit_params(server_exe, model, mmproj, ngl, min_ctx=floor)
-        if not fit:
-            return best
-        fit["host_mib"] = host_mib(server_exe, model, fit.get("args") or [])
-        best = fit
-        if free is None or fit["host_mib"] is None or fit["host_mib"] + RAM_RESERVE_MIB <= free:
-            break
-    return best
-
-
-def gguf_info(path: Path) -> dict:
-    """Aus dem Kopf einer GGUF-Datei: "block_count" (Schichten) und "context_length" (Trainings-Kontext)."""
-    size = {0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 1, 10: 8, 11: 8, 12: 8}
-    fmt = {0: "<B", 1: "<b", 2: "<H", 3: "<h", 4: "<I", 5: "<i", 6: "<f", 7: "<?", 10: "<Q", 11: "<q", 12: "<d"}
-    info: dict = {}
-    try:
-        with open(path, "rb") as f:
-            if f.read(4) != b"GGUF":
-                return info
-            f.read(4)  # Version
-            _tensors, count = struct.unpack("<QQ", f.read(16))
-
-            def skip(kind):
-                if kind == 8:  # Zeichenkette
-                    f.seek(struct.unpack("<Q", f.read(8))[0], 1)
-                elif kind == 9:  # Liste (z. B. die Tokens – kommt erst nach den gesuchten Werten)
-                    inner, n = struct.unpack("<IQ", f.read(12))
-                    if inner in (8, 9):
-                        for _ in range(n):
-                            skip(inner)
-                    else:
-                        f.seek(size[inner] * n, 1)
-                else:
-                    f.seek(size[kind], 1)
-
-            for _ in range(count):
-                key = f.read(struct.unpack("<Q", f.read(8))[0]).decode("utf-8", "replace")
-                kind = struct.unpack("<I", f.read(4))[0]
-                name = key.rsplit(".", 1)[-1]
-                if name in ("block_count", "context_length") and kind in fmt and key.count(".") == 1:
-                    info[name] = struct.unpack(fmt[kind], f.read(size[kind]))[0]
-                    if len(info) == 2:
-                        break
-                else:
-                    skip(kind)
-    except (OSError, struct.error, KeyError, ValueError):
-        pass
-    return info
 
 
 class LlamaServer:
@@ -255,28 +135,20 @@ class LlamaServer:
     def start(self, server: dict, model: Path, ctx: int, ngl: str, extra: str,
               cancel: threading.Event, timeout: float = 900, mmproj: Path | None = None,
               image_tokens: int | None = None):
-        """Startet den Server und blockiert, bis das Modell geladen ist. ctx=None = „auto“: so viel Kontext, wie
-        neben dem Modell in den Speicher passt (llama-fit-params, AUTO_MIN_CTX bis AUTO_MAX_CTX). mmproj =
-        Bild-Projektor (Bildverständnis), image_tokens = höchstens so viele Tokens pro Bild. cancel bricht ab
-        (Entladen oder ein neues Laden)."""
+        """Startet den Server und blockiert, bis das Modell geladen ist. ctx = Kontext in Tokens (aus den
+        Einstellungen), mmproj = Bild-Projektor (Bildverständnis), image_tokens = höchstens so viele Tokens pro Bild.
+        cancel bricht ab (Entladen oder ein neues Laden)."""
         with self._start_lock:  # nie zwei Starts zugleich (z. B. Doppelklick): alten Server beenden, neuen starten
             self.stop()
             if cancel.is_set():
                 raise RuntimeError("Laden abgebrochen.")
-            can_fit = Path(server["exe"]).with_name("llama-fit-params.exe").is_file()  # neuere llama.cpp-Versionen
-            if ctx is None:
-                fit = auto_context(server["exe"], model, mmproj, ngl) if can_fit else None
-                ctx = min(fit["ctx"], AUTO_MAX_CTX) if fit else (None if can_fit else AUTO_MIN_CTX)
-                self.log_cb(tr("Kontext auto: {0}", ctx or tr("llama.cpp passt selbst an (mind. {0})", AUTO_MIN_CTX))
-                            + (f" (llama-fit-params: {fit['ctx']})" if fit else "") + "\n")
-                if cancel.is_set():
-                    raise RuntimeError("Laden abgebrochen.")
             port = _free_port()
             args = [server["exe"], "-m", str(model), "--host", "127.0.0.1", "--port", str(port), "--jinja",
-                    "--no-webui"]
-            args += ["-c", str(ctx)] if ctx else ["-fitc", str(AUTO_MIN_CTX)]
-            if can_fit:
-                args += ["-fitt", str(fit_margin(mmproj))]  # Reserve inkl. Bildverständnis
+                    "--no-webui", "-c", str(ctx)]
+            if Path(server["exe"]).with_name("llama-fit-params.exe").is_file():  # neuere llama.cpp (kennen -fitt)
+                # nur die Verteilung der Schichten auf die Grafikkarte: Reserve inkl. Bildverständnis – ein
+                # angegebenes -c ändert llama.cpp dabei nie
+                args += ["-fitt", str(fit_margin(mmproj))]
             if ngl and ngl.lower() != "auto":
                 args += ["-ngl", ngl]
             if mmproj:

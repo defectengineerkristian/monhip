@@ -569,9 +569,12 @@ class _Eval:
                 left = right
             return result
         if isinstance(node, ast.Call):
-            if not isinstance(node.func, ast.Name) or node.func.id not in FUNCS or node.keywords:
+            if not isinstance(node.func, ast.Name) or node.func.id not in FUNCS:
                 name = node.func.id if isinstance(node.func, ast.Name) else "?"
-                raise RechenError(f"Die Funktion '{name}' gibt es nicht (Argumente ohne name=).")
+                # die Werkzeug-Beschreibung nennt nur die wichtigsten Funktionen (spart Tokens) – hier alle
+                raise RechenError(f"Die Funktion '{name}' gibt es nicht. Verfügbar: {', '.join(sorted(FUNCS))}.")
+            if node.keywords:
+                raise RechenError(f"Argumente ohne name= angeben: {node.func.id}(…).")
             args = [self.run(a) for a in node.args]
             try:
                 return _check(FUNCS[node.func.id](*args))

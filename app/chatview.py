@@ -95,6 +95,8 @@ class ChatView:
         self._follow = False
         self._stick = True           # unten „kleben“ – wird nur durch eigenes Scrollen des Nutzers aufgehoben
         self._padx = None
+        self._sb = None              # Scrollbalken (attach_scrollbar) – fixed_column lässt ihm seinen Platz
+        self.active = True           # vorn sichtbar (set_active)
         self._bubble_w = None
         self._layout_job = None
         self._anim_job = None
@@ -228,6 +230,8 @@ class ChatView:
         self.col = col
         r, g, b = self.t.winfo_rgb(self.t.cget("background"))
         self.bg = "#%02x%02x%02x" % (r // 257, g // 257, b // 257)
+        if isinstance(self.t.master, tk.Frame):  # Rand neben der Spalte (fixed_column) wie der Verlauf
+            self.t.master.configure(background=self.bg)
         # Markierung auch ohne Tastaturfokus zeigen (Tk-Standard: dann unsichtbar) – wichtig für „Antworten“
         self.t.configure(inactiveselectbackground=self.t.cget("selectbackground"))
         T = self.t.tag_configure
@@ -330,7 +334,36 @@ class ChatView:
         def command(*args):
             self.t.yview(*args)
             self._stick = self._at_bottom()
+        self._sb = sb
         sb.configure(command=command, cursor="arrow")  # sonst erbte er den Zeiger des Rahmens (_set_cursor)
+
+    def fixed_column(self):
+        """Textfeld mit fester Breite (Spalte + Rand) mittig in seinen Rahmen (tk.Frame) setzen statt über die ganze
+        Breite: Beim Ziehen am Fensterrand wird es dann nur verschoben. Vorher änderte sich bei jedem Schritt seine
+        Breite, und Tk brach Chat und Teamwork-Verlauf komplett neu um (langer Chat: ~190 ms je Schritt, beide Ebenen
+        liegen in derselben Zelle). Nur in einem schmaleren Fenster ändert sich die Breite noch."""
+        self._padx = self._s(24)
+        self.t.configure(padx=self._padx)  # einmal beim Aufbau – danach nie wieder configure (vermisst alles neu)
+        frame = self.t.master
+        frame.bind("<Configure>", self._place_column)
+        frame.bind("<MouseWheel>", self._on_wheel)  # auch neben der Spalte scrollen
+
+    def set_active(self, active: bool):
+        """Vorn (sichtbar) oder verdeckt hinter der anderen Ebene (Chat | Teamwork, set_mode): Verdeckt folgt die
+        Ansicht Größenänderungen nicht – sonst bräche Tk im schmalen Fenster auch sie bei jedem Schritt neu um –,
+        beim Vorholen holt sie das einmal nach."""
+        self.active = active
+        if active:
+            self._place_column()
+
+    def _place_column(self, e=None):
+        if not self.active:
+            return
+        frame = self.t.master
+        sb = self._sb.winfo_reqwidth() if self._sb else 0
+        avail = max(1, (e.width if e else frame.winfo_width()) - sb)
+        width = min(avail, self._s(MAX_COLUMN) + 2 * self._padx)
+        self.t.place(x=(avail - width) // 2, y=0, width=width, height=e.height if e else frame.winfo_height())
 
     def _new(self, kind: str, **info) -> int:
         self._n += 1
@@ -828,15 +861,10 @@ class ChatView:
         self._layout_job = self.t.after(40, self._relayout)
 
     def _relayout(self):
-        """Spalte mittig halten und Sprechblasen an die neue Breite anpassen."""
+        """Sprechblasen an eine geänderte Breite anpassen (die Spalte selbst setzt _place_column)."""
         self._layout_job = None
-        w = self.t.winfo_width()
-        if w <= 1:
+        if self.t.winfo_width() <= 1:
             return
-        side = max(self._s(24), (w - self._s(MAX_COLUMN)) // 2)
-        if side != self._padx:
-            self._padx = side
-            self.t.configure(padx=side)
         if self._bubble_max() != self._bubble_w:
             self._redraw_bubbles()
         if self._stick:

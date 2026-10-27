@@ -34,7 +34,8 @@ import documents
 import images
 import projekt
 import room
-from agent import Agent, ToolError, describe_call, format_args, result_ok, run_conversation, tool_budget
+from agent import (Agent, ToolError, date_line, describe_call, format_args, result_ok, run_conversation, time_label,
+                   tool_budget)
 from projekt import RISKY_SUFFIXES, mark_from_internet  # RISKY_SUFFIXES: vor dem Herunterladen warnen
 from themes import mix_hex
 from widgets import scrolled
@@ -1701,7 +1702,7 @@ class RoomMode:
         text += "\n\n" + COLLAB_PROMPT.format(files=FILES_RULE.get(files, ""), tasks=tasks)
         text += "\n\n" + NOTES_PROMPT.format(owner=me["name"], text=self.notes or "(noch leer)")
         own = self.app.sys_text.get("1.0", tk.END).strip()
-        text += ("\n\n" + own if own else "") + datetime.now().strftime("\n\nHeutiges Datum: %d.%m.%Y, %H:%M Uhr.")
+        text += ("\n\n" + own if own else "") + "\n\n" + date_line()  # ohne Uhrzeit – die steht an jeder Nachricht
         if agent:
             text += "\n\n" + agent.system_prompt()
         return text
@@ -1733,6 +1734,10 @@ class RoomMode:
                 item = {"role": "assistant", "content": content, "_ids": [m["id"]]}
             else:
                 label = m["name"] + (f" (KI von {m.get('owner')})" if m["kind"] == "ai" else "")
+                try:  # feste Uhrzeit je Nachricht statt der Uhrzeit im System-Prompt (siehe agent.date_line)
+                    label += ", " + time_label(datetime.fromisoformat(m.get("time", "")))
+                except ValueError:
+                    pass
                 item = {"role": "user", "content": f"[{label}]: {content}", "_ids": [m["id"]]}
                 pics = [f for f in m.get("files") or [] if f.get("image") and f.get("id")]
                 if pics and self.app.server.vision:  # holt _ai_worker vor dem Senden (_image_files)

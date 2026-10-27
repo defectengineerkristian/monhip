@@ -5,9 +5,9 @@ Gemini, lokale Modelle …). Sie soll verhindern, dass zwei gleichzeitig an ders
 noch einmal gebaut oder eine getroffene Entscheidung wieder umgeworfen wird. Ausführliche Entwicklernotizen führt
 der Projektinhaber lokal; diese Datei ist der gemeinsame Auszug daraus.
 
-**Stand:** 27.10.2026 · **neuestes Release:** v1.4 · 19 neue Agenten-Werkzeuge (Rechnen, Git & GitHub,
-Rückgängig über Checkpoints, Hintergrund-Prozesse, Dateien ordnen, Speicher, PDFs und Bilder) auf Basis von v1.3
-(Deutsch und Englisch für die Oberfläche).
+**Stand:** 27.10.2026 · **neuestes Release:** v1.4.1 · Kontextgröße wieder frei einstellbar (ohne Automatik),
+schnellere Antworten in langen Chats, flüssigeres Ziehen am Fensterrand, PowerShell-Hinweise für die KI – auf Basis
+von v1.4 (19 neue Agenten-Werkzeuge) und v1.3 (Deutsch und Englisch für die Oberfläche).
 
 ---
 
@@ -56,10 +56,8 @@ Reihenfolge offen – vor dem Start unter „In Arbeit“ eintragen.
 - **Werkzeuge, Schritt 2:** Datei herunterladen, Zwischenablage, PDF erzeugen.
 - **Agenten-Werkzeuge (v1.4) nachschärfen:**
   - Mit einem kleinen Modell (7–14B) testen – dafür sind sie gedacht, getestet wurde nur mit Qwen3.6-35B-A3B.
-  - Eigene Schalter je Werkzeuggruppe (z. B. Git, Aufräumen, Programmieren): alle Häkchen an kosten ~3 000 Tokens
+  - Eigene Schalter je Werkzeuggruppe (z. B. Git, Aufräumen, Programmieren): alle Häkchen an kosten ~2 600 Tokens
     zusätzlich; `rechnen` sollte immer an bleiben.
-  - Befehls-Prompt (`CMD_PROMPT`) um Hinweise zu PowerShell 5.1 ergänzen: kein `&&`, Python über `py` (`python` ist
-    oft nur der Store-Platzhalter), `curl` ist dort `Invoke-WebRequest` – das Modell verschwendet sonst Schritte.
   - Knopf „Rückgängig“ unter einer Antwort, laufende Hintergrund-Prozesse in der Oberfläche anzeigen.
 - **Experten-Modus:** „Auswertung löschen“ in der Oberfläche (Ergebnisse bleiben bisher unter `chats/experten/`).
 - **Bildbereich „Chat | Teamwork | Bilder“** (besprochen, noch nicht begonnen; vorher andere Optimierungen):
@@ -117,7 +115,9 @@ Vom Projektinhaber so festgelegt – nicht ohne Rücksprache ändern und nicht w
 - Spricht eine KI andere KIs mit @Name an, wartet sie auf deren Antworten und macht danach von selbst weiter.
 
 **Modelle und Leistung**
-- Kontext: Auslagern in den Arbeitsspeicher ist in Ordnung (Kontext „auto“ mit Untergrenze 32 768 Tokens).
+- **Den Kontext stellt jeder selbst ein** (Einstellungen → Laden, Standard 16 384 Tokens) – keine Automatik und keine
+  Vorschläge; „auto“ wurde in v1.4.1 auf Wunsch des Projektinhabers wieder entfernt. Auslagern in den
+  Arbeitsspeicher ist in Ordnung.
 - **„Grafikkarte zuerst“** (kleinerer Kontext und quantisierter Kontextspeicher für etwas mehr Tempo) ist nicht
   gewünscht – das Kontextfenster soll nicht kleiner werden. Größter Hebel bei langsamen Antworten ist die
   Modellfassung: Q4_K_M statt Q8_0 war in der Messung fast doppelt so schnell.
@@ -139,6 +139,12 @@ Die wichtigsten Stolpersteine – fast jede Regel hier steht da, weil ihr Bruch 
 - **Das Chat-Textfeld nie per `configure` ändern** (`state`, `cursor` …) – Tk vermisst dann den ganzen Verlauf neu.
   Der Schreibschutz läuft über den Bindtag `ChatReadOnly`, Farben über `tag_configure`. In `chatview.py` nur
   innerhalb `with self._edit():` schreiben; wegen der Slots im Teamwork nie fest „end-1c“, sondern `self._at`.
+  Das Textfeld hat eine **feste Breite** (`fixed_column`, liegt per `place` mittig) – nicht wieder an die
+  Fensterbreite koppeln: jedes Pixel beim Ziehen am Fensterrand brach sonst Chat und Teamwork-Verlauf neu um.
+- **Anfang des Prompts stabil halten:** llama.cpp rechnet bei der nächsten Anfrage nur ab der ersten geänderten
+  Stelle neu. Im System-Prompt deshalb nichts, was sich laufend ändert – keine Uhrzeit (`agent.date_line()` = nur
+  Datum; die Uhrzeit hängt `_api_message` fest an jede Nutzernachricht), keine Laufzeiten, keine Zähler. Mit der
+  Uhrzeit im Prompt las das Modell bei jeder Nachricht die ganze Unterhaltung neu ein (8 700 Tokens: 5,6 s statt 0,2 s).
 - **Designs:** klassische tk-Widgets und Fenster registrieren (`theme.register_text/list/combo/menu/window`),
   sonst bleiben sie hell. Neue Farbschlüssel in beiden Paletten, Chatfarben (`"chat"`) in allen drei Designs.
   Runde Ecken: undurchsichtige Bilder mit 64-px-Mitte, keine Halbtransparenz (sonst 16 s statt 1,8 s Start).
@@ -181,7 +187,7 @@ mit `py Monhip.pyw`).
 | `monhip.py` | Klasse `App`: gesamte Oberfläche und Ablauf, `DEFAULTS`/`load_config`/`save_config`, `VERSION` |
 | `chatview.py` | `ChatView`: Chatverlauf in einem `tk.Text` (Sprechblasen, Markdown, Denk-/Werkzeugblöcke, Kärtchen, Bearbeiten, Zitat) |
 | `markdown_lite.py` | Markdown-Helfer für Chatansicht und Office-Dateien |
-| `backend.py` | `LlamaServer` (Start/Stopp, `/props`, Streaming, `count_tokens`, Kontext „auto“ über `llama-fit-params`), `ContextFull` |
+| `backend.py` | `LlamaServer` (Start/Stopp mit `-c` aus den Einstellungen, `/props`, Streaming, `count_tokens`), `ContextFull` |
 | `context.py` | Kontext messen, ältere Unterhaltung zusammenfassen, „Kontext voll“ mitten in der Antwort (`Window`) |
 | `agent.py` | Werkzeuge der KI (Dateien, Office, Befehle, Web, Bilder, Gedächtnis, Erinnerungen, Teamwork, Experte) und Werkzeugschleife `run_conversation` |
 | `experte.py` | Experten-Modus: Ordner auswerten (`Job`), Volltextindex (SQLite FTS5), `Library` für die Werkzeuge |
@@ -222,7 +228,9 @@ mit `py Monhip.pyw`).
 - Ohne echte Nutzerdaten testen: `CONFIG_FILE` in `monhip.py`, `chats.CHAT_DIR`, `memory.FILE`, `reminders.FILE`,
   im Teamwork `app.app_dir` und `roomui.CACHE_DIR` auf Testordner umbiegen.
 - Ohne Modell: `run_conversation` bzw. `agent.chat_turn` durch Fakes ersetzen oder einen nachgestellten llama-server
-  verwenden (`ThreadingHTTPServer` mit `/props`, `/tokenize` und `/v1/chat/completions` als SSE).
+  verwenden (`ThreadingHTTPServer` mit `/props`, `/tokenize` und `/v1/chat/completions` als SSE). Startoptionen des
+  Servers: nachgemachte `llama-server.bat` → Python-Skript, das `sys.argv` in eine Datei schreibt und `/health` und
+  `/props` beantwortet.
 - Teamwork in einem Prozess: App als Gastgeber (`app.room.create(…)` auf 127.0.0.1), ein zweiter `room.RoomClient`
   als Gast.
 - Im Verlauf immer auch angeben, **was nicht** getestet ist (z. B. „nicht mit echtem Modell“, „nicht zwischen zwei
@@ -258,6 +266,31 @@ mit `py Monhip.pyw`).
 
 Neueste zuerst. Neue Einträge oben im Abschnitt „Seit …“:
 `- TT.MM.JJJJ · Wer · Was · getestet: … · offen: …`
+
+### v1.4.1 – 27.10.2026
+- 27.10.2026 · Projektinhaber + Claude · **Kontext „auto“ samt Vorschlag entfernt** (Wunsch des Projektinhabers: jeder
+  stellt das Kontextfenster selbst ein, wie früher). Reiter „Laden“: einfaches Feld „Kontext (Tokens)“, Standard
+  16 384; der Server bekommt immer `-c <Zahl>`. Weg sind die Berechnung über `llama-fit-params`, die Vorschlagszeile mit
+  „Übernehmen“ und 17 englische Texte dazu. Geblieben ist nur `-fitt` (1 GB + Größe der mmproj-Datei, nur bei neuerer
+  llama.cpp) – betrifft die Verteilung der Schichten auf die Grafikkarte, nie den Kontext. Ein gespeichertes „auto“
+  wird beim Start zu 16 384, eine gespeicherte Zahl bleibt; ein Tippfehler beim Speichern behält die bisherige Zahl.
+  Getestet: alle Testdateien, Startoptionen mit nachgemachtem Server (ältere/neuere llama.cpp, mmproj, `-ngl`,
+  Extra-Argumente, Pfad mit Leerzeichen), alte Einstellungen („auto“, fehlt, leer, Zahl als Text …), Fenster Deutsch
+  und Englisch inkl. Laden über die Oberfläche. Nicht mit echtem Modell geladen.
+- 27.10.2026 · Projektinhaber + Claude · **Schneller und flüssiger:** Die Uhrzeit stand minutengenau im System-Prompt –
+  llama.cpp las deshalb bei jeder Nachricht die ganze Unterhaltung neu ein (gemessen mit Qwen3.6-35B-A3B Q4: 8 700
+  Tokens 5,6 s statt 0,2 s, wächst mit dem Chat). Jetzt nur das Datum im Prompt, die Uhrzeit fest an jeder
+  Nutzernachricht; Hintergrund-Prozesse ohne Laufzeit. Ziehen am Fensterrand: das Chat-Textfeld hat eine feste Breite
+  und die verdeckte Ebene (Chat bzw. Teamwork) folgt erst beim Umschalten – langer Chat 184 → 59 ms je Schritt (so viel
+  wie ein leerer), schmales Fenster 101 → 48 ms. Gegen v1.2 gemessen: Start, Streamen, langer Chat, Modus- und
+  Designwechsel unverändert. Getestet: alle Testdateien, 97 Prüfungen am Agenten, Fenstertest Deutsch/Englisch
+  (zweite Frage mit vorgestellter Uhr: Prompt-Anfang Zeichen für Zeichen gleich), Spalte mit Bildschirmfotos in allen
+  drei Designs. Offen: ~55 ms je Zieh-Schritt bleiben (Tk zeichnet alle Bedienelemente neu).
+- 27.10.2026 · Projektinhaber + Claude · **PowerShell-Hinweise und knappere Werkzeug-Texte:** Der Befehls-Prompt sagt
+  dem Modell `;` statt `&&`, `py` statt `python` (nur wenn `py` da ist) und `Invoke-WebRequest -UseBasicParsing` bzw.
+  `curl.exe` – mit Qwen3.6-35B-A3B bei je 6 Aufgaben 7 von 13 Befehlen fehlgeschlagen → 0 von 9. Beschreibungen der
+  19 neuen Werkzeuge gestrafft: 3 068 → 2 571 Tokens (−16 %); `dateien_ordnen` legt fehlende Zielordner selbst an
+  (sagt das jetzt auch). Getestet mit echtem Modell: Git 3/3, Ordnen 3/3; `plan_setzen` wird seither benutzt.
 
 ### v1.4 – 27.10.2026
 - 27.10.2026 · Projektinhaber + Claude · 19 Agenten-Werkzeuge (Paket eines Mitwirkenden, als Patch übergeben) auf
@@ -330,7 +363,8 @@ Neueste zuerst. Neue Einträge oben im Abschnitt „Seit …“:
 - Bilder anhängen und verstehen (mmproj), Drag & Drop (Absturz behoben), Einfügen mit Strg+V.
 - Nachrichten kopieren, bearbeiten (mit Fassungen ‹ 2/3 ›) und zitieren.
 - Spracherkennung mit whisper.cpp (Diktat, Audiodateien als Anhang).
-- Kontextanzeige, automatisches Zusammenfassen, „Kontext voll“ mitten in der Antwort, Kontext „auto“.
+- Kontextanzeige, automatisches Zusammenfassen, „Kontext voll“ mitten in der Antwort, Kontext „auto“ (in v1.4.1
+  wieder entfernt).
 - Teamwork: Räume übers Netz, @Name/@alle, Dateien teilen, gemeinsamer Projektordner, KIs übertragen und teilen
   Dateien, Räume löschen.
 - Leistung: Schreibschutz ohne `configure`, runde Ecken ohne Halbtransparenz, Chatliste und Teamwork-Neuaufbau
@@ -346,7 +380,8 @@ Neueste zuerst. Neue Einträge oben im Abschnitt „Seit …“:
 - **Teamwork:** nicht zwischen zwei echten Rechnern getestet; ohne VPN unverschlüsselt (nur signiert); geteilte
   Dateien liegen nur beim Gastgeber; Hoch- und Herunterladen ohne Fortschrittsanzeige, höchstens 100 MB; KIs können
   sich endlos ansprechen (dann „Alle KIs stoppen“); Warten nach @KI ohne Zeitlimit; Rückfragen im Kreis werden nur
-  entlang der Kette erkannt.
+  entlang der Kette erkannt. Der System-Prompt der eigenen KI enthält Teilnehmer, Teamstand und Aufgaben – ändert sich
+  davon etwas, liest llama.cpp den Raumverlauf bei der nächsten Antwort neu ein (Abhilfe: diese Teile ans Ende).
 - **Lange Chats:** eine einzelne riesige Runde wird nicht zusammengefasst, eine Zusammenfassung kann Einzelheiten
   verlieren; im Teamwork fällt weg, was älter als zwei Kontextlängen ist.
 - **Experten-Modus:** höchstens 5000 Dateien je Ordner und 500 Seiten je Scan (je Seite ~15–40 s), Bilddateien im

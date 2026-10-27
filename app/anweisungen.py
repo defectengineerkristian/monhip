@@ -7,8 +7,8 @@ NAMES = ("MONHIP.md", "AGENTS.md", "CLAUDE.md")  # je Ordner gilt die erste vorh
 MAX_CHARS = 6000                                  # je Datei, der Rest bleibt mit read_file lesbar
 TOTAL_CHARS = 12_000                              # alle Dateien zusammen (kleine Modelle haben wenig Kontext)
 
-HINT = ("Projekt-Anweisungen: Arbeitest du in einem Unterordner (z. B. einem Repository), lies dort vorhandene "
-        "MONHIP.md, AGENTS.md oder CLAUDE.md mit read_file, bevor du etwas änderst, und halte dich daran.")
+HINT = ("In Unterordnern (z. B. Repositorys) liest du vorhandene MONHIP.md, AGENTS.md oder CLAUDE.md mit read_file, "
+        "bevor du etwas änderst, und hältst dich daran.")
 
 
 def find(folder: Path) -> Path | None:

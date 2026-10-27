@@ -31,15 +31,15 @@ import prozesse
 import reminders
 import room as room_net
 import speech
-from agent import Agent, describe_call, format_args, result_ok, run_conversation, tool_budget
-from backend import AUTO_MAX_CTX, AUTO_MIN_CTX, AUTO_TARGET_CTX, LlamaServer, auto_context, find_mmproj, \
-    find_models, gguf_info, thinking_title
+from agent import Agent, date_line, describe_call, format_args, result_ok, run_conversation, time_label, tool_budget
+from backend import LlamaServer, find_mmproj, find_models, thinking_title
 from chatview import ChatView
 from roomui import RoomMode
 from themes import THEMES, ThemeManager, label_to_key, mix_hex
 from widgets import ModeSwitch, rounded, scrolled
 
-VERSION = "1.4"  # auf GitHub als Release „v1.4“ (danach richtet sich das Update im Installer)
+VERSION = "1.4.1"  # auf GitHub als Release „v1.4.1“ (danach richtet sich das Update im Installer)
+TIME_FMT = "%Y-%m-%d %H:%M"  # „_time“ einer Nutzernachricht: ihre Uhrzeit fürs Modell (_api_message)
 APP_DIR = Path(__file__).resolve().parent.parent  # Code in app/, Daten daneben
 CONFIG_FILE = APP_DIR / "config.json"
 MODEL_DIR = APP_DIR / "modelle"  # wird immer durchsucht, Ziel für Downloads
@@ -51,7 +51,7 @@ DEFAULTS = {
     "folders": [],                 # weitere Modellordner
     "extra_models": [],
     "server_exe": "",
-    "ctx": "auto",                 # „auto“ = so viel, wie neben dem Modell in den Speicher passt
+    "ctx": 16384,                  # Kontext in Tokens (Einstellungen → Laden)
     "ngl": "auto",
     "temperature": 0.7,
     "max_tokens": 4096,
@@ -98,6 +98,10 @@ def load_config() -> dict:
     cfg["folders"] = [f for f in cfg["folders"] if ".lmstudio" not in f.lower() and not same_path(f, MODEL_DIR)]
     cfg["extra_models"] = [f for f in cfg["extra_models"] if ".lmstudio" not in f.lower()]
     cfg.pop("show_thinking", None)
+    try:  # „auto“ (bis 27.10.2026 Standard) gibt es nicht mehr → Standardwert
+        cfg["ctx"] = int(cfg["ctx"])
+    except (TypeError, ValueError):
+        cfg["ctx"] = DEFAULTS["ctx"]
     return cfg
 
 
@@ -339,10 +343,19 @@ class App:
         self.room_frame.grid(row=0, column=0, sticky="nsew")
 
     def _make_chat_view(self, parent):
-        frame, text = scrolled(parent, wrap=tk.WORD, font=("Segoe UI", 11), padx=28, pady=14, width=1)
+        # tk.Frame statt ttk (wie widgets.scrolled): ChatView setzt das Textfeld mit fester Breite mittig hinein
+        # (fixed_column) und färbt den Rand daneben wie den Verlauf
+        frame = tk.Frame(parent, borderwidth=0, highlightthickness=0)
+        # randlos auch in „Windows-Standard“ (stellt die Originalwerte wieder her) – sonst umrahmt eine Linie die Spalte
+        text = tk.Text(frame, wrap=tk.WORD, font=("Segoe UI", 11), pady=14, width=1, height=1, borderwidth=0,
+                       highlightthickness=0, relief=tk.FLAT)
+        sb = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=text.yview)
+        text.configure(yscrollcommand=sb.set)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
         self.theme.register_text(text, role="plain")
         view = ChatView(text, self.ui_scale, register_menu=self.theme.register_menu)
-        view.attach_scrollbar(next(w for w in frame.winfo_children() if isinstance(w, ttk.Scrollbar)))
+        view.attach_scrollbar(sb)
+        view.fixed_column()
         return frame, text, view
 
     # ================================================================ Modus: Chat | Teamwork
@@ -360,6 +373,8 @@ class App:
         if room:
             self.room.estimate(50)  # geschätzt wird nur im sichtbaren Bereich
         self._update_expert_row()
+        (self.room_view if room else self.view).set_active(True)  # holt eine verpasste Größenänderung nach
+        (self.view if room else self.room_view).set_active(False)
         (self.room_side if room else self.chat_side).tkraise()
         (self.room_frame if room else self.chat_frame).tkraise()
         self.send_btn.configure(text=tr('■ Stopp') if self.busy and not room else tr('Senden'))
@@ -465,33 +480,13 @@ class App:
         self.maxtok_var = tk.StringVar(value=str(self.cfg["max_tokens"]))
         self.vision_var = tk.BooleanVar(value=self.cfg["vision"])
         self.imgtok_var = tk.StringVar(value=str(self.cfg["image_tokens"]))
-        rows = [(tr('GPU-Layers'), self.ngl_var, tr('„auto“ passt das Modell an den Grafikspeicher an')),
+        rows = [(tr('Kontext (Tokens)'), self.ctx_var, tr('Mindestens 16384 für Websuche')),
+                (tr('GPU-Layers'), self.ngl_var, tr('„auto“ passt das Modell an den Grafikspeicher an')),
                 (tr('Extra-Argumente'), self.extra_var, tr('z. B. --n-cpu-moe 10 oder -fa on')),
                 (tr('Temperatur'), self.temp_var, tr('niedriger = sachlicher, höher = kreativer')),
                 (tr('Max. Antwort-Tokens'), self.maxtok_var, ""),
                 (tr('Max. Tokens pro Bild'), self.imgtok_var, tr('mehr = Details und kleine Schrift besser erkennbar, braucht aber mehr Kontext'))]
-        # Kontext: „auto“ oder eine Zahl; darunter der Vorschlag für das gewählte Modell (_suggest_context)
-        ttk.Label(t, text=tr('Kontext (Tokens)')).grid(row=3, column=0, sticky="w", padx=(0, 12), pady=(3, 0))
-        ctx_combo = ttk.Combobox(t, textvariable=self.ctx_var, values=["auto", "8192", "16384", "32768", "65536"])
-        ctx_combo.grid(row=3, column=1, sticky="ew", pady=(3, 0))
-        self.theme.register_combo(ctx_combo)
-        lo, hi = (f"{n:,}".replace(",", ".") for n in (AUTO_TARGET_CTX, AUTO_MAX_CTX))
-        ttk.Label(t, text=tr(
-            '„auto“ = {0} bis {1} – was nicht in den Grafikspeicher passt, kommt in den Arbeitsspeicher',
-            lo,
-            hi), style="Muted.TLabel").grid(row=4, column=1, sticky="w")
-        hint = ttk.Frame(t)
-        hint.grid(row=5, column=1, sticky="ew")
-        self.ctx_hint = tk.StringVar()
-        ttk.Label(hint, textvariable=self.ctx_hint, style="Muted.TLabel", wraplength=round(470 * self.ui_scale)
-                  ).pack(side=tk.LEFT)
-        self.ctx_take = ttk.Button(hint, text=tr('Übernehmen'), command=self._take_suggestion)
-        self._suggestion: dict | None = None
-        self._suggest_gen = 0
-        self._suggest_cache: dict = {}
-        self.ctx_var.trace_add("write", lambda *_: self._show_suggestion())
-        self.vision_var.trace_add("write", lambda *_: self._suggest_context())
-        r = 6
+        r = 3
         for txt, var, hint in rows:
             ttk.Label(t, text=txt).grid(row=r, column=0, sticky="w", padx=(0, 12), pady=(3, 0))
             ttk.Entry(t, textvariable=var).grid(row=r, column=1, sticky="ew", pady=(3, 0))
@@ -681,7 +676,6 @@ class App:
             self._settings_placed = True
         self.theme.present(win, geometry)
         win.focus_set()
-        self._suggest_context()
 
     def close_settings(self):
         self.save_config()
@@ -1000,7 +994,6 @@ class App:
         self.model_list.selection_clear(0, tk.END)
         self.model_list.selection_set(idx)
         self.model_list.see(idx)
-        self._suggest_context()
 
     def _on_model_list_select(self, _e=None):
         sel = self.model_list.curselection()
@@ -1254,11 +1247,10 @@ class App:
                 self.open_settings("load")
                 self.download_server(confirm=False)
             return
-        raw = self.ctx_var.get().strip().lower()
         try:
-            ctx = None if raw in ("", "auto") else int(raw)  # None = „auto“ (backend.LlamaServer.start)
+            ctx = int(self.ctx_var.get())
         except ValueError:
-            dialogs.showerror("Monhip", tr('Kontext muss „auto“ oder eine Zahl sein (Einstellungen → Laden).'))
+            dialogs.showerror("Monhip", tr('Kontext muss eine Zahl sein (Einstellungen → Laden).'))
             return
         mmproj = find_mmproj(model) if self.vision_var.get() else None
         try:
@@ -1291,7 +1283,6 @@ class App:
             self._show_placeholder()
         self.room.model_changed()
         self._estimate_context()
-        self._suggest_context()
 
     def unload_model(self):
         self.load_cancel.set()
@@ -1306,92 +1297,17 @@ class App:
             self._show_placeholder()
         self.room.model_changed()
         self._estimate_context()
-        self._suggest_context()
 
-    # ---------------------------------------------------------------- Kontextgröße: Wert und Vorschlag
+    # ---------------------------------------------------------------- Kontextgröße
 
     def _ctx_value(self) -> int:
-        """Kontext in Tokens: der des geladenen Modells, sonst die Einstellung („auto“ → Untergrenze)."""
+        """Kontext in Tokens: der des geladenen Modells, sonst die Einstellung."""
         if self.server.n_ctx:
             return self.server.n_ctx
         try:
             return int(self.ctx_var.get())
         except ValueError:
-            return AUTO_MIN_CTX
-
-    def _suggest_context(self):
-        """Vorschlag für das gewählte Modell berechnen (llama-fit-params im Hintergrund, ~5 s) – nur bei offenen
-        Einstellungen und ohne geladenes Modell (das belegt sonst den Grafikspeicher und verfälscht die Rechnung)."""
-        self._suggest_gen += 1
-        gen, model, server = self._suggest_gen, self.sel_model, self._selected_server()
-        if not self.settings_win.winfo_viewable() or not model or not server:
-            return
-        if self.server.model:
-            self._suggestion = None
-            note = (tr('Geladen mit {0:,} Tokens Kontext. ', self.server.n_ctx).replace(",", ".") if self.server.n_ctx else "")
-            self.ctx_hint.set(note + tr('Vorschläge für andere Modelle gibt es nach dem Entladen (das geladene Modell belegt den Grafikspeicher).'))
-            self._show_suggestion(text_only=True)
-            return
-        mmproj = find_mmproj(model) if self.vision_var.get() else None
-        ngl = self.ngl_var.get().strip()
-        key = (str(model), str(mmproj), ngl, server["exe"])
-        if key in self._suggest_cache:
-            self._suggestion = self._suggest_cache[key]
-            self._show_suggestion()
-            return
-        self._suggestion = None
-        self.ctx_hint.set(tr('Vorschlag für {0} wird berechnet …', model.stem))
-        self._show_suggestion(text_only=True)
-
-        def work():
-            fit = auto_context(server["exe"], model, mmproj, ngl)
-            return fit and {**fit, **gguf_info(model), "model": model.stem}
-
-        def done(result, err):
-            if gen != self._suggest_gen:
-                return
-            self._suggest_cache[key] = None if err else result
-            self._suggestion = None if err else result
-            self._show_suggestion()
-
-        self.background(work, done)
-
-    def _show_suggestion(self, text_only: bool = False):
-        """Vorschlag anzeigen: „Auto ergibt …“ bei „auto“, sonst „Vorschlag …“ mit „Übernehmen“."""
-        s, auto = self._suggestion, self.ctx_var.get().strip().lower() in ("", "auto")
-        if not text_only:
-            if s:
-                fmt = lambda n: f"{n:,}".replace(",", ".")
-                ctx = min(s["ctx"], AUTO_MAX_CTX)
-                total, ngl = s.get("block_count"), s.get("ngl")
-                if ngl is None:
-                    where = ""
-                elif total and ngl > total:
-                    where = tr(' · komplett auf der Grafikkarte')
-                elif total:
-                    where = tr(' · {0} von {1} Schichten auf der Grafikkarte, Rest im Arbeitsspeicher', ngl, total + 1)
-                else:
-                    where = tr(' · {0} Schichten auf der Grafikkarte', ngl)
-                if s.get("experts_on_cpu"):
-                    where += tr(', ein Teil der Experten im Arbeitsspeicher')
-                if s.get("host_mib", 0) >= 1024:
-                    where += f" (~{s['host_mib'] / 1024:.1f} GB)".replace(".", ",")
-                more = (tr(' (begrenzt – das Modell könnte bis {0})', fmt(s['context_length']))
-                        if s["ctx"] > AUTO_MAX_CTX and s.get("context_length") else "")
-                self.ctx_hint.set(tr('{0} für {1}: {2} Tokens{3}{4}', tr('Auto ergibt') if auto else tr('Vorschlag'), s['model'], fmt(ctx), where, more))
-            elif self.sel_model and not self.server.model:
-                self.ctx_hint.set(tr(
-                    'Kein Vorschlag möglich – dafür wird eine neuere llama.cpp-Version gebraucht („llama.cpp '
-                    'herunterladen / aktualisieren“). „auto“ nimmt dann 16.384.'))
-        show = bool(self._suggestion) and not auto and not text_only
-        if show and not self.ctx_take.winfo_ismapped():
-            self.ctx_take.pack(side=tk.LEFT, padx=(8, 0))
-        elif not show and self.ctx_take.winfo_ismapped():
-            self.ctx_take.pack_forget()
-
-    def _take_suggestion(self):
-        if self._suggestion:
-            self.ctx_var.set(str(min(self._suggestion["ctx"], AUTO_MAX_CTX)))
+            return DEFAULTS["ctx"]
 
     # ---------------------------------------------------------------- Freigegebene Ordner
 
@@ -1777,7 +1693,15 @@ class App:
     def _api_message(self, m: dict) -> dict:
         """Nachricht mit gespeicherten Bildern (`_images`, relativ zu chats/bilder) für den Server vorbereiten:
         Die Bildpfade kommen nach `_image_files`, das backend._api_messages als image_url-Teile mitschickt.
-        Ohne Bildverständnis (oder wenn die Datei fehlt) bekommt das Modell nur einen Hinweis."""
+        Ohne Bildverständnis (oder wenn die Datei fehlt) bekommt das Modell nur einen Hinweis. Nutzernachrichten
+        bekommen ihre feste Uhrzeit (`_time`) angehängt – so bleibt der Anfang der Unterhaltung gleich (date_line)."""
+        if m.get("role") == "user" and m.get("_time"):
+            try:
+                label = time_label(datetime.strptime(m["_time"], TIME_FMT))
+            except ValueError:
+                label = ""
+            if label:
+                m = {**m, "content": f"{m.get('content') or ''}\n\n[{label}]"}
         rels = m.get("_images")
         if not rels:
             return m
@@ -1880,7 +1804,7 @@ class App:
         files_meta += [{"name": d.name, "info": d.info, "image": rel} for d, rel in zip(pics, rels)]
         self._clear_compose()
         self.view.user(text, self._display_files(files_meta), quote, self._msg_actions(len(self.history)))
-        msg = {"role": "user", "content": self._with_quote(quote, content)}
+        msg = {"role": "user", "content": self._with_quote(quote, content), "_time": datetime.now().strftime(TIME_FMT)}
         if docs or quote:  # Anzeige: eigener Text + Kärtchen/Zitat statt des ganzen Modelltexts
             msg["_text"] = text
         if docs:
@@ -1929,7 +1853,7 @@ class App:
 
     def _system_prompt(self, agent: Agent | None) -> str:
         system = self.sys_text.get("1.0", tk.END).strip()
-        system += datetime.now().strftime("\n\nHeutiges Datum: %d.%m.%Y, %H:%M Uhr.")
+        system += "\n\n" + date_line("die Uhrzeit steht am Ende jeder Nachricht")  # ohne Uhrzeit, siehe date_line
         return (system + "\n\n" + agent.system_prompt()).strip() if agent else system.strip()
 
     def _image_tokens(self) -> int:
@@ -2383,7 +2307,8 @@ class App:
         content = old.get("content") or ""
         docs_part = content[len(old_head):].lstrip("\n") if content.startswith(old_head) else ""
         new_head = self._with_quote(old.get("_quote"), new_text)
-        msg = {**old, "content": "\n\n".join(p for p in (new_head, docs_part) if p)}
+        msg = {**old, "content": "\n\n".join(p for p in (new_head, docs_part) if p),
+               "_time": datetime.now().strftime(TIME_FMT)}
         if "_text" in old:
             msg["_text"] = new_text
         # Bisherige Fassung samt Antworten als Version aufheben (‹ 1/2 ›); die neue ist die letzte
@@ -2769,8 +2694,10 @@ class App:
 
     def save_config(self):
         server = self._selected_server()
-        raw = self.ctx_var.get().strip().lower()
-        ctx = int(raw) if raw.isdigit() else "auto"
+        try:
+            ctx = int(self.ctx_var.get())
+        except ValueError:
+            ctx = self.cfg["ctx"]  # Tippfehler: bisherige Zahl behalten
         self.cfg.update({
             "ui_language": UI_LANGUAGES.get(self.ui_language_var.get(), self.cfg["ui_language"]),
             "server_exe": server["exe"] if server else "",

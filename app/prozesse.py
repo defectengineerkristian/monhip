@@ -131,11 +131,12 @@ def listing() -> str:
 
 
 def prompt_block() -> str:
-    """Für den System-Prompt: was gerade läuft (auch aus früheren Antworten)."""
+    """Für den System-Prompt: was gerade läuft (auch aus früheren Antworten) – ohne Laufzeit: Ändert sich der Prompt,
+    liest llama.cpp die ganze Unterhaltung neu ein (die Laufzeit zeigen prozess_ausgabe und line())."""
     running = [p for p in _procs.values() if p.running()]
     if not running:
         return ""
-    return "Laufende Hintergrund-Prozesse:\n" + "\n".join(p.line() for p in running)
+    return "Laufende Hintergrund-Prozesse:\n" + "\n".join(f"[{p.nr}] {p.name} (Ordner: {p.cwd})" for p in running)
 
 
 def stop_all():

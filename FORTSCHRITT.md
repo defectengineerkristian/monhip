@@ -5,8 +5,9 @@ Gemini, lokale Modelle …). Sie soll verhindern, dass zwei gleichzeitig an ders
 noch einmal gebaut oder eine getroffene Entscheidung wieder umgeworfen wird. Ausführliche Entwicklernotizen führt
 der Projektinhaber lokal; diese Datei ist der gemeinsame Auszug daraus.
 
-**Stand:** 27.10.2026 · **neuestes Release:** v1.3 · Deutsch und Englisch für die Oberfläche;
-GitHub-Release und Quellarchiv sind für den bestehenden Installer veröffentlicht.
+**Stand:** 27.10.2026 · **neuestes Release:** v1.4 · 19 neue Agenten-Werkzeuge (Rechnen, Git & GitHub,
+Rückgängig über Checkpoints, Hintergrund-Prozesse, Dateien ordnen, Speicher, PDFs und Bilder) auf Basis von v1.3
+(Deutsch und Englisch für die Oberfläche).
 
 ---
 
@@ -40,7 +41,7 @@ GitHub-Release und Quellarchiv sind für den bestehenden Installer veröffentlic
 
 | Wer (Mensch + Modell) | Was | Dateien | Seit |
 |---|---|---|---|
-| Projektinhaber + Claude | 19 Agenten-Werkzeuge (Paket eines Mitwirkenden) mit v1.3 zusammenführen und als v1.4 veröffentlichen | `app/agent.py`, `app/monhip.py`, `app/i18n_en.py`, neue Module in `app/`, `tests/` | 27.10.2026 |
+| – | zurzeit nichts | – | – |
 
 ---
 
@@ -53,6 +54,13 @@ Reihenfolge offen – vor dem Start unter „In Arbeit“ eintragen.
   Teamwork.
 - **Teamwork zwischen zwei echten Rechnern** (z. B. über Tailscale) – bisher nur mit zwei Instanzen auf einem PC.
 - **Werkzeuge, Schritt 2:** Datei herunterladen, Zwischenablage, PDF erzeugen.
+- **Agenten-Werkzeuge (v1.4) nachschärfen:**
+  - Mit einem kleinen Modell (7–14B) testen – dafür sind sie gedacht, getestet wurde nur mit Qwen3.6-35B-A3B.
+  - Eigene Schalter je Werkzeuggruppe (z. B. Git, Aufräumen, Programmieren): alle Häkchen an kosten ~3 000 Tokens
+    zusätzlich; `rechnen` sollte immer an bleiben.
+  - Befehls-Prompt (`CMD_PROMPT`) um Hinweise zu PowerShell 5.1 ergänzen: kein `&&`, Python über `py` (`python` ist
+    oft nur der Store-Platzhalter), `curl` ist dort `Invoke-WebRequest` – das Modell verschwendet sonst Schritte.
+  - Knopf „Rückgängig“ unter einer Antwort, laufende Hintergrund-Prozesse in der Oberfläche anzeigen.
 - **Experten-Modus:** „Auswertung löschen“ in der Oberfläche (Ergebnisse bleiben bisher unter `chats/experten/`).
 - **Bildbereich „Chat | Teamwork | Bilder“** (besprochen, noch nicht begonnen; vorher andere Optimierungen):
   - Eigener dritter Bereich statt im Chat, weil Sprach- und Bildmodell nicht gleichzeitig in 16 GB Grafikspeicher
@@ -141,14 +149,22 @@ Die wichtigsten Stolpersteine – fast jede Regel hier steht da, weil ihr Bruch 
   einen API-Schlüssel enthalten).
 - **Pfade:** Der Code liegt in `app/`, Nutzerdaten daneben im Hauptordner – deshalb zeigen `APP_DIR`, `CHAT_DIR`,
   `SERVER_DIR`, `memory.FILE` und `reminders.FILE` auf `Path(__file__).resolve().parent.parent`.
+- **Oberflächentexte** immer über `tr('…')` mit festem deutschem Text und englischem Eintrag in `i18n_en.py`
+  (alphabetisch sortiert, gleiche Platzhalter; `tests/test_i18n.py` prüft das). Werte als Platzhalter
+  (`tr('{0} Bilder bearbeiten?', n)`). Was das Modell liest (Prompts, Werkzeug-Beschreibungen und -Ergebnisse,
+  Fehlermeldungen ans Modell), bleibt deutsch. Die Sprache steht fest, bevor `agent` geladen wird (`LABELS`).
 - **Agent-Sicherheit:** Dateizugriffe nur über `Agent._path()` (freigegebene Ordner), schreibende Aktionen über
   `_ok()` bestätigen, Löschen nur in den Papierkorb, `open_path` startet keine Programme oder Skripte.
-  Bildschirmfotos, Hochladen und Teilen fragen immer – auch nach „Alle erlauben“.
+  Bildschirmfotos, Hochladen und Teilen fragen immer – auch nach „Alle erlauben“; ebenso Push, Pull Request und
+  `speicher_analysieren` außerhalb der Freigaben. Vor jeder Datei-Änderung sichert `_sichern` den alten Stand für den
+  Checkpoint der Antwort (auch neu angelegte Ordner darüber).
 - **Teamwork-Sicherheit:** Anfragen sind HMAC-signiert, der Schlüssel geht nie übers Netz; Werkzeugaktionen der
   eigenen KI im Raum immer mit Bestätigung; an andere gehen nur Werkzeug-Kopfzeilen, nie Ergebnisse; nach außen nie
   volle Pfade (verraten den Benutzernamen); Gäste führen beim Gastgeber nie Befehle aus.
-- **llama-server:** hängt an einem Windows-Job-Objekt (stirbt mit dem Programm); Starten und Stoppen unter
-  `_start_lock`, `stop(proc)` beendet nur den eigenen Prozess.
+- **llama-server und Hintergrund-Prozesse** hängen an einem Windows-Job-Objekt (sterben mit dem Programm, auch bei
+  einem Absturz); Starten und Stoppen des Servers unter `_start_lock`, `stop(proc)` beendet nur den eigenen Prozess.
+- **Hilfsmodule der Werkzeuge** (`rechner`, `gitwork`, `checkpoints` …) importieren `agent` nicht (Zirkelimport);
+  jedes hat eine eigene Fehlerklasse, die in `agent.MODEL_ERRORS` steht.
 - **Skalierung:** Fenster- und Seitenleistenbreiten mit `self.ui_scale` multiplizieren.
 - **Neue Nutzerdaten-Ordner** müssen auch im Installer eingetragen werden (sonst überschreibt oder löscht ein Update
   sie) → mit dem Projektinhaber absprechen.
@@ -177,9 +193,16 @@ mit `py Monhip.pyw`).
 | `themes.py`, `dialogs.py`, `widgets.py` | Designs und runde Ecken, Meldungen und Fenster-Grundgerüst, eigene Bedienelemente |
 | `web.py`, `projects.py` | Websuche und Seitenabruf, Projektvorlagen |
 | `i18n.py`, `i18n_en.py` | Erkennung und gespeicherte Wahl der Oberflächensprache, deutsche Originaltexte und englischer Katalog |
+| `rechner.py` | Werkzeug `rechnen`: exakt mit Brüchen, sicher über `ast` (kein `eval`), Prozent, Statistik, Einheiten, Datum, Zinsen |
+| `gitwork.py` | Git und GitHub für den Agenten (ohne Terminal-Rückfragen, Token aus dem Git Credential Manager, Pull Requests über die API) |
+| `checkpoints.py` | Alter Stand vor Datei-Änderungen, ein Checkpoint je Antwort; Rückgängig (`checkpoint_zurueck`) |
+| `prozesse.py` | Hintergrund-Prozesse (Webserver, `npm run dev` …): starten, Ausgabe lesen, samt Unterprozessen stoppen |
+| `ordnen.py`, `speicher.py` | Viele Dateien in einem Schritt verschieben/umbenennen (ganz oder gar nicht), Speicherplatz analysieren |
+| `pdfwerk.py`, `bildwerk.py` | PDFs zusammenfügen/aufteilen/drehen in reinem Python; Bilder verkleinern/umwandeln/drehen über PowerShell |
+| `arbeitsplan.py`, `anweisungen.py` | Arbeitsplan des Modells; `MONHIP.md`/`AGENTS.md`/`CLAUDE.md` der freigegebenen Ordner in den System-Prompt |
 
 **Nutzerdaten (nie ins Repo):** `config.json`, `gedaechtnis.json`, `erinnerungen.json`, `chats/`, `modelle/`,
-`raeume/`, `sicherungen/`, `server/`, `__pycache__/`.
+`raeume/`, `sicherungen/`, `server/`, `checkpoints/`, `__pycache__/`.
 
 ---
 
@@ -191,6 +214,11 @@ mit `py Monhip.pyw`).
 - Sprach- und Regressionstests: `py -m unittest discover -s tests -v`. Die zwei GUI-Tests brauchen einen Bildschirm
   (unter Linux z. B. Xvfb über `DISPLAY`); ohne Bildschirm werden sie ausdrücklich übersprungen. GUI-Tests laufen
   in getrennten Prozessen mit temporären Einstellungen und Nutzerdaten. Kein echtes KI-Modell erforderlich.
+  Die Tests der Agenten-Werkzeuge (`test_rechner.py`, `test_gitwork.py`, `test_checkpoints.py` …) sind Skripte: Sie
+  laufen bei `discover` beim Laden mit („alle …-Tests bestanden“) und einzeln mit `py tests/test_<name>.py`.
+- Agenten-Werkzeuge ohne Nutzerdaten testen: `checkpoints.DIR` auf einen Testordner, `agent._recycle` durch ein
+  Verschieben in einen Testordner ersetzen (sonst echter Papierkorb), Git mit eigener `GIT_CONFIG_GLOBAL` und einem
+  lokalen `git init --bare` als Remote; `gitwork.token()` nicht aufrufen (liest das echte GitHub-Token).
 - Ohne echte Nutzerdaten testen: `CONFIG_FILE` in `monhip.py`, `chats.CHAT_DIR`, `memory.FILE`, `reminders.FILE`,
   im Teamwork `app.app_dir` und `roomui.CACHE_DIR` auf Testordner umbiegen.
 - Ohne Modell: `run_conversation` bzw. `agent.chat_turn` durch Fakes ersetzen oder einen nachgestellten llama-server
@@ -231,7 +259,22 @@ mit `py Monhip.pyw`).
 Neueste zuerst. Neue Einträge oben im Abschnitt „Seit …“:
 `- TT.MM.JJJJ · Wer · Was · getestet: … · offen: …`
 
-### Seit v1.3 (ohne Release)
+### v1.4 – 27.10.2026
+- 27.10.2026 · Projektinhaber + Claude · 19 Agenten-Werkzeuge (Paket eines Mitwirkenden, als Patch übergeben) auf
+  Basis von v1.3: `rechnen`; Git & GitHub (8 Werkzeuge, eigenes Häkchen „Git & GitHub“, Push und Pull Request fragen
+  immer); Checkpoints und Rückgängig; Arbeitsplan; Hintergrund-Prozesse; Dateien ordnen; Speicher analysieren; PDFs
+  und Bilder bearbeiten; Projekt-Anweisungen aus `MONHIP.md`/`AGENTS.md`/`CLAUDE.md`. Beim Einbau behoben: leere
+  Ordner nach dem Rückgängigmachen, Ursprung von Verschiebungen nicht gegen die Freigaben geprüft, Hintergrund-Prozesse
+  überlebten einen Absturz (jetzt Job-Objekt), `core.fsmonitor` eines fremden Repositorys hätte bei `git status` ein
+  Programm gestartet, Rechner hing bei Riesen-Wurzelexponenten, `produkt` umging die Größengrenze; mit echtem Modell
+  gefunden: Rückgängig doppelt bzw. mit der eigenen Nummer (holte die Änderungen zurück), Zielordner mit Leerzeichen
+  („ PDFs“). Alle sichtbaren Texte übersetzt (59 Einträge), Texte fürs Modell bleiben deutsch.
+  Getestet unter Windows/Python 3.13: alle Testdateien (`discover`: 17 Tests + 7 Werkzeug-Skripte), 97 Prüfungen am
+  Agenten (echte Word-/Edge-PDFs, Handyfoto mit EXIF, echtes Git mit lokalem Remote, Prozesskette, Absturz mit/ohne
+  Job-Objekt), Fenstertest Deutsch und Englisch, mit Qwen3.6-35B-A3B Q4_K_M: Rechnen, Anweisungen, Rückgängig,
+  Prozesse, Ordnen, Speicher, PDFs, Bilder und Git wählt das Modell von selbst richtig. Offen: `plan_setzen` nutzte
+  das Modell nie (0/4); echter Pull Request, `git_clone` von GitHub und die Anmeldung über den Credential Manager
+  ungetestet; nicht mit kleinen Modellen getestet.
 - 27.10.2026 · Auftraggeber + Codex · README vollständig ins Englische übersetzt, Inhalt und Aufbau beibehalten.
   Geprüft: unveränderte Codeblöcke, Inline-Code/Dateipfade, Links, Überschriften- und Listenstruktur, Tabellenzeilen
   und Versionsangaben; `git diff --check`. Keine Anwendungstests (reine Dokumentationsänderung). Der ausstehende
@@ -315,3 +358,8 @@ Neueste zuerst. Neue Einträge oben im Abschnitt „Seit …“:
 - **Spracherkennung:** keine Live-Mitschrift, kein Opus/M4A (bräuchte ffmpeg), auf AMD/Intel nur über den
   Prozessor; ein echtes Mikrofon-Diktat ist noch nicht getestet.
 - **Gedächtnis und Erinnerungen** nur im normalen Chat; Erinnerungen nur, solange Monhip läuft, keine Wiederholungen.
+- **Agenten-Werkzeuge (v1.4):** Checkpoints erfassen weder Befehle (`run_command`, Prozesse) noch Git noch den
+  Teamwork-Projektordner; Sicherungen liegen in `checkpoints/` (30 Stück, Dateien über 50 MB nur vermerkt).
+  `arbeitstage` kennt keine Feiertage. PDF: Lesezeichen und Formularfelder gehen verloren, verschlüsselte PDFs nicht.
+  Bilder: kein HEIC/WebP, bei animierten GIFs nur das erste Bild. Höchstens 5 Hintergrund-Prozesse. Im Teamwork
+  bekommen KIs mit „Dateien“/„Befehle“ die neuen Werkzeuge mit (alle Aktionen werden dort ohnehin bestätigt), Git nicht.

@@ -27,6 +27,7 @@ import images
 import llamacpp
 import memory
 import projekt
+import prozesse
 import reminders
 import room as room_net
 import speech
@@ -38,7 +39,7 @@ from roomui import RoomMode
 from themes import THEMES, ThemeManager, label_to_key, mix_hex
 from widgets import ModeSwitch, rounded, scrolled
 
-VERSION = "1.3"  # auf GitHub als Release „v1.3“ (danach richtet sich das Update im Installer)
+VERSION = "1.4"  # auf GitHub als Release „v1.4“ (danach richtet sich das Update im Installer)
 APP_DIR = Path(__file__).resolve().parent.parent  # Code in app/, Daten daneben
 CONFIG_FILE = APP_DIR / "config.json"
 MODEL_DIR = APP_DIR / "modelle"  # wird immer durchsucht, Ziel für Downloads
@@ -62,6 +63,7 @@ DEFAULTS = {
     "auto_compress": True,         # ältere Unterhaltung zusammenfassen, wenn der Kontext knapp wird
     "agent_enabled": False,        # Dateien & Ordner
     "agent_commands": True,        # PowerShell & Python
+    "git_enabled": False,          # Git & GitHub (nur zusammen mit Dateien & Ordner)
     "agent_workspace": str(Path.home() / "Desktop" / "Agent-Arbeitsordner"),
     "agent_folders": [],
     "agent_confirm": True,
@@ -510,6 +512,7 @@ class App:
         self.brave_var = tk.StringVar(value=self.cfg["brave_key"])
         self.agent_var = tk.BooleanVar(value=self.cfg["agent_enabled"])
         self.cmd_var = tk.BooleanVar(value=self.cfg["agent_commands"])
+        self.git_var = tk.BooleanVar(value=self.cfg["git_enabled"])
         self.confirm_var = tk.BooleanVar(value=self.cfg["agent_confirm"])
         self.ws_var = tk.StringVar(value=self.cfg["agent_workspace"])
         self.extra_folders: list[str] = list(self.cfg["agent_folders"])
@@ -526,24 +529,27 @@ class App:
         ttk.Checkbutton(t, text=tr('Befehle & Programme ausführen (PowerShell, Python)'), variable=self.cmd_var).grid(
             row=5, column=0, columnspan=2, sticky="w", pady=(4, 0))
         ttk.Checkbutton(t, text=tr(
+            'Git & GitHub – Commits, Branches, Push und Pull Requests (nur mit Dateien & Ordner; Push fragt jedes Mal)'),
+            variable=self.git_var).grid(row=6, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        ttk.Checkbutton(t, text=tr(
             'Bildschirmfotos – das Modell darf deinen Bildschirm ansehen (fragt jedes Mal, nur mit Bildverständnis)'), variable=self.screen_var).grid(
-            row=6, column=0, columnspan=2, sticky="w", pady=(4, 0))
-        ttk.Checkbutton(t, text=tr('Jede Aktion bestätigen (empfohlen)'), variable=self.confirm_var).grid(
             row=7, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        ttk.Checkbutton(t, text=tr('Jede Aktion bestätigen (empfohlen)'), variable=self.confirm_var).grid(
+            row=8, column=0, columnspan=2, sticky="w", pady=(4, 0))
         ttk.Label(t, text=tr(
             'Freigegebene Ordner – nur hier darf das Modell lesen und schreiben. ★ = Arbeitsordner (Standard für '
             'neue Dateien):'), style="Muted.TLabel",
-                  wraplength=round(600 * self.ui_scale)).grid(row=8, column=0, columnspan=2, sticky="w", pady=(10, 2))
+                  wraplength=round(600 * self.ui_scale)).grid(row=9, column=0, columnspan=2, sticky="w", pady=(10, 2))
         lf, self.folder_list = self._listbox(t, height=5)
-        lf.grid(row=9, column=0, columnspan=2, sticky="nsew")
+        lf.grid(row=10, column=0, columnspan=2, sticky="nsew")
         self.folder_list.bind("<Delete>", lambda e: self._remove_folder())
         bf = ttk.Frame(t)
-        bf.grid(row=10, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        bf.grid(row=11, column=0, columnspan=2, sticky="w", pady=(6, 0))
         ttk.Button(bf, text=tr('Ordner hinzufügen…'), command=self._add_folder).pack(side=tk.LEFT)
         ttk.Button(bf, text=tr('★ Als Arbeitsordner'), command=self._main_folder).pack(side=tk.LEFT, padx=(4, 0))
         ttk.Button(bf, text=tr('Entfernen'), command=self._remove_folder).pack(side=tk.LEFT, padx=(4, 0))
         t.columnconfigure(0, weight=1)
-        t.rowconfigure(9, weight=1)
+        t.rowconfigure(10, weight=1)
         self._fill_folders()
 
         # ---- Gedächtnis und Erinnerungen
@@ -1919,7 +1925,7 @@ class App:
                      folders=self.extra_folders, confirm_actions=self.confirm_var.get(),
                      web_access=web_access, brave_key=self.brave_var.get(), memory=mem, reminders=rem,
                      vision=self.server.vision, screenshot=self._screenshot_from_worker if shots else None,
-                     expert=library, expert_start=self._expert_from_worker)
+                     expert=library, expert_start=self._expert_from_worker, git=self.git_var.get())
 
     def _system_prompt(self, agent: Agent | None) -> str:
         system = self.sys_text.get("1.0", tk.END).strip()
@@ -2780,6 +2786,7 @@ class App:
             "auto_compress": self.compress_var.get(),
             "agent_enabled": self.agent_var.get(),
             "agent_commands": self.cmd_var.get(),
+            "git_enabled": self.git_var.get(),
             "agent_workspace": self.ws_var.get(),
             "agent_folders": list(self.extra_folders),
             "agent_confirm": self.confirm_var.get(),
@@ -2808,6 +2815,7 @@ class App:
         self.recorder.cancel()
         self.room.ai_stop.set()
         self.room.shutdown()  # Raum verlassen bzw. eigenen Raum schließen (Verlauf bleibt gespeichert)
+        prozesse.stop_all()   # Hintergrund-Prozesse des Agenten (Webserver usw.)
         self.server.stop()
         self.root.destroy()
 

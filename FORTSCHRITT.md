@@ -41,7 +41,6 @@ GitHub-Release und Quellarchiv sind für den bestehenden Installer veröffentlic
 | Wer (Mensch + Modell) | Was | Dateien | Seit |
 |---|---|---|---|
 | Projektinhaber + Claude | 19 Agenten-Werkzeuge (Paket eines Mitwirkenden) mit v1.3 zusammenführen und als v1.4 veröffentlichen | `app/agent.py`, `app/monhip.py`, `app/i18n_en.py`, neue Module in `app/`, `tests/` | 27.10.2026 |
-| Auftraggeber + Codex | README vollständig ins Englische übersetzen, Inhalt und Aufbau beibehalten | `README.md`, `FORTSCHRITT.md` | 27.10.2026 |
 
 ---
 
@@ -231,6 +230,12 @@ mit `py Monhip.pyw`).
 
 Neueste zuerst. Neue Einträge oben im Abschnitt „Seit …“:
 `- TT.MM.JJJJ · Wer · Was · getestet: … · offen: …`
+
+### Seit v1.3 (ohne Release)
+- 27.10.2026 · Auftraggeber + Codex · README vollständig ins Englische übersetzt, Inhalt und Aufbau beibehalten.
+  Geprüft: unveränderte Codeblöcke, Inline-Code/Dateipfade, Links, Überschriften- und Listenstruktur, Tabellenzeilen
+  und Versionsangaben; `git diff --check`. Keine Anwendungstests (reine Dokumentationsänderung). Der ausstehende
+  inhaltliche README-Abgleich bleibt offen; der parallele Arbeitseintrag des Projektinhabers bleibt erhalten.
 
 ### v1.3 – 27.10.2026 (`caf2f94`)
 - 27.10.2026 · Auftraggeber + Codex · Sprachupdate v1.3 veröffentlicht: 664 englische Oberflächentexte, Deutsch

@@ -1,157 +1,157 @@
 # Monhip
 
-Monhip ist eine Desktop-Anwendung für lokale KI-Modelle. Sie verbindet einen Chat mit
-Dokumentanalyse, Werkzeugen für die Arbeit am eigenen Rechner und einem Teamwork-Modus,
-in dem Menschen und ihre lokalen KI-Assistenten zusammenarbeiten können.
+Monhip is a desktop application for local AI models. It combines a chat interface with
+document analysis, tools for working on your own computer, and a Teamwork mode
+where people and their local AI assistants can collaborate.
 
-Die Sprachmodelle werden im GGUF-Format über [llama.cpp](https://github.com/ggml-org/llama.cpp)
-auf dem eigenen Rechner ausgeführt. Die Oberfläche ist in Python mit Tkinter geschrieben
-und überwiegend deutschsprachig. Der aktuelle Funktionsumfang ist auf Windows ausgerichtet.
+Language models run on your own computer in GGUF format using
+[llama.cpp](https://github.com/ggml-org/llama.cpp). The interface is written in Python with Tkinter
+and is primarily in German. The current feature set is geared toward Windows.
 
-## Funktionen
+## Features
 
-### Mit lokalen Modellen chatten
+### Chat with local models
 
-- GGUF-Modelle aus dem Ordner `modelle/` oder aus zusätzlich ausgewählten Ordnern laden.
-- Eine passende llama.cpp-Version direkt aus der Anwendung herunterladen und aktualisieren;
-  je nach Hardware stehen CPU- und GPU-Varianten zur Verfügung.
-- Antworten während der Erzeugung mitlesen und frühere Chats lokal speichern und wieder öffnen.
-- System-Prompt, Temperatur, Antwortlänge, Kontextgröße und GPU-Layers einstellen.
-- Den belegten Kontext verfolgen und ältere Gesprächsteile bei Bedarf automatisch
-  zusammenfassen lassen, um längere Unterhaltungen fortzuführen.
+- Load GGUF models from the `modelle/` folder or additional folders you select.
+- Download and update a suitable llama.cpp version directly from the application;
+  CPU and GPU variants are available depending on your hardware.
+- Read responses as they are generated, and save and reopen previous chats locally.
+- Configure the system prompt, temperature, response length, context size, and GPU layers.
+- Monitor context usage and automatically summarize older parts of the conversation
+  when needed to keep longer conversations going.
 
-### Dokumente und Bilder einbeziehen
+### Include documents and images
 
-Monhip kann Dokumente als Chat-Anhänge lesen, damit das Modell Fragen dazu beantworten oder
-Inhalte zusammenfassen kann. Unterstützt werden unter anderem:
+Monhip can read documents attached to a chat so the model can answer questions about them
+or summarize their contents. Supported formats include:
 
-- PDF-Dateien mit auslesbarem Text;
-- Word-, Excel- und PowerPoint-Dateien im modernen Office-Format (`.docx`, `.xlsx`, `.pptx`);
-- OpenDocument-Dateien (`.odt`, `.ods`, `.odp`), RTF und HTML;
-- Text-, Markdown-, CSV-, JSON-, XML- und Quellcodedateien.
+- PDF files with extractable text;
+- Word, Excel, and PowerPoint files in modern Office formats (`.docx`, `.xlsx`, `.pptx`);
+- OpenDocument files (`.odt`, `.ods`, `.odp`), RTF, and HTML;
+- text, Markdown, CSV, JSON, XML, and source code files.
 
-Mit einem Modell mit Bildverständnis und einer passenden `mmproj`-Datei lassen sich auch
-PNG-, JPG-, BMP- und GIF-Bilder im Chat besprechen. Optional kann die KI nach Bestätigung
-Bildschirmfotos anfordern. Die Bildfunktionen setzen entsprechende Modellfähigkeiten voraus.
+With a vision-capable model and a matching `mmproj` file, you can also discuss
+PNG, JPG, BMP, and GIF images in the chat. The AI can optionally request screenshots
+after confirmation. Image features require a model with the appropriate capabilities.
 
-### Dokumentensammlungen im Experten-Modus auswerten
+### Analyze document collections in expert mode
 
-Der Experten-Modus erschließt einen ganzen Dokumentordner als Wissensquelle für die KI:
+Expert mode makes an entire document folder available as a knowledge source for the AI:
 
-- Dokumente einzeln oder bei langen Inhalten abschnittsweise zusammenfassen;
-- einen durchsuchbaren Volltextindex und einen Gesamtüberblick erstellen;
-- gezielt nach Informationen suchen und einzelne Seiten oder Abschnitte nachlesen;
-- eine Auswertung pausieren und fortsetzen sowie geänderte Dateien erneut auswerten.
+- summarize documents individually, or in sections for longer content;
+- create a searchable full-text index and an overall summary;
+- search for specific information and read individual pages or sections;
+- pause and resume an analysis, and reanalyze changed files.
 
-Eingescannte PDFs können über das Bildverständnis eines geeigneten Modells seitenweise
-gelesen werden. Die dafür benötigte PDF-Darstellung verwendet Windows-Funktionen. Ergebnisse
-werden separat unter `chats/experten/` gespeichert; die Quelldokumente bleiben unverändert.
+Scanned PDFs can be read page by page using a suitable model's vision capabilities.
+The PDF rendering required for this uses Windows features. Results are stored separately
+under `chats/experten/`; the source documents remain unchanged.
 
-### Die KI als Agent einsetzen
+### Use the AI as an agent
 
-Über zuschaltbare Werkzeuge kann das Modell Aufgaben ausführen, die über eine reine
-Textantwort hinausgehen:
+Optional tools let the model perform tasks that go beyond providing
+a text response:
 
-- Dateien und Ordner in freigegebenen Verzeichnissen lesen, durchsuchen und bearbeiten;
-- Word-Dokumente, Excel-Tabellen und PowerPoint-Präsentationen erstellen;
-- Programmierprojekte aus Vorlagen anlegen und mit vorhandenen Entwicklungswerkzeugen arbeiten;
-- PowerShell- und Python-Befehle ausführen, sofern diese Funktion freigegeben ist;
-- im Web suchen und Webseiten als Text abrufen;
-- Notizen als chatübergreifendes Gedächtnis speichern und Erinnerungen anlegen.
+- read, search, and edit files and folders in shared directories;
+- create Word documents, Excel spreadsheets, and PowerPoint presentations;
+- create coding projects from templates and work with existing development tools;
+- run PowerShell and Python commands, provided this feature is enabled;
+- search the web and retrieve webpages as text;
+- save notes as memory across chats and create reminders.
 
-In den Einstellungen werden Arbeitsordner, zusätzliche freigegebene Ordner und verfügbare
-Werkzeuge festgelegt. Die Option „Jede Aktion bestätigen“ lässt Werkzeugaufrufe vor der
-Ausführung bestätigen. Welche Aufgaben zuverlässig gelingen, hängt auch vom gewählten
-Modell und dessen Unterstützung für Werkzeugaufrufe ab.
+The settings define the working folder, additional shared folders, and available tools.
+The “Confirm every action” option lets you confirm tool calls before they run.
+Which tasks can be completed reliably also depends on the selected model
+and its support for tool calls.
 
-Die Websuche verwendet DuckDuckGo oder optional die Brave Search API. Für Brave wird ein
-eigener API-Schlüssel benötigt.
+Web search uses DuckDuckGo or, optionally, the Brave Search API. Brave requires
+your own API key.
 
-### Sprache lokal in Text umwandeln
+### Convert speech to text locally
 
-Mit [whisper.cpp](https://github.com/ggml-org/whisper.cpp) lassen sich Mikrofonaufnahmen und
-Audiodateien lokal transkribieren. Die Anwendung kann das benötigte Programm und ein
-Spracherkennungsmodell herunterladen. Die Mikrofonaufnahme verwendet Windows-Schnittstellen.
+[whisper.cpp](https://github.com/ggml-org/whisper.cpp) lets you transcribe microphone recordings
+and audio files locally. The application can download the required program and a
+speech recognition model. Microphone recording uses Windows interfaces.
 
-### Im Team zusammenarbeiten
+### Collaborate as a team
 
-Im Teamwork-Modus erstellt ein Teilnehmer einen Raum auf seinem Rechner. Andere treten
-über einen Einladungscode bei; ihre Rechner müssen den Gastgeber über das Netzwerk erreichen können.
+In Teamwork mode, one participant creates a room on their computer. Others join
+using an invitation code; their computers must be able to reach the host over the network.
 
-- Menschen und ihre KI-Assistenten schreiben in einen gemeinsamen Gruppenchat.
-- Mit `@Name` oder `@alle` lassen sich KI-Assistenten ansprechen.
-- Ein gemeinsamer Hauptauftrag und eine Aufgabenliste unterstützen die Zusammenarbeit.
-- Dateien und ein vom Gastgeber freigegebener Projektordner können gemeinsam genutzt werden.
-- Jeder Teilnehmer legt fest, welche Werkzeuge die eigene KI im Raum verwenden darf.
-- Laufende KI-Antworten können einzeln oder für den ganzen Raum gestoppt werden.
+- People and their AI assistants write in a shared group chat.
+- Address AI assistants with `@Name` or `@alle`.
+- A shared main task and a task list support collaboration.
+- Files and a project folder shared by the host can be used together.
+- Each participant decides which tools their own AI may use in the room.
+- Ongoing AI responses can be stopped individually or for the entire room.
 
-Jede KI verwendet das auf ihrem jeweiligen Rechner geladene Modell. Der Raum wird vom
-Gastgeber betrieben und benötigt einen erreichbaren Netzwerkzugang zu diesem Rechner.
+Each AI uses the model loaded on its own computer. The room is run by the host
+and requires a working network connection to that computer.
 
-## Voraussetzungen
+## Requirements
 
-- **Windows** für den vorgesehenen vollständigen Desktop-Funktionsumfang. Teile der Oberfläche
-  und Dokumentverarbeitung lassen sich unter anderen Betriebssystemen ausführen; Downloader,
-  Mikrofonaufnahme, Bildverarbeitung und weitere Integrationen verwenden jedoch Windows-Technik.
-- **Python mit Tkinter**, beispielsweise Python 3.12, zum Starten aus dem Quellcode.
-  Der Python-Code verwendet die Standardbibliothek; separate pip-Pakete sind derzeit nicht deklariert.
-- **Ein GGUF-Sprachmodell und llama.cpp** für KI-Antworten. Modelldateien sind nicht im
-  Repository enthalten. Arbeitsspeicher, Grafikspeicher und Geschwindigkeit hängen von Modell
-  und Einstellungen ab.
-- **Optionale Zusatzmodelle** für Bildverständnis und Spracherkennung sowie gegebenenfalls
-  weitere Entwicklungswerkzeuge für Programmieraufgaben.
+- **Windows** for the intended full desktop feature set. Parts of the interface and document
+  processing can run on other operating systems; however, downloaders, microphone recording,
+  image processing, and other integrations use Windows technology.
+- **Python with Tkinter**, for example Python 3.12, to run from source.
+  The Python code uses the standard library; separate pip packages are not currently declared.
+- **A GGUF language model and llama.cpp** for AI responses. Model files are not included
+  in the repository. RAM usage, GPU memory usage, and speed depend on the model
+  and settings.
+- **Optional additional models** for vision and speech recognition, and possibly
+  additional development tools for coding tasks.
 
-## Start aus dem Quellcode
+## Run from source
 
-1. Das Repository klonen oder herunterladen und Python mit Tkinter bereitstellen.
-2. Im Repository-Ordner die Anwendung starten:
+1. Clone or download the repository and make sure Python with Tkinter is available.
+2. Start the application from the repository folder:
 
    ```sh
    python Monhip.pyw
    ```
 
-3. Unter **Einstellungen → Laden** über **„llama.cpp herunterladen / aktualisieren“**
-   den Modellserver einrichten.
-4. Ein geeignetes `.gguf`-Modell im Ordner `modelle/` ablegen oder unter
-   **Einstellungen → Modelle** einen weiteren Modellordner hinzufügen.
-5. Das Modell in der Oberfläche auswählen und **„▶ Laden“** anklicken. Nach dem Laden
-   kann der erste Chat beginnen.
-6. Bei Bedarf unter **Einstellungen → Werkzeuge** zusätzliche Funktionen und Arbeitsordner
-   freigeben. Spracherkennung wird separat unter **Einstellungen → Sprache** eingerichtet.
+3. Under **Settings → Loading**, use **“Download / update llama.cpp”**
+   to set up the model server.
+4. Place a suitable `.gguf` model in the `modelle/` folder or add another model folder
+   under **Settings → Models**.
+5. Select the model in the interface and click **“▶ Load”**. Once it has loaded,
+   you can start your first chat.
+6. If needed, enable additional features and working folders under **Settings → Tools**.
+   Speech recognition is set up separately under **Settings → Language**.
 
-Die Modellberechnung läuft lokal. Downloads, Websuche und Seitenabrufe benötigen
-Internetzugriff; der Teamwork-Modus überträgt geteilte Inhalte an die beteiligten Rechner.
+Model inference runs locally. Downloads, web search, and page retrieval require internet
+access; Teamwork mode transfers shared content to the participating computers.
 
-## Oberflächensprache
+## Interface language
 
-Seit Version 1.3 lässt sich unter **Einstellungen → Darstellung → Oberflächensprache**
-zwischen **Deutsch** und **English** wählen. Die Auswahl wird gespeichert und beim nächsten
-Start von Monhip angewendet.
+Since version 1.3, you can choose between **Deutsch** and **English** under
+**Settings → Appearance → Interface language**. Your choice is saved and applied
+the next time you start Monhip.
 
-Beim ersten Start ohne gespeicherte Sprachauswahl erkennt Monhip die Systemsprache automatisch:
-Bei Deutsch erscheint die Oberfläche auf Deutsch, bei Englisch und allen anderen Sprachen auf
-Englisch. Unter Windows wird dafür die Windows-Anzeigesprache verwendet. Eine später manuell
-gewählte Sprache hat Vorrang vor der Systemsprache.
+On first launch without a saved language choice, Monhip automatically detects the system language:
+German systems use the German interface; English and all other system languages use English.
+On Windows, the Windows display language is used for this. A language selected manually
+later takes precedence over the system language.
 
-Die Oberflächensprache ist unabhängig von der Spracherkennung und dem System-Prompt des
-KI-Modells. Eigene Nachrichten, Modellantworten, Dokumentinhalte und gespeicherte Namen werden
-durch den Sprachwechsel nicht übersetzt oder verändert.
+The interface language is independent of speech recognition and the AI model's system prompt.
+Your own messages, model responses, document contents, and saved names are not translated
+or changed when you switch languages.
 
-## Lokale Daten und Projektaufbau
+## Local data and project structure
 
-Monhip legt Einstellungen und Nutzungsdaten neben dem Startprogramm ab:
+Monhip stores settings and usage data alongside the startup program:
 
-| Pfad | Inhalt |
+| Path | Contents |
 | --- | --- |
-| `Monhip.pyw` | Einstiegspunkt zum Starten der Anwendung |
-| `app/` | Oberfläche, Modellanbindung, Agentenwerkzeuge und weitere Python-Module |
-| `config.json` | Einstellungen der Anwendung |
-| `modelle/` | Lokale GGUF-Modelle und Modelle für die Spracherkennung |
-| `server/` | Heruntergeladene llama.cpp- und whisper.cpp-Programme |
-| `chats/` | Gespeicherte Unterhaltungen, angehängte Bilder und Experten-Auswertungen |
-| `gedaechtnis.json` | Chatübergreifende Notizen der KI |
-| `erinnerungen.json` | Gespeicherte Erinnerungen |
+| `Monhip.pyw` | Entry point for starting the application |
+| `app/` | Interface, model integration, agent tools, and other Python modules |
+| `config.json` | Application settings |
+| `modelle/` | Local GGUF models and speech recognition models |
+| `server/` | Downloaded llama.cpp and whisper.cpp programs |
+| `chats/` | Saved conversations, attached images, and expert analyses |
+| `gedaechtnis.json` | The AI's notes across chats |
+| `erinnerungen.json` | Saved reminders |
 
-Die Datenordner und Einstellungsdateien entstehen bei der Nutzung. Eigene Chats, Modelle,
-Einstellungen und Zugangsschlüssel gehören zu den lokalen Nutzungsdaten und sollten beim
-Veröffentlichen von Quellcode nicht mit hochgeladen werden.
+The data folders and settings files are created as you use the application. Your own chats,
+models, settings, and access keys are local usage data and should not be uploaded
+when publishing source code.

@@ -5,8 +5,8 @@ Gemini, lokale Modelle …). Sie soll verhindern, dass zwei gleichzeitig an ders
 noch einmal gebaut oder eine getroffene Entscheidung wieder umgeworfen wird. Ausführliche Entwicklernotizen führt
 der Projektinhaber lokal; diese Datei ist der gemeinsame Auszug daraus.
 
-**Stand:** 27.10.2026 · **neuestes Release:** v1.2 · das Sprachupdate v1.3 ist im Hauptzweig vorbereitet;
-Veröffentlichung über den bestehenden Installer erfolgt über ein GitHub-Release.
+**Stand:** 27.10.2026 · **neuestes Release:** v1.3 · Deutsch und Englisch für die Oberfläche;
+GitHub-Release und Quellarchiv sind für den bestehenden Installer veröffentlicht.
 
 ---
 
@@ -40,7 +40,7 @@ Veröffentlichung über den bestehenden Installer erfolgt über ein GitHub-Relea
 
 | Wer (Mensch + Modell) | Was | Dateien | Seit |
 |---|---|---|---|
-| Auftraggeber + Codex | Sprachupdate v1.3 fertigstellen und Release für den bestehenden Installer veröffentlichen | `app/`, `tests/`, `README.md`, `FORTSCHRITT.md` | 27.10.2026 |
+| – | zurzeit nichts | – | – |
 
 ---
 
@@ -231,14 +231,18 @@ mit `py Monhip.pyw`).
 Neueste zuerst. Neue Einträge oben im Abschnitt „Seit …“:
 `- TT.MM.JJJJ · Wer · Was · getestet: … · offen: …`
 
-### Seit v1.2 (ohne Release)
-- 27.10.2026 · Auftraggeber + Codex · Sprachupdate v1.3 vorbereitet: 664 englische Oberflächentexte, Deutsch
+### v1.3 – 27.10.2026 (`caf2f94`)
+- 27.10.2026 · Auftraggeber + Codex · Sprachupdate v1.3 veröffentlicht: 664 englische Oberflächentexte, Deutsch
   bleibt erhalten; automatische Erkennung beim ersten Start, gespeicherte Auswahl unter Einstellungen →
   Darstellung → Oberflächensprache (wirksam nach Neustart). Modell-Prompts, Nutzerdaten und Protokollwerte bleiben
   unverändert. Getestet: 17 Tests mit Python 3.13 und Tk 8.6/Xvfb, einschließlich beider Oberflächen, Sprachwechsel,
   alter Konfiguration, Windows-Spracherkennung mit simulierten Sprachkennungen, echter lokaler Teamwork-Verbindung,
   Aufgabenstatus und schreibgeschütztem Projektordner; Syntaxprüfung und zeilenendengerechte Formatprüfung.
-  Offen: Release veröffentlichen und Quellarchiv prüfen; echter Windows-Installer und echte KI-Modelle hier nicht getestet.
+  Veröffentlichung geprüft: Tag `v1.3`, neuestes reguläres GitHub-Release (kein Entwurf, kein Vorab-Release),
+  vollständiges Quellarchiv bytegenau mit dem Tag verglichen; dieselben 17 Tests bestehen auch aus dem
+  heruntergeladenen Archiv. Offen: echter Windows-Installer und echte KI-Modelle hier nicht getestet.
+
+### Zwischen v1.2 und v1.3
 - 27.10.2026 · Auftraggeber + Codex · Versehentlich geleerte README exakt aus `db18120` wiederhergestellt.
   Getestet: bytegenauer Vergleich mit der ursprünglichen Fassung und `git diff --check`; keine Anwendungstests
   (reine Dokumentationsänderung). Offen: die unter „Als Nächstes“ genannten README-Ergänzungen bleiben unverändert ausstehend.

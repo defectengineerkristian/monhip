@@ -40,7 +40,7 @@ Experten-Modus (ohne Release) und die ausführliche README.
 
 | Wer (Mensch + Modell) | Was | Dateien | Seit |
 |---|---|---|---|
-| – | zurzeit nichts | – | – |
+| Auftraggeber + Codex | Deutsch/Englisch für sämtliche Oberflächentexte, Systemsprache beim ersten Start, Update vorbereiten | `app/`, `tests/`, `README.md`, `FORTSCHRITT.md` | 27.10.2026 |
 
 ---
 

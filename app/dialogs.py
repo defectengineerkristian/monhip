@@ -4,6 +4,8 @@ und gemeinsames Grundgerüst für alle eigenen Fenster: window() anlegen, presen
 setup(root, theme, ui_scale) einmal in App.__init__; ohne setup fallen die Meldungen auf messagebox zurück.
 """
 
+from i18n import error_text, tr
+
 import tkinter as tk
 from tkinter import messagebox, ttk
 
@@ -97,6 +99,7 @@ def _color(key: str, fallback: str) -> str:
 
 
 def _show(kind: str, title: str, message: str, parent: tk.Misc | None) -> bool:
+    message = error_text(message)
     if _theme is None:
         fallback = {"info": messagebox.showinfo, "error": messagebox.showerror, "question": messagebox.askyesno}
         return bool(fallback[kind](title, message, parent=parent))
@@ -123,8 +126,8 @@ def _show(kind: str, title: str, message: str, parent: tk.Misc | None) -> bool:
     bf = ttk.Frame(body)
     bf.pack(fill=tk.X, pady=(_s(16), 0))
     if kind == "question":
-        ttk.Button(bf, text="Nein", command=lambda: close(False)).pack(side=tk.RIGHT)
-        default = ttk.Button(bf, text="Ja", style="Accent.TButton", command=lambda: close(True))
+        ttk.Button(bf, text=tr('Nein'), command=lambda: close(False)).pack(side=tk.RIGHT)
+        default = ttk.Button(bf, text=tr('Ja'), style="Accent.TButton", command=lambda: close(True))
         default.pack(side=tk.RIGHT, padx=(0, _s(6)))
     else:
         default = ttk.Button(bf, text="OK", style="Accent.TButton", width=10, command=lambda: close(True))
@@ -160,7 +163,7 @@ def askstring(title: str, prompt: str, initial: str = "", parent: tk.Misc | None
 
     bf = ttk.Frame(body)
     bf.pack(fill=tk.X)
-    ttk.Button(bf, text="Abbrechen", command=win.destroy).pack(side=tk.RIGHT)
+    ttk.Button(bf, text=tr('Abbrechen'), command=win.destroy).pack(side=tk.RIGHT)
     ttk.Button(bf, text="OK", style="Accent.TButton", command=ok).pack(side=tk.RIGHT, padx=(0, 6))
     entry.bind("<Return>", ok)
     win.bind("<Escape>", lambda e: win.destroy())

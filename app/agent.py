@@ -4,6 +4,8 @@ Neues Werkzeug: Methode `tool_<name>`, Schema in einer der *_TOOLS-Gruppen, Anze
 Bilder fürs Modell: Pfad in self._images – run_conversation hängt sie als "_image_files" an die Antwort.
 """
 
+from i18n import tr
+
 import fnmatch
 import functools
 import json
@@ -257,23 +259,23 @@ SHARE_TOOLS = [  # Teamwork: Datei in den Chat
 ]
 
 LABELS = {
-    "list_directory": "Ordner ansehen", "read_file": "Datei lesen", "write_file": "Datei schreiben",
-    "edit_file": "Datei bearbeiten", "create_directory": "Ordner anlegen", "move_path": "Verschieben",
-    "copy_path": "Kopieren", "delete_path": "In den Papierkorb", "search_files": "Dateien suchen",
-    "open_path": "Öffnen", "create_project": "Projekt anlegen", "create_word_document": "Word-Dokument",
-    "create_excel_workbook": "Excel-Arbeitsmappe", "create_presentation": "PowerPoint-Präsentation",
-    "run_command": "PowerShell", "run_python": "Python", "web_search": "Websuche", "fetch_url": "Webseite lesen",
-    "view_image": "Bild ansehen", "take_screenshot": "Bildschirmfoto", "remember": "Merken", "forget": "Vergessen",
-    "set_reminder": "Erinnerung", "cancel_reminder": "Erinnerung löschen",
-    "projekt_list": "Projekt ansehen", "projekt_read": "Projekt: Datei lesen", "projekt_search": "Projekt durchsuchen",
-    "projekt_write": "Projekt: Datei schreiben", "projekt_edit": "Projekt: Datei ändern",
-    "projekt_mkdir": "Projekt: Ordner anlegen", "projekt_delete": "Projekt: Löschen",
-    "projekt_upload": "Projekt: Hochladen", "projekt_download": "Projekt: Herunterladen", "datei_teilen": "Datei teilen",
-    "experte_suchen": "Dokumente durchsuchen", "experte_lesen": "Dokument lesen",
-    "experte_zusammenfassung": "Zusammenfassung", "experte_liste": "Dokumentliste", "ordner_auswerten": "Ordner auswerten",
-    "arbeitsstand_speichern": "Arbeitsstand speichern", "aufgabe_anlegen": "Aufgabe anlegen",
-    "aufgabe_uebernehmen": "Aufgabe übernehmen", "aufgabe_erledigt": "Aufgabe erledigt", "aufgaben_liste": "Aufgabenliste",
-    "status_setzen": "Teamstand", "ki_fragen": "KI fragen",
+    "list_directory": tr('Ordner ansehen'), "read_file": tr('Datei lesen'), "write_file": tr('Datei schreiben'),
+    "edit_file": tr('Datei bearbeiten'), "create_directory": tr('Ordner anlegen'), "move_path": tr('Verschieben'),
+    "copy_path": tr('Kopieren'), "delete_path": tr('In den Papierkorb'), "search_files": tr('Dateien suchen'),
+    "open_path": tr('Öffnen'), "create_project": tr('Projekt anlegen'), "create_word_document": tr('Word-Dokument'),
+    "create_excel_workbook": tr('Excel-Arbeitsmappe'), "create_presentation": tr('PowerPoint-Präsentation'),
+    "run_command": "PowerShell", "run_python": "Python", "web_search": tr('Websuche'), "fetch_url": tr('Webseite lesen'),
+    "view_image": tr('Bild ansehen'), "take_screenshot": tr('Bildschirmfoto'), "remember": tr('Merken'), "forget": tr('Vergessen'),
+    "set_reminder": tr('Erinnerung'), "cancel_reminder": tr('Erinnerung löschen'),
+    "projekt_list": tr('Projekt ansehen'), "projekt_read": tr('Projekt: Datei lesen'), "projekt_search": tr('Projekt durchsuchen'),
+    "projekt_write": tr('Projekt: Datei schreiben'), "projekt_edit": tr('Projekt: Datei ändern'),
+    "projekt_mkdir": tr('Projekt: Ordner anlegen'), "projekt_delete": tr('Projekt: Löschen'),
+    "projekt_upload": tr('Projekt: Hochladen'), "projekt_download": tr('Projekt: Herunterladen'), "datei_teilen": tr('Datei teilen'),
+    "experte_suchen": tr('Dokumente durchsuchen'), "experte_lesen": tr('Dokument lesen'),
+    "experte_zusammenfassung": tr('Zusammenfassung'), "experte_liste": tr('Dokumentliste'), "ordner_auswerten": tr('Ordner auswerten'),
+    "arbeitsstand_speichern": tr('Arbeitsstand speichern'), "aufgabe_anlegen": tr('Aufgabe anlegen'),
+    "aufgabe_uebernehmen": tr('Aufgabe übernehmen'), "aufgabe_erledigt": tr('Aufgabe erledigt'), "aufgaben_liste": tr('Aufgabenliste'),
+    "status_setzen": tr('Teamstand'), "ki_fragen": tr('KI fragen'),
 }
 ICONS = {"web_search": "🌐", "fetch_url": "🌐", "search_files": "⌕", "write_file": "✎", "edit_file": "✎",
          "run_command": "❯", "run_python": "❯", "view_image": "▣", "take_screenshot": "▣", "remember": "✦",
@@ -683,8 +685,8 @@ class Agent:
 
     def tool_write_file(self, path, content):
         p = self._path(path)
-        verb = "überschreiben" if p.exists() else "anlegen"
-        if not self._ok(f"Datei {verb}?", f"{p}\n\n{_preview(content)}"):
+        verb = tr('überschreiben') if p.exists() else tr('anlegen')
+        if not self._ok(tr('Datei {0}?', verb), f"{p}\n\n{_preview(content)}"):
             return "Vom Nutzer abgelehnt."
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
@@ -694,8 +696,7 @@ class Agent:
         p = self._path(path)
         text = _read_text_file(p)
         old_text, new_text = match_edit(text, old_text, new_text)
-        if not self._ok("Datei ändern?", f"{p}\n\n– bisher –\n{_preview(old_text, 800)}\n\n– neu –\n"
-                                         f"{_preview(new_text, 800)}"):
+        if not self._ok(tr('Datei ändern?'), tr('{0}\n\n– bisher –\n{1}\n\n– neu –\n{2}', p, _preview(old_text, 800), _preview(new_text, 800))):
             return "Vom Nutzer abgelehnt."
         p.write_bytes(text.replace(old_text, new_text, 1).encode("utf-8"))
         return f"{p} geändert."
@@ -715,7 +716,7 @@ class Agent:
             dst = dst / src.name
         if dst.exists():
             raise FileExistsError(f"{dst} gibt es schon.")
-        if not self._ok("Verschieben?", f"{src}\n→ {dst}"):
+        if not self._ok(tr('Verschieben?'), f"{src}\n→ {dst}"):
             return "Vom Nutzer abgelehnt."
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(src), str(dst))
@@ -729,7 +730,7 @@ class Agent:
             dst = dst / src.name
         if dst.exists():
             raise FileExistsError(f"{dst} gibt es schon.")
-        if not self._ok("Kopieren?", f"{src}\n→ {dst}"):
+        if not self._ok(tr('Kopieren?'), f"{src}\n→ {dst}"):
             return "Vom Nutzer abgelehnt."
         dst.parent.mkdir(parents=True, exist_ok=True)
         if src.is_dir():
@@ -744,7 +745,7 @@ class Agent:
             raise FileNotFoundError(f"{p} gibt es nicht.")
         if p in self.roots:
             raise PermissionError("Ein freigegebener Ordner selbst kann nicht gelöscht werden.")
-        if not self._ok("In den Papierkorb verschieben?", str(p)):
+        if not self._ok(tr('In den Papierkorb verschieben?'), str(p)):
             return "Vom Nutzer abgelehnt."
         _recycle(p)
         return f"{p} liegt jetzt im Papierkorb."
@@ -755,7 +756,7 @@ class Agent:
             raise FileNotFoundError(f"{p} gibt es nicht.")
         if p.is_file() and p.suffix.lower() in EXEC_SUFFIXES:
             return "Fehler: Programme und Skripte bitte mit run_command bzw. run_python starten."
-        if not self._ok("Öffnen?", str(p)):
+        if not self._ok(tr('Öffnen?'), str(p)):
             return "Vom Nutzer abgelehnt."
         os.startfile(p)
         return f"{p} wurde geöffnet."
@@ -770,7 +771,7 @@ class Agent:
         if target.exists() and any(target.iterdir()):
             return f"Fehler: {target} existiert bereits und ist nicht leer."
         files = projects.files_for(lang, name)
-        if not self._ok("Projekt anlegen?", f"{target}\n\n" + "\n".join(files)):
+        if not self._ok(tr('Projekt anlegen?'), f"{target}\n\n" + "\n".join(files)):
             return "Vom Nutzer abgelehnt."
         for rel, content in files.items():
             f = target / rel
@@ -793,7 +794,7 @@ class Agent:
 
     def tool_create_word_document(self, path, markdown, title=""):
         p = self._office_target(path, ".docx")
-        if not self._ok("Word-Dokument erstellen?", f"{p}\n\n{_preview((title + chr(10) * 2 if title else '') + markdown)}"):
+        if not self._ok(tr('Word-Dokument erstellen?'), f"{p}\n\n{_preview((title + chr(10) * 2 if title else '') + markdown)}"):
             return "Vom Nutzer abgelehnt."
         office.write_docx(p, markdown, title)
         return f"Word-Dokument gespeichert: {p} ({_size(p.stat().st_size)})"
@@ -805,7 +806,7 @@ class Agent:
         sheets = sheets if isinstance(sheets, list) else [sheets]
         summary = "\n".join(f"Blatt „{s.get('name', '?')}“: {len(s.get('rows') or [])} Zeilen"
                             for s in sheets if isinstance(s, dict))
-        if not self._ok("Excel-Arbeitsmappe erstellen?", f"{p}\n\n{summary}"):
+        if not self._ok(tr('Excel-Arbeitsmappe erstellen?'), f"{p}\n\n{summary}"):
             return "Vom Nutzer abgelehnt."
         office.write_xlsx(p, sheets)
         return f"Excel-Arbeitsmappe gespeichert: {p} ({_size(p.stat().st_size)})"
@@ -815,7 +816,7 @@ class Agent:
         if isinstance(slides, str):
             slides = json.loads(slides)
         names = "\n".join(f"- {s.get('title', '')}" if isinstance(s, dict) else f"- {s}" for s in slides or [])
-        if not self._ok("PowerPoint erstellen?", f"{p}\n\n{title}\n{names}"):
+        if not self._ok(tr('PowerPoint erstellen?'), f"{p}\n\n{title}\n{names}"):
             return "Vom Nutzer abgelehnt."
         office.write_pptx(p, slides, title, subtitle)
         count = len(slides or []) + (1 if title else 0)
@@ -837,7 +838,7 @@ class Agent:
     def tool_run_command(self, command, cwd=".", timeout_seconds=None):
         d = self._cwd(cwd)
         timeout = max(5, min(int(timeout_seconds or self.cmd_timeout), 1800))
-        if not self._ok("PowerShell-Befehl ausführen?", f"Ordner: {d}\n\n{command}"):
+        if not self._ok(tr('PowerShell-Befehl ausführen?'), tr('Ordner: {0}\n\n{1}', d, command)):
             return "Vom Nutzer abgelehnt."
         prefix = ("[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
                   "$OutputEncoding = [System.Text.Encoding]::UTF8; $ProgressPreference = 'SilentlyContinue'; ")
@@ -848,7 +849,7 @@ class Agent:
 
     def tool_run_python(self, code, cwd="."):
         d = self._cwd(cwd)
-        if not self._ok("Python-Code ausführen?", f"Ordner: {d}\n\n{_preview(code, 3000)}"):
+        if not self._ok(tr('Python-Code ausführen?'), tr('Ordner: {0}\n\n{1}', d, _preview(code, 3000))):
             return "Vom Nutzer abgelehnt."
         exe = Path(sys.executable)
         if exe.name.lower() == "pythonw.exe" and exe.with_name("python.exe").exists():
@@ -881,9 +882,10 @@ class Agent:
 
     def tool_take_screenshot(self):
         if not self.allow_all:  # immer fragen – auch wenn Aktionen sonst nicht bestätigt werden müssen
-            answer = self.confirm("Bildschirmfoto aufnehmen?", "Das Modell möchte deinen Bildschirm sehen.\n\n"
-                                  "Monhip wird dafür kurz minimiert. Das Bild bleibt auf deinem PC "
-                                  "und wird mit dem Chat gespeichert.")
+            answer = self.confirm(tr(
+                'Bildschirmfoto aufnehmen?'), tr(
+                'Das Modell möchte deinen Bildschirm sehen.\n\nMonhip wird dafür kurz minimiert. Das Bild bleibt auf '
+                'deinem PC und wird mit dem Chat gespeichert.'))
             if answer == "all":
                 self.allow_all = True
             elif answer != "yes":
@@ -904,13 +906,17 @@ class Agent:
         return self.team("search", pattern=pattern, text=text, path=path)["text"]
 
     def tool_projekt_write(self, path, content):
-        if not self._ok("Im Projektordner schreiben?", f"{path}\n\n{_preview(content)}"):
+        if not self._ok(tr('Im Projektordner schreiben?'), f"{path}\n\n{_preview(content)}"):
             return "Vom Nutzer abgelehnt."
         return self.team("write", path=path, content=content)["text"]
 
     def tool_projekt_edit(self, path, old_text, new_text):
-        if not self._ok("Im Projektordner ändern?", f"{path}\n\n– bisher –\n{_preview(old_text, 800)}\n\n– neu –\n"
-                                                    f"{_preview(new_text, 800)}"):
+        if not self._ok(tr(
+            'Im Projektordner ändern?'), tr(
+            '{0}\n\n– bisher –\n{1}\n\n– neu –\n{2}',
+            path,
+            _preview(old_text, 800),
+            _preview(new_text, 800))):
             return "Vom Nutzer abgelehnt."
         return self.team("edit", path=path, old_text=old_text, new_text=new_text)["text"]
 
@@ -918,7 +924,7 @@ class Agent:
         return self.team("mkdir", path=path)["text"]
 
     def tool_projekt_delete(self, path):
-        if not self._ok("Im Projektordner löschen?", str(path)):
+        if not self._ok(tr('Im Projektordner löschen?'), str(path)):
             return "Vom Nutzer abgelehnt."
         return self.team("delete", path=path)["text"]
 
@@ -968,8 +974,8 @@ class Agent:
             where = self._path(local_path) if local_path else self._path(Path(project) / ("" if base == "." else base))
             plan = [(rel, self._path(where / (rel if base == "." else rel[len(base) + 1:]))) for rel, _ in files]
         exists = sum(1 for _, t in plan if t.exists())
-        if not self._ok("Aus dem Projektordner auf deinen Rechner holen?",
-                        f"{len(plan)} {'Datei' if len(plan) == 1 else 'Dateien'} ({_size(total)}) → {where}"
+        if not self._ok(tr('Aus dem Projektordner auf deinen Rechner holen?'),
+                        f"{len(plan)} {tr('Datei') if len(plan) == 1 else tr('Dateien')} ({_size(total)}) → {where}"
                         + (f"\n\n{exists} vorhandene Datei(en) werden überschrieben." if exists else "")):
             return "Vom Nutzer abgelehnt."
         for rel, target in plan:
@@ -1016,9 +1022,11 @@ class Agent:
         if not folder.is_dir():
             raise ToolError(f"{folder} ist kein Ordner.")
         focus = str(schwerpunkt or "").strip()
-        if not self._ok("Ordner auswerten (Experten-Modus)?",
-                        f"{folder}\n\nMonhip wertet alle Dokumente darin im Hintergrund aus – bei vielen Dateien kann "
-                        "das Stunden dauern. Dieser Chat wird danach zum Experten für den Ordner."
+        if not self._ok(tr('Ordner auswerten (Experten-Modus)?'),
+                        tr(
+                            '{0}\n\nMonhip wertet alle Dokumente darin im Hintergrund aus – bei vielen Dateien kann '
+                            'das Stunden dauern. Dieser Chat wird danach zum Experten für den Ordner.',
+                            folder)
                         + (f"\n\nSchwerpunkt: {focus}" if focus else "")):
             return "Vom Nutzer abgelehnt."
         return self.expert_start(folder, focus)
@@ -1104,9 +1112,9 @@ def describe_call(name: str, raw_args: str) -> tuple[str, str, str]:
             detail = Path(str(a.get("local_path") or a.get("path") or "")).name if name == "datei_teilen" else (
                 str(a.get("path") or "") or Path(str(a.get("local_path") or "")).name)
         if name in ("read_file", "projekt_read") and (a.get("start_line") or a.get("end_line")):
-            detail = f"{detail}  ·  Zeile {a.get('start_line') or 1}" + (f"–{a['end_line']}" if a.get("end_line") else "")
+            detail = tr('{0}  ·  Zeile {1}', detail, a.get('start_line') or 1) + (f"–{a['end_line']}" if a.get("end_line") else "")
         elif name == "fetch_url" and a.get("start"):
-            detail = f"{detail}  ·  ab Zeichen {a['start']}"
+            detail = tr('{0}  ·  ab Zeichen {1}', detail, a['start'])
     detail = detail.splitlines()[0] if detail else ""
     return ICONS.get(name, "▤"), label, detail if len(detail) <= 70 else detail[:69] + "…"
 
@@ -1120,7 +1128,7 @@ def format_args(raw_args: str) -> str:
             out.append(f"{k}:\n{v}" if "\n" in v else f"{k}: {v}")
         else:
             out.append(f"{k}: {_preview(json.dumps(v, ensure_ascii=False), 3000)}")
-    return "\n".join(out) or "(keine Argumente)"
+    return "\n".join(out) or tr('(keine Argumente)')
 
 
 def result_ok(result: str | None) -> bool:

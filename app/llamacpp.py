@@ -1,6 +1,8 @@
 """Eigener llama.cpp (unabhängig von LM Studio): installierte Versionen in server/ finden, Grafikkarte
 erkennen, passende llama-server-Version von github.com/ggml-org/llama.cpp laden."""
 
+from i18n import tr
+
 import platform
 import re
 import subprocess
@@ -67,7 +69,7 @@ def detect_gpu() -> tuple[str, str, tuple[int, int] | None]:
         for name in names:
             if any(k in name.lower() for k in keys):
                 return vendor, name, cuda
-    return "", (names[0] if names else "unbekannt"), cuda
+    return "", (names[0] if names else tr("unbekannt")), cuda
 
 
 # ---------------------------------------------------------------- Herunterladen
@@ -109,7 +111,7 @@ def plan() -> dict:
             return {"tag": rel["tag_name"], "kind": kind, "gpu": gpu, "target": target,
                     "assets": [(a["name"], a["browser_download_url"], a["size"]) for a in assets],
                     "size": sum(a["size"] for a in assets), "installed": (target / "llama-server.exe").is_file()}
-    raise RuntimeError("Auf GitHub wurde keine passende llama.cpp-Version für Windows gefunden.")
+    raise RuntimeError(tr('Auf GitHub wurde keine passende llama.cpp-Version für Windows gefunden.'))
 
 
 def install(p: dict, progress, cancel) -> Path:

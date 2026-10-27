@@ -1,5 +1,7 @@
 """Speichert Chats als JSON-Dateien im Ordner chats/ neben Monhip.pyw."""
 
+from i18n import tr
+
 import json
 import re
 import secrets
@@ -14,7 +16,7 @@ IMAGE_DIR = CHAT_DIR / "bilder"  # angehängte Bilder: bilder/<chat-id>/<datei> 
 def new_chat() -> dict:
     now = datetime.now().isoformat(timespec="seconds")
     return {"id": datetime.now().strftime("%Y%m%d-%H%M%S-") + secrets.token_hex(2),
-            "title": "Neuer Chat", "created": now, "updated": now, "messages": []}
+            "title": tr('Neuer Chat'), "created": now, "updated": now, "messages": []}
 
 
 def make_title(text: str, limit: int = 38) -> str:
@@ -116,14 +118,14 @@ def group_label(updated: str) -> str:
     try:
         day = datetime.fromisoformat(updated).date()
     except ValueError:
-        return "Älter"
+        return tr('Älter')
     today = datetime.now().date()
     if day == today:
-        return "Heute"
+        return tr('Heute')
     if day == today - timedelta(days=1):
-        return "Gestern"
+        return tr('Gestern')
     if day > today - timedelta(days=7):
-        return "Letzte 7 Tage"
+        return tr('Letzte 7 Tage')
     if day > today - timedelta(days=30):
-        return "Letzte 30 Tage"
-    return "Älter"
+        return tr('Letzte 30 Tage')
+    return tr('Älter')

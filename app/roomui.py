@@ -7,6 +7,8 @@ kann mit „Alle KIs stoppen“ alle Antworten im Raum anhalten. Spricht die eig
 auf deren Antworten und macht danach von selbst weiter.
 """
 
+from i18n import error_text, tr
+
 import hashlib
 import json
 import os
@@ -166,7 +168,7 @@ def _tasks_text(tasks: list[dict], done: bool = False, limit: int = 30) -> str:
     for t in tasks:
         if t.get("status") == "erledigt" and not done:
             continue
-        state = t.get("status", "offen") + (f" · {t['owner']}" if t.get("owner") else "")
+        state = tr(t.get("status", "offen")) + (f" · {t['owner']}" if t.get("owner") else "")
         rows.append(f"#{t['nr']} [{state}] {t['text']}" + (f" – Ergebnis: {t['note']}" if t.get("note") else ""))
     return "\n".join(rows[-limit:])
 
@@ -181,7 +183,7 @@ class _RoomTools:
 
     def _client(self) -> room.RoomClient:
         if not self.mode.client:
-            raise ToolError("Nicht mehr mit dem Raum verbunden.")
+            raise ToolError(tr('Nicht mehr mit dem Raum verbunden.'))
         return self.mode.client
 
     def task(self, op: str, **args) -> str:
@@ -207,7 +209,7 @@ class _RoomTools:
 
     def ask(self, ki: str, frage: str) -> str:
         if not self.ask_fn:
-            raise ToolError("Rückfragen gehen nur während einer Antwort im Raum.")
+            raise ToolError(tr('Rückfragen gehen nur während einer Antwort im Raum.'))
         return self.ask_fn(ki, frage, self.chain)
 
 
@@ -260,18 +262,18 @@ class _Mentions:
         ready = lambda m: bool(m.get("online") and m.get("ai_ready"))
         out = []
         for m in sorted(mode.members.values(), key=lambda m: (not ready(m), m["ai"].lower())):
-            sub = "deine KI" if m["id"] == me else f"KI von {m['name']}"
+            sub = tr('deine KI') if m["id"] == me else tr('KI von {0}', m['name'])
             if not m.get("online"):
                 sub += "  ·  offline"
             elif not m.get("ai_ready"):
-                sub += "  ·  kein Modell geladen"
+                sub += tr('  ·  kein Modell geladen')
             elif m.get("model"):
                 sub += f"  ·  {m['model']}"
             out.append((m["ai"], sub))
         if len(out) > 1:
-            out.append(("alle", "alle KIs im Raum"))
+            out.append(("alle", tr('alle KIs im Raum')))
         if mode.client:
-            out.append(("main", "Hauptauftrag des Raums"))
+            out.append(("main", tr('Hauptauftrag des Raums')))
         f = frag.lower()
         hits = [c for c in out if c[0].lower().startswith(f)]
         hits += [c for c in out if f and f in c[0].lower() and c not in hits]
@@ -498,33 +500,33 @@ class RoomMode:
         self.member_tree = self._status = self._stop_btn = self._leave_btn = self._stop_all_btn = None
         if not self.connected:
             if self.connecting:
-                ttk.Label(p, text="Verbinde …", style="SidebarText.TLabel").pack(anchor="w")
+                ttk.Label(p, text=tr('Verbinde …'), style="SidebarText.TLabel").pack(anchor="w")
                 return
-            ttk.Button(p, text="+   Raum erstellen", style="Sidebar.TButton", command=self.dialog_create).pack(fill=tk.X)
-            ttk.Button(p, text="→   Raum beitreten", style="Sidebar.TButton", command=self.dialog_join).pack(fill=tk.X)
+            ttk.Button(p, text=tr('+   Raum erstellen'), style="Sidebar.TButton", command=self.dialog_create).pack(fill=tk.X)
+            ttk.Button(p, text=tr('→   Raum beitreten'), style="Sidebar.TButton", command=self.dialog_join).pack(fill=tk.X)
             if hosted or last:  # Angebot, den letzten Raum wieder zu öffnen bzw. ihm wieder beizutreten
                 if hosted:
-                    text, sub = "↻   Letzten Raum wieder öffnen", f"„{hosted['room']}“ – du warst Gastgeber"
+                    text, sub = tr('↻   Letzten Raum wieder öffnen'), tr('„{0}“ – du warst Gastgeber', hosted['room'])
                     cmd = lambda: self.create(hosted["room"], hosted["bind"], hosted["port"], hosted["key"])
                 else:
-                    text, sub = "↻   Letztem Raum wieder beitreten", f"„{last['room']}“"
+                    text, sub = tr('↻   Letztem Raum wieder beitreten'), f"„{last['room']}“"
                     cmd = lambda: self.join(last["invite"])
                 ttk.Button(p, text=text, style="Sidebar.TButton", command=cmd).pack(fill=tk.X, pady=(8, 0))
                 indent = round(34 * self.app.ui_scale)
                 ttk.Label(p, text=sub, style="SidebarMuted.TLabel", wraplength=self._wrap() - indent).pack(
                     anchor="w", padx=(indent, 0))
                 if hosted:
-                    ttk.Button(p, text="✕   Raum löschen", style="Sidebar.TButton",
+                    ttk.Button(p, text=tr('✕   Raum löschen'), style="Sidebar.TButton",
                                command=lambda: self.delete_room(self._store_path(hosted["room"]), hosted["room"])
                                ).pack(fill=tk.X, pady=(2, 0))
                 else:
-                    ttk.Button(p, text="✕   Aus der Liste entfernen", style="Sidebar.TButton",
+                    ttk.Button(p, text=tr('✕   Aus der Liste entfernen'), style="Sidebar.TButton",
                                command=self.forget_last).pack(fill=tk.X, pady=(2, 0))
             if others:  # Verläufe eigener Räume, die nicht mehr gemerkt sind (z. B. nach dem Beitritt woanders)
-                ttk.Label(p, text="WEITERE GESPEICHERTE RÄUME", style="Sidebar.TLabel").pack(anchor="w", pady=(14, 2))
+                ttk.Label(p, text=tr('WEITERE GESPEICHERTE RÄUME'), style="Sidebar.TLabel").pack(anchor="w", pady=(14, 2))
                 for path in others:
                     name = self._room_title(path)
-                    ttk.Button(p, text=f"✕   „{name}“ löschen", style="Sidebar.TButton",
+                    ttk.Button(p, text=tr('✕   „{0}“ löschen', name), style="Sidebar.TButton",
                                command=lambda pth=path, n=name: self.delete_room(pth, n)).pack(fill=tk.X)
             return
 
@@ -533,11 +535,11 @@ class RoomMode:
         self._status = ttk.Label(p, wraplength=self._wrap())
         self._status.pack(anchor="w", pady=(2, 6))
         # Nur die Funktionen selbst – Einzelheiten beim Anklicken (keine Kurztexte in der Seitenleiste)
-        ttk.Button(p, text="⧉   Einladung kopieren", style="Sidebar.TButton", command=self.copy_invite).pack(fill=tk.X)
-        ttk.Button(p, text="✎   Hauptauftrag", style="Sidebar.TButton", command=self.edit_main).pack(fill=tk.X)
-        ttk.Button(p, text="≡   Aufgaben", style="Sidebar.TButton", command=self.open_tasks).pack(fill=tk.X)
+        ttk.Button(p, text=tr('⧉   Einladung kopieren'), style="Sidebar.TButton", command=self.copy_invite).pack(fill=tk.X)
+        ttk.Button(p, text=tr('✎   Hauptauftrag'), style="Sidebar.TButton", command=self.edit_main).pack(fill=tk.X)
+        ttk.Button(p, text=tr('≡   Aufgaben'), style="Sidebar.TButton", command=self.open_tasks).pack(fill=tk.X)
 
-        ttk.Label(p, text="TEILNEHMER", style="Sidebar.TLabel").pack(anchor="w", pady=(10, 2))
+        ttk.Label(p, text=tr("TEILNEHMER"), style="Sidebar.TLabel").pack(anchor="w", pady=(10, 2))
         tree = ttk.Treeview(p, show="tree", selectmode="browse", style="Sidebar.Treeview", height=6)
         tree.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
         tree.tag_configure("off", foreground=self.app.theme_chat()["muted"])
@@ -546,15 +548,15 @@ class RoomMode:
         self._fill_members()
         self._project_panel(p, info["is_host"])
 
-        ttk.Label(p, text="MEINE KI IM RAUM DARF", style="Sidebar.TLabel").pack(anchor="w", pady=(4, 2))
-        for key, text in (("web", "im Internet suchen"), ("files", "Dateien (freigegebene Ordner)"),
-                          ("commands", "Befehle & Python ausführen")):
+        ttk.Label(p, text=tr('MEINE KI IM RAUM DARF'), style="Sidebar.TLabel").pack(anchor="w", pady=(4, 2))
+        for key, text in (("web", tr('im Internet suchen')), ("files", tr('Dateien (freigegebene Ordner)')),
+                          ("commands", tr('Befehle & Python ausführen'))):
             ttk.Checkbutton(p, text=text, variable=self.tool_vars[key], style="Sidebar.TCheckbutton").pack(anchor="w")
         ttk.Frame(p, style="Sidebar.TFrame", height=8).pack(fill=tk.X)
-        self._stop_btn = ttk.Button(p, text="■   Antwort meiner KI stoppen", style="Sidebar.TButton",
+        self._stop_btn = ttk.Button(p, text=tr('■   Antwort meiner KI stoppen'), style="Sidebar.TButton",
                                     command=self.ai_stop.set)
-        self._stop_all_btn = ttk.Button(p, text="■   Alle KIs stoppen", style="Sidebar.TButton", command=self.stop_all)
-        self._leave_btn = ttk.Button(p, text="✕   Raum schließen" if info["is_host"] else "✕   Raum verlassen",
+        self._stop_all_btn = ttk.Button(p, text=tr('■   Alle KIs stoppen'), style="Sidebar.TButton", command=self.stop_all)
+        self._leave_btn = ttk.Button(p, text=tr('✕   Raum schließen') if info["is_host"] else tr('✕   Raum verlassen'),
                                      style="Sidebar.TButton", command=self.leave)
         self._leave_btn.pack(fill=tk.X)
         self._update_panel()
@@ -564,9 +566,9 @@ class RoomMode:
         if not self.connected or not self._status or not self._status.winfo_exists():
             return
         ok = self.state == "ok"
-        status = ("● verbunden" if ok else f"● {self.state or 'verbinde …'}") + (
-            "  ·  du bist Gastgeber" if self.info["is_host"] else "")
-        busy = self.state.startswith("Lade ")  # Dateien werden hochgeladen – kein Fehler
+        status = (tr('● verbunden') if ok else f"● {error_text(self.state) if self.state else tr('verbinde …')}") + (
+            tr('  ·  du bist Gastgeber') if self.info["is_host"] else "")
+        busy = self.state.startswith(tr('Lade '))  # Dateien werden hochgeladen – kein Fehler
         self._status.configure(text=status, style="SidebarOk.TLabel" if ok else
                                "SidebarMuted.TLabel" if busy else "SidebarWarn.TLabel")
         if self.ai_busy and not self._stop_btn.winfo_ismapped():
@@ -617,12 +619,13 @@ class RoomMode:
         """Hauptauftrag bearbeiten – jeder Mensch im Raum darf; die KIs bekommen ihn bei jeder Antwort mit."""
         if not self.client:
             return
-        win = dialogs.window("Hauptauftrag", self.app.root, resizable=True)
+        win = dialogs.window(tr('Hauptauftrag'), self.app.root, resizable=True)
         body = ttk.Frame(win, padding=16)
         body.pack(fill=tk.BOTH, expand=True)
-        ttk.Label(body, text="Hauptauftrag", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(body, text="Gilt für alle KIs im Raum und geht bei jeder ihrer Antworten mit. Ändern können ihn nur "
-                             "die Menschen im Raum.", style="Muted.TLabel",
+        ttk.Label(body, text=tr('Hauptauftrag'), style="Title.TLabel").pack(anchor="w")
+        ttk.Label(body, text=tr(
+            'Gilt für alle KIs im Raum und geht bei jeder ihrer Antworten mit. Ändern können ihn nur die Menschen '
+            'im Raum.'), style="Muted.TLabel",
                   wraplength=round(520 * self.app.ui_scale)).pack(anchor="w", pady=(2, 8))
         frame, box = scrolled(body, wrap=tk.WORD, width=70, height=12, font=("Segoe UI", 10), padx=8, pady=6,
                               undo=True)
@@ -636,12 +639,12 @@ class RoomMode:
 
         def update_count(_e=None):
             n = len(box.get("1.0", "end-1c").strip())
-            count.configure(text=f"{n:,} / {room.MAIN_MAX:,} Zeichen".replace(",", "."))
+            count.configure(text=tr('{0:,} / {1:,} Zeichen', n, room.MAIN_MAX).replace(",", "."))
 
         def save():
             text = box.get("1.0", "end-1c").strip()
             if len(text) > room.MAIN_MAX:
-                dialogs.showerror("Hauptauftrag", f"Höchstens {room.MAIN_MAX:,} Zeichen – bitte kürzen.".replace(",", "."),
+                dialogs.showerror(tr('Hauptauftrag'), tr('Höchstens {0:,} Zeichen – bitte kürzen.', room.MAIN_MAX).replace(",", "."),
                                   parent=win)
                 return
             win.destroy()
@@ -653,12 +656,12 @@ class RoomMode:
                 try:
                     client.set_main(text)
                 except (room.RoomError, OSError, ValueError) as e:
-                    self._put("room", ("state", f"Hauptauftrag nicht gespeichert: {e}"))
+                    self._put("room", ("state", tr('Hauptauftrag nicht gespeichert: {0}', e)))
 
             threading.Thread(target=work, daemon=True).start()
 
-        ttk.Button(bar, text="Abbrechen", command=win.destroy).pack(side=tk.RIGHT)
-        ttk.Button(bar, text="Speichern", style="Accent.TButton", command=save).pack(side=tk.RIGHT, padx=(0, 6))
+        ttk.Button(bar, text=tr('Abbrechen'), command=win.destroy).pack(side=tk.RIGHT)
+        ttk.Button(bar, text=tr('Speichern'), style="Accent.TButton", command=save).pack(side=tk.RIGHT, padx=(0, 6))
         box.bind("<KeyRelease>", update_count)
         box.bind("<<Paste>>", lambda e: box.after_idle(update_count))
         win.bind("<Escape>", lambda e: win.destroy())
@@ -678,7 +681,7 @@ class RoomMode:
             try:
                 client.task(op, who=who, **args)
             except (room.RoomError, OSError, ValueError) as e:
-                self._put("room", ("state", f"Aufgabe nicht geändert: {e}"))
+                self._put("room", ("state", tr('Aufgabe nicht geändert: {0}', e)))
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -691,13 +694,13 @@ class RoomMode:
             self._tasks_win.lift()
             return
         app = self.app
-        win = dialogs.window("Aufgaben", app.root, resizable=True)
+        win = dialogs.window(tr('Aufgaben'), app.root, resizable=True)
         self._tasks_win = win
         body = ttk.Frame(win, padding=14)
         body.pack(fill=tk.BOTH, expand=True)
-        ttk.Label(body, text="Aufgaben", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(body, text="Gemeinsame Liste für alle im Raum – die KIs sehen sie bei jeder Antwort und pflegen sie "
-                             "mit.", style="Muted.TLabel", wraplength=round(560 * app.ui_scale)).pack(anchor="w",
+        ttk.Label(body, text=tr('Aufgaben'), style="Title.TLabel").pack(anchor="w")
+        ttk.Label(body, text=tr(
+            'Gemeinsame Liste für alle im Raum – die KIs sehen sie bei jeder Antwort und pflegen sie mit.'), style="Muted.TLabel", wraplength=round(560 * app.ui_scale)).pack(anchor="w",
                                                                                                     pady=(2, 8))
         actions = ttk.Frame(body)
         actions.pack(side=tk.BOTTOM, fill=tk.X, pady=(8, 0))
@@ -707,7 +710,7 @@ class RoomMode:
         frame.pack(fill=tk.BOTH, expand=True)
         self._tasks_list = lst
 
-        ttk.Label(add, text="Neue Aufgabe:").pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Label(add, text=tr('Neue Aufgabe:')).pack(side=tk.LEFT, padx=(0, 6))
         new = ttk.Entry(add)
         new.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
@@ -718,7 +721,7 @@ class RoomMode:
                 self._task_action("add", text=text)
 
         new.bind("<Return>", add_task)
-        ttk.Button(add, text="Hinzufügen", command=add_task).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(add, text=tr('Hinzufügen'), command=add_task).pack(side=tk.LEFT, padx=(6, 0))
 
         def selected() -> dict | None:
             sel = lst.curselection()
@@ -729,17 +732,17 @@ class RoomMode:
             if t:
                 self._task_action(op, nr=t["nr"], **args)
 
-        ttk.Label(actions, text="Zuständig:").pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Label(actions, text=tr('Zuständig:')).pack(side=tk.LEFT, padx=(0, 6))
         combo = ttk.Combobox(actions, state="readonly", width=14)
         app.theme.register_combo(combo)
         combo.pack(side=tk.LEFT)
         self._tasks_combo = combo
-        ttk.Button(actions, text="Zuweisen", command=lambda: act(
-            "assign", owner="" if combo.get() in ("", "niemand") else combo.get())).pack(side=tk.LEFT, padx=(6, 0))
-        ttk.Button(actions, text="Schließen", command=win.destroy).pack(side=tk.RIGHT)
-        ttk.Button(actions, text="Löschen", command=lambda: act("remove")).pack(side=tk.RIGHT, padx=(0, 6))
-        ttk.Button(actions, text="Wieder öffnen", command=lambda: act("reopen")).pack(side=tk.RIGHT, padx=(0, 6))
-        ttk.Button(actions, text="Erledigt", style="Accent.TButton", command=lambda: act("done")).pack(
+        ttk.Button(actions, text=tr('Zuweisen'), command=lambda: act(
+            "assign", owner="" if combo.get() in ("", tr("niemand")) else combo.get())).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(actions, text=tr('Schließen'), command=win.destroy).pack(side=tk.RIGHT)
+        ttk.Button(actions, text=tr('Löschen'), command=lambda: act("remove")).pack(side=tk.RIGHT, padx=(0, 6))
+        ttk.Button(actions, text=tr('Wieder öffnen'), command=lambda: act("reopen")).pack(side=tk.RIGHT, padx=(0, 6))
+        ttk.Button(actions, text=tr('Erledigt'), style="Accent.TButton", command=lambda: act("done")).pack(
             side=tk.RIGHT, padx=(0, 6))
 
         def toggle(_e=None):
@@ -748,7 +751,7 @@ class RoomMode:
                 self._task_action("reopen" if t["status"] == "erledigt" else "done", nr=t["nr"])
 
         lst.bind("<Double-Button-1>", toggle)
-        lst.bind("<<ListboxSelect>>", lambda e: (lambda t: combo.set(t.get("owner") or "niemand") if t else None)(
+        lst.bind("<<ListboxSelect>>", lambda e: (lambda t: combo.set(t.get("owner") or tr("niemand")) if t else None)(
             selected()))
         win.bind("<Escape>", lambda e: win.destroy())
         self._tasks_items = []
@@ -765,16 +768,16 @@ class RoomMode:
         self._tasks_items = sorted(self.tasks, key=lambda t: (order.get(t.get("status"), 1), t["nr"]))
         lst.delete(0, tk.END)
         for i, t in enumerate(self._tasks_items):
-            state = t.get("status", "offen") + (f" · {t['owner']}" if t.get("owner") else "")
+            state = tr(t.get("status", "offen")) + (f" · {t['owner']}" if t.get("owner") else "")
             lst.insert(tk.END, f"#{t['nr']}  {t['text']}   [{state}]" + (f"  – {t['note']}" if t.get("note") else ""))
             if t["status"] == "erledigt":
                 lst.itemconfigure(i, foreground=self.app.theme_chat()["muted"])
             if t["nr"] in keep:
                 lst.selection_set(i)
         names = [n for m in sorted(self.members.values(), key=lambda m: m["name"].lower()) for n in (m["name"], m["ai"])]
-        combo.configure(values=["niemand"] + names)
+        combo.configure(values=[tr("niemand")] + names)
         if not combo.get():
-            combo.set("niemand")
+            combo.set(tr("niemand"))
 
     def stop_all(self):
         """„Alle KIs stoppen“: geht über den Gastgeber an alle Rechner; die eigene KI hält sofort an."""
@@ -792,16 +795,16 @@ class RoomMode:
         project = self.project
         if not project and not is_host:
             return
-        ttk.Label(p, text="PROJEKTORDNER", style="Sidebar.TLabel").pack(anchor="w", pady=(4, 2))
+        ttk.Label(p, text=tr("PROJEKTORDNER"), style="Sidebar.TLabel").pack(anchor="w", pady=(4, 2))
         if not project:
-            ttk.Button(p, text="📁   Projektordner freigeben…", style="Sidebar.TButton",
+            ttk.Button(p, text=tr('📁   Projektordner freigeben…'), style="Sidebar.TButton",
                        command=self.share_project).pack(fill=tk.X, pady=(0, 8))
             return
         # Ordnername als Knopf: beim Gastgeber öffnet er den Ordner, bei Gästen zeigt er die Rechte
         ttk.Button(p, text=f"📁   {project['name']}", style="Sidebar.TButton",
                    command=self.open_project if is_host else self.project_info).pack(fill=tk.X, pady=(0, 0 if is_host else 8))
         if is_host:
-            ttk.Button(p, text="✕   Freigabe beenden", style="Sidebar.TButton",
+            ttk.Button(p, text=tr('✕   Freigabe beenden'), style="Sidebar.TButton",
                        command=self.stop_sharing).pack(fill=tk.X, pady=(0, 8))
 
     def project_info(self):
@@ -809,35 +812,45 @@ class RoomMode:
         project = self.project
         if not project:
             return
-        host = next((m["name"] for m in self.members.values() if m.get("host")), "dem Gastgeber")
-        rights = ("Alle KIs im Raum dürfen dort lesen und schreiben." if project["write"] else
-                  "Die KIs der Gäste dürfen dort nur lesen.")
-        dialogs.showinfo("Projektordner", f"„{project['name']}“ liegt auf dem Rechner von {host}. {rights}\n\n"
-                                          "Befehle führen die KIs nur auf ihrem eigenen Rechner aus – zum Bauen und "
-                                          "Testen holen sie das Projekt zu sich.", parent=self.app.root)
+        host = next((m["name"] for m in self.members.values() if m.get("host")), tr('dem Gastgeber'))
+        rights = (tr('Alle KIs im Raum dürfen dort lesen und schreiben.') if project["write"] else
+                  tr('Die KIs der Gäste dürfen dort nur lesen.'))
+        dialogs.showinfo(tr(
+            'Projektordner'), tr(
+            '„{0}“ liegt auf dem Rechner von {1}. {2}\n\nBefehle führen die KIs nur auf ihrem eigenen Rechner aus – '
+            'zum Bauen und Testen holen sie das Projekt zu sich.',
+            project['name'],
+            host,
+            rights), parent=self.app.root)
 
     def share_project(self):
         """Gastgeber: Ordner wählen, Rechte festlegen, freigeben."""
         server, root_win = self.server, self.app.root
         if not (server and self.info and self.info["is_host"]):
             return
-        chosen = filedialog.askdirectory(parent=root_win, title="Projektordner für den Raum wählen")
+        chosen = filedialog.askdirectory(parent=root_win, title=tr('Projektordner für den Raum wählen'))
         if not chosen:
             return
         folder = Path(chosen).resolve()
         why = projekt.unsafe_root(folder, self.app.app_dir)
         if why:
-            dialogs.showerror("Projektordner", f"Diesen Ordner lieber nicht freigeben – das ist {why}.\n\nAm besten "
-                              "einen eigenen Ordner nur für das Projekt anlegen (z. B. auf dem Desktop).", parent=root_win)
+            dialogs.showerror(tr(
+                'Projektordner'), tr(
+                'Diesen Ordner lieber nicht freigeben – das ist {0}.\n\nAm besten einen eigenen Ordner nur für das '
+                'Projekt anlegen (z. B. auf dem Desktop).',
+                tr(why)), parent=root_win)
             return
-        res = self._form("Projektordner freigeben", [
-            ("rights", "Die KIs der anderen dürfen", "lesen und schreiben", ["lesen und schreiben", "nur lesen"])],
-            "Freigeben", f"Ordner: {folder}\n\nAlle KIs im Raum arbeiten dann in diesem Ordner. Die anderen sehen nur "
-                         "seinen Namen, nicht den Pfad. Befehle führen sie auf deinem PC nie aus, jede geänderte oder "
-                         "gelöschte Datei wird vorher aufgehoben, und jede Aktion bestätigt der Besitzer der KI.")
+        res = self._form(tr('Projektordner freigeben'), [
+            ("rights", tr('Die KIs der anderen dürfen'), tr('lesen und schreiben'), [tr('lesen und schreiben'), tr('nur lesen')])],
+            tr(
+                'Freigeben'), tr(
+                'Ordner: {0}\n\nAlle KIs im Raum arbeiten dann in diesem Ordner. Die anderen sehen nur seinen Namen, '
+                'nicht den Pfad. Befehle führen sie auf deinem PC nie aus, jede geänderte oder gelöschte Datei wird'
+                ' vorher aufgehoben, und jede Aktion bestätigt der Besitzer der KI.',
+                folder))
         if res is None:
             return
-        server.set_project(folder, res.get("rights") != "nur lesen", self.me.get("name", ""))
+        server.set_project(folder, res.get("rights") != tr("nur lesen"), self.me.get("name", ""))
 
     def stop_sharing(self):
         if self.server and self.server.project:
@@ -848,7 +861,7 @@ class RoomMode:
             try:
                 os.startfile(self.server.project.root)
             except OSError as e:
-                dialogs.showerror("Projektordner", f"Der Ordner lässt sich nicht öffnen: {e}", parent=self.app.root)
+                dialogs.showerror(tr('Projektordner'), tr('Der Ordner lässt sich nicht öffnen: {0}', e), parent=self.app.root)
 
     def _fill_members(self):
         tree = self.member_tree
@@ -859,18 +872,18 @@ class RoomMode:
         rows = []  # (iid, Text, Tags) in Anzeigereihenfolge
         for m in sorted(self.members.values(), key=lambda m: (not m.get("host"), m["name"].lower())):
             off = () if m.get("online") else ("off",)
-            you = " (du)" if m["id"] == me else ""
-            rows.append((f"h:{m['id']}", f"  ●  {m['name']}{you}" + ("  ·  Gastgeber" if m.get("host") else ""), off))
+            you = tr(' (du)') if m["id"] == me else ""
+            rows.append((f"h:{m['id']}", f"  ●  {m['name']}{you}" + (tr('  ·  Gastgeber') if m.get("host") else ""), off))
             if not m.get("online"):
                 state = "offline"
             elif m.get("busy"):
-                state = "arbeitet …"
+                state = tr('arbeitet …')
             elif m["id"] == me and waiting:  # eigene KI hat andere KIs gefragt und macht nach deren Antworten weiter
-                state = f"wartet auf {', '.join(waiting)} …"
+                state = tr('wartet auf {0} …', ', '.join(waiting))
             elif m.get("ai_ready"):
-                state = m.get("model") or "bereit"
+                state = m.get("model") or tr("bereit")
             else:
-                state = "kein Modell geladen"
+                state = tr('kein Modell geladen')
             pct = self._ctx_percent(m, me) if m.get("online") and m.get("ai_ready") else None
             rows.append((f"a:{m['id']}", f"      ✦ {m['ai']}  ·  " + (f"{pct} %  ·  " if pct is not None else "") + state,
                          () if m.get("online") and m.get("ai_ready") else ("off",)))
@@ -945,7 +958,7 @@ class RoomMode:
         bf = ttk.Frame(body)
         bf.grid(row=len(fields) + 2, column=0, columnspan=2, sticky="e", pady=(14, 0))
         ttk.Button(bf, text=ok_text, style="Accent.TButton", command=ok).pack(side=tk.LEFT)
-        ttk.Button(bf, text="Abbrechen", command=win.destroy).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(bf, text=tr('Abbrechen'), command=win.destroy).pack(side=tk.LEFT, padx=(6, 0))
         win.bind("<Return>", ok)
         win.bind("<Escape>", lambda e: win.destroy())
         dialogs.present(win, app.root, modal=True, focus=first)
@@ -957,14 +970,14 @@ class RoomMode:
             user = os.getlogin()
         except OSError:
             user = "Ich"
-        name = cfg.get("room_name") or "".join(ch for ch in user if ch.isalnum())[:20] or "Ich"
-        return name, cfg.get("room_ai") or f"{name}-KI"
+        name = cfg.get("room_name") or "".join(ch for ch in user if ch.isalnum())[:20] or tr("Ich")
+        return name, cfg.get("room_ai") or tr("{0}-KI", name)
 
     def _check_names(self, name: str, ai: str) -> bool:
         if not room.valid_name(name) or not room.valid_name(ai) or name.lower() == ai.lower():
-            dialogs.showerror("Teamwork", "Namen: 2–24 Zeichen ohne Leerzeichen (Buchstaben, Ziffern, "
-                              "Punkt, Binde- und Unterstrich; „main“ ist reserviert). Dein Name und der KI-Name "
-                              "müssen sich unterscheiden.", parent=self.app.root)
+            dialogs.showerror("Teamwork", tr(
+                'Namen: 2–24 Zeichen ohne Leerzeichen (Buchstaben, Ziffern, Punkt, Binde- und Unterstrich; „main“ '
+                'ist reserviert). Dein Name und der KI-Name müssen sich unterscheiden.'), parent=self.app.root)
             return False
         self.app.cfg.update(room_name=name, room_ai=ai)
         return True
@@ -972,51 +985,54 @@ class RoomMode:
     def dialog_create(self):
         name, ai = self._default_names()
         addrs = room.local_addresses()
-        options = [f"{ip}  ({kind})" for ip, kind in addrs] + ["0.0.0.0  (alle Netzwerke)", "127.0.0.1  (nur dieser PC – Test)"]
+        options = [f"{ip}  ({tr(kind)})" for ip, kind in addrs] + [tr('0.0.0.0  (alle Netzwerke)'), tr('127.0.0.1  (nur dieser PC – Test)')]
         note = {"verbunden": "",
-                "nicht verbunden": "Tailscale nicht verbunden – nur im Heimnetz erreichbar.",
-                "": "Tailscale nicht installiert – nur im Heimnetz erreichbar."}[room.tailscale_status(addrs)]
-        res = self._form("Raum erstellen", [
-            ("room", "Name des Raums", f"Raum von {name}", None),
-            ("name", "Dein Name", name, None),
-            ("ai", "Name deiner KI", ai, None),
-            ("addr", "Erreichbar über", options[0], options),
-            ("port", "Port", str(room.DEFAULT_PORT), None)], "Raum erstellen", note)
+                "nicht verbunden": tr('Tailscale nicht verbunden – nur im Heimnetz erreichbar.'),
+                "": tr('Tailscale nicht installiert – nur im Heimnetz erreichbar.')}[room.tailscale_status(addrs)]
+        res = self._form(tr('Raum erstellen'), [
+            ("room", tr('Name des Raums'), tr('Raum von {0}', name), None),
+            ("name", tr('Dein Name'), name, None),
+            ("ai", tr('Name deiner KI'), ai, None),
+            ("addr", tr('Erreichbar über'), options[0], options),
+            ("port", "Port", str(room.DEFAULT_PORT), None)], tr('Raum erstellen'), note)
         if not res or not self._check_names(res["name"], res["ai"]):
             return
         try:
             port = int(res["port"])
         except ValueError:
-            dialogs.showerror("Teamwork", "Der Port muss eine Zahl sein.", parent=self.app.root)
+            dialogs.showerror("Teamwork", tr('Der Port muss eine Zahl sein.'), parent=self.app.root)
             return
-        self.create(res["room"][:40] or "Raum", res["addr"].split()[0], port, room.new_key())
+        self.create(res["room"][:40] or tr('Raum'), res["addr"].split()[0], port, room.new_key())
 
     def dialog_join(self):
         name, ai = self._default_names()
-        res = self._form("Raum beitreten", [
-            ("invite", "Einladungscode", "", None),
-            ("name", "Dein Name", name, None),
-            ("ai", "Name deiner KI", ai, None)], "Beitreten")
+        res = self._form(tr('Raum beitreten'), [
+            ("invite", tr('Einladungscode'), "", None),
+            ("name", tr('Dein Name'), name, None),
+            ("ai", tr('Name deiner KI'), ai, None)], tr('Beitreten'))
         if res and self._check_names(res["name"], res["ai"]):
             self.join(res["invite"])
 
     def show_invite(self):
         app = self.app
-        win = dialogs.window("Einladung", app.root)
+        win = dialogs.window(tr('Einladung'), app.root)
         body = ttk.Frame(win, padding=18)
         body.pack(fill=tk.BOTH, expand=True)
-        ttk.Label(body, text=f"Raum „{self.info['room']}“ ist offen", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(body, text="Mit „Kopieren“ landet der Einladungscode in der Zwischenablage – schick ihn deinen "
-                             "Freunden, z. B. per Messenger. Sie brauchen Monhip mit Teamwork und müssen deinen Rechner "
-                             "erreichen können (z. B. über Tailscale).", wraplength=round(470 * app.ui_scale),
+        ttk.Label(body, text=tr('Raum „{0}“ ist offen', self.info['room']), style="Title.TLabel").pack(anchor="w")
+        ttk.Label(body, text=tr(
+            'Mit „Kopieren“ landet der Einladungscode in der Zwischenablage – schick ihn deinen Freunden, z. B. per'
+            ' Messenger. Sie brauchen Monhip mit Teamwork und müssen deinen Rechner erreichen können (z. B. über '
+            'Tailscale).'), wraplength=round(470 * app.ui_scale),
                   ).pack(anchor="w", pady=(6, 10))
-        ttk.Label(body, text=f"Adresse: {self.info['host']}:{self.info['port']}  ·  Der Code enthält den "
-                             "Raum-Schlüssel – nur an Leute geben, die mitmachen sollen.", style="Muted.TLabel",
+        ttk.Label(body, text=tr(
+            'Adresse: {0}:{1}  ·  Der Code enthält den Raum-Schlüssel – nur an Leute geben, die mitmachen sollen.',
+            self.info['host'],
+            self.info['port']), style="Muted.TLabel",
                   wraplength=round(470 * app.ui_scale)).pack(anchor="w", pady=(6, 0))
         bf = ttk.Frame(body)
         bf.pack(fill=tk.X, pady=(12, 0))
-        ttk.Button(bf, text="Schließen", command=win.destroy).pack(side=tk.RIGHT)
-        ttk.Button(bf, text="⧉ Kopieren", style="Accent.TButton",
+        ttk.Button(bf, text=tr('Schließen'), command=win.destroy).pack(side=tk.RIGHT)
+        ttk.Button(bf, text=tr('⧉ Kopieren'), style="Accent.TButton",
                    command=lambda: (self.copy_invite(), win.destroy())).pack(side=tk.RIGHT, padx=(0, 6))
         dialogs.present(win, app.root)
 
@@ -1047,9 +1063,12 @@ class RoomMode:
         try:
             server.start()
         except OSError as e:
-            dialogs.showerror("Teamwork", f"Der Raum konnte nicht geöffnet werden ({e}).\n\nIst der Port "
-                              f"{port} schon belegt oder die Adresse {bind} nicht (mehr) vorhanden? Ggf. Raum mit "
-                              "anderer Adresse neu erstellen.", parent=self.app.root)
+            dialogs.showerror("Teamwork", tr(
+                'Der Raum konnte nicht geöffnet werden ({0}).\n\nIst der Port {1} schon belegt oder die Adresse {2} '
+                'nicht (mehr) vorhanden? Ggf. Raum mit anderer Adresse neu erstellen.',
+                e,
+                port,
+                bind), parent=self.app.root)
             self.app.cfg.pop("room_hosted", None)
             self.refresh_panel()
             return
@@ -1103,9 +1122,12 @@ class RoomMode:
                 self.server = None
             msg = str(error)
             if isinstance(error, OSError) and not isinstance(error, room.RoomError):
-                msg = (f"Der Rechner {info['host']}:{info['port']} ist nicht erreichbar.\n\nLäuft dort der Raum? "
-                       "Seid ihr beide in Tailscale angemeldet? Hat der Gastgeber die Windows-Firewall-Abfrage "
-                       f"erlaubt?\n\n({error})")
+                msg = (tr(
+                    'Der Rechner {0}:{1} ist nicht erreichbar.\n\nLäuft dort der Raum? Seid ihr beide in Tailscale '
+                    'angemeldet? Hat der Gastgeber die Windows-Firewall-Abfrage erlaubt?\n\n({2})',
+                    info['host'],
+                    info['port'],
+                    error))
             dialogs.showerror("Teamwork", msg, parent=self.app.root)
             self.refresh_panel()
             return
@@ -1125,9 +1147,10 @@ class RoomMode:
 
     def leave(self):
         if self.info and self.info["is_host"]:
-            if not dialogs.askyesno("Raum schließen", "Raum schließen? Alle Teilnehmer werden getrennt. Der "
-                                    "Verlauf bleibt gespeichert und der Raum kann später mit demselben "
-                                    "Einladungscode wieder geöffnet werden.", parent=self.app.root):
+            if not dialogs.askyesno(tr(
+                'Raum schließen'), tr(
+                'Raum schließen? Alle Teilnehmer werden getrennt. Der Verlauf bleibt gespeichert und der Raum kann '
+                'später mit demselben Einladungscode wieder geöffnet werden.'), parent=self.app.root):
                 return
         self.ai_stop.set()
         self.shutdown()
@@ -1173,11 +1196,11 @@ class RoomMode:
         hosted = self.app.cfg.get("room_hosted")
         remembered = bool(hosted) and self._store_path(hosted["room"]) == path
         shared = len(store.get("files") or {})
-        history = (f"Der gespeicherte Verlauf ({count} {'Nachricht' if count == 1 else 'Nachrichten'}"
-                   + (f", {shared} geteilte {'Datei' if shared == 1 else 'Dateien'}" if shared else "") + ") wird gelöscht"
-                   if count else "Es sind keine Nachrichten gespeichert")
-        code = " und der bisherige Einladungscode funktioniert nicht mehr." if remembered else "."
-        if not dialogs.askyesno("Raum löschen", f"Raum „{name}“ endgültig löschen?\n\n{history}{code}",
+        history = (tr('Der gespeicherte Verlauf ({0} {1}', count, tr('Nachricht') if count == 1 else tr('Nachrichten'))
+                   + (tr(', {0} geteilte {1}', shared, tr('Datei') if shared == 1 else tr('Dateien')) if shared else "") + tr(') wird gelöscht')
+                   if count else tr('Es sind keine Nachrichten gespeichert'))
+        code = tr(' und der bisherige Einladungscode funktioniert nicht mehr.') if remembered else "."
+        if not dialogs.askyesno(tr('Raum löschen'), tr('Raum „{0}“ endgültig löschen?\n\n{1}{2}', name, history, code),
                                 parent=self.app.root):
             return
         try:
@@ -1192,7 +1215,7 @@ class RoomMode:
             for f in (path.parent / "kontext").glob(f"{path.stem}-*.json"):  # Zusammenfassungen der eigenen KI
                 f.unlink(missing_ok=True)
         except OSError as e:
-            dialogs.showerror("Teamwork", f"Der Raum konnte nicht gelöscht werden ({e}).", parent=self.app.root)
+            dialogs.showerror("Teamwork", tr('Der Raum konnte nicht gelöscht werden ({0}).', e), parent=self.app.root)
             return
         if remembered:
             self.app.cfg.pop("room_hosted", None)
@@ -1280,7 +1303,7 @@ class RoomMode:
             self._pending.clear()
             self._fill_members()
             if ev.get("by") != self.me.get("name"):
-                self.view.note(f"{ev.get('by', '?')} hat alle KIs gestoppt.")
+                self.view.note(tr('{0} hat alle KIs gestoppt.', ev.get('by', '?')))
             return
         if kind == "project":  # Gastgeber hat einen Projektordner freigegeben bzw. die Freigabe beendet
             self.project = ev.get("project")
@@ -1344,8 +1367,9 @@ class RoomMode:
     def show_placeholder(self):
         self.typing.clear()
         self.cards.clear()
-        self.view.placeholder("Teamwork", "Links einen Raum erstellen oder beitreten. Eine KI antwortet, wenn du sie "
-                                          "mit @Name ansprichst – @alle fragt alle KIs.")
+        self.view.placeholder("Teamwork", tr(
+            'Links einen Raum erstellen oder beitreten. Eine KI antwortet, wenn du sie mit @Name ansprichst – @alle'
+            ' fragt alle KIs.'))
 
     def render_all(self, keep: int | None = None):
         """Ansicht neu aufbauen – bei langen Räumen nur die neuesten `_render_count` Nachrichten (1500 Nachrichten zu
@@ -1361,12 +1385,12 @@ class RoomMode:
             return
         running = {loc["id"] for loc in self.local.values() if loc.get("id")}
         if not self.order and not self.local:
-            v.placeholder(f"Raum „{self.info['room']}“", "Noch keine Nachrichten. Sprich eine KI mit @Name an.")
+            v.placeholder(tr('Raum „{0}“', self.info['room']), tr('Noch keine Nachrichten. Sprich eine KI mit @Name an.'))
             return
         hidden, anchor = max(0, len(self.order) - self._render_count), None
         with v.batch():
             if hidden:
-                v.action(f"Ältere Nachrichten anzeigen ({hidden})", self._show_older)
+                v.action(tr('Ältere Nachrichten anzeigen ({0})', hidden), self._show_older)
             for i, mid in enumerate(self.order[hidden:]):
                 if i == keep:
                     anchor = v.t.index("end-1c")
@@ -1402,7 +1426,7 @@ class RoomMode:
             return
         sid = v.slot_new()
         self.slots[m["id"]] = sid
-        sub = ("deine KI" if mine else f"KI von {m.get('owner', '?')}") + (f"  ·  {m['model']}" if m.get("model") else "")
+        sub = (tr('deine KI') if mine else tr('KI von {0}', m.get('owner', '?'))) + (f"  ·  {m['model']}" if m.get("model") else "")
         with v.slot(sid):
             v.sender(f"✦ {m['name']}", f"{sub}  ·  {self._time(m)}", self._color(m.get("owner") or m["name"]))
             for s in self.summaries:  # vor dieser Antwort hat die eigene KI Älteres zusammengefasst (nur hier sichtbar)
@@ -1419,7 +1443,7 @@ class RoomMode:
             if m.get("done"):
                 self._footer(m["text"])
             else:
-                v.show_pending("schreibt …")
+                v.show_pending(tr('schreibt …'))
 
     def _footer(self, text: str):
         """„⧉ Kopieren“ unter einer fertigen KI-Antwort (im aktuellen Slot)."""
@@ -1488,13 +1512,13 @@ class RoomMode:
                         for t in op[1]:
                             v.tool_line(t.get("icon", "▤"), t.get("label", ""), t.get("detail", ""), t.get("ok"))
                         if op[2]:
-                            v.show_pending("schreibt …")
+                            v.show_pending(tr('schreibt …'))
                     elif op[0] == "files":  # von der KI geteilte Dateien
                         ops.popleft()
                         v.hide_pending()
                         v.cards(self._cards({**m, "files": op[1]}))
                         if not m.get("done"):
-                            v.show_pending("schreibt …")
+                            v.show_pending(tr('schreibt …'))
                     else:  # fertig
                         ops.popleft()
                         v.hide_pending()
@@ -1583,9 +1607,9 @@ class RoomMode:
         sid = v.slot_new()
         model = self.app.server.model.stem if self.app.server.model else ""
         with v.slot(sid):
-            v.sender(f"✦ {me['ai']}", "deine KI" + (f"  ·  {model}" if model else "")
+            v.sender(f"✦ {me['ai']}", tr('deine KI') + (f"  ·  {model}" if model else "")
                      + datetime.now().strftime("  ·  %H:%M"), self._color(me["name"]))
-            v.show_pending("denkt nach …")
+            v.show_pending(tr('denkt nach …'))
         return sid
 
     def _start_ai(self, trigger: dict, cont: dict | None = None):
@@ -1620,7 +1644,7 @@ class RoomMode:
         room_name = self.info["room"]
 
         def confirm(title, text):  # im Raum IMMER bestätigen lassen
-            return app._confirm_from_worker(f"{title}  (Raum „{room_name}“ – angefragt von {who})", text)
+            return app._confirm_from_worker(tr('{0}  (Raum „{1}“ – angefragt von {2})', title, room_name, who), text)
 
         if tools["files"] or tools["commands"]:
             try:
@@ -1648,7 +1672,7 @@ class RoomMode:
 
             local = self.server.project.root if host and self.server and self.server.project else None
             team_info = {"name": project["name"], "local": local,
-                         "host": next((m["name"] for m in self.members.values() if m.get("host")), "dem Gastgeber")}
+                         "host": next((m["name"] for m in self.members.values() if m.get("host")), tr('dem Gastgeber'))}
         return Agent(confirm, files=tools["files"], commands=tools["commands"], workspace=app.ws_var.get(),
                      folders=app.extra_folders, confirm_actions=True, web_access=tools["web"],
                      brave_key=app.brave_var.get(), team=team,
@@ -1743,7 +1767,7 @@ class RoomMode:
         try:  # reply_to: wartet die auslösende KI per ki_fragen, erkennt sie daran die Antwort
             mid = client.post("ai", "", done=False, nonce=nonce, reply_to=reply_to)
         except (room.RoomError, OSError, ValueError) as e:
-            emit("error", f"Antwort konnte nicht an den Raum geschickt werden: {e}")
+            emit("error", tr('Antwort konnte nicht an den Raum geschickt werden: {0}', e))
             emit("done")
             return
         emit("id", mid)
@@ -1866,11 +1890,11 @@ class RoomMode:
                                  on_overflow=lambda msgs, sent, err: (lambda r: r and _merge_roles(r))(
                                      window.overflow(msgs, sent, err)))
         except Exception as e:
-            emit("error", str(e))
-            cur["patcher"].add(f"\n\n*(Fehler auf dem Rechner von {self.me.get('name', '?')}: {e})*")
+            emit("error", error_text(e))
+            cur["patcher"].add(tr('\n\n*(Fehler auf dem Rechner von {0}: {1})*', self.me.get('name', '?'), e))
             cur["text"] = ""  # nach einem Fehler auf niemanden warten
         if self.ai_stop.is_set():
-            cur["patcher"].add("\n\n*[gestoppt]*")
+            cur["patcher"].add(tr('\n\n*[gestoppt]*'))
             cur["text"] = ""
         # Spricht die Antwort andere KIs mit @Name an, wartet die eigene KI auf deren Antworten (_got_answer) und
         # macht danach weiter (_check_pending). Vor dem Abschluss eintragen – die Antworten können schnell kommen;
@@ -1951,10 +1975,10 @@ class RoomMode:
                     v.tool_end(loc["tool"], payload, result_ok(payload))
                     loc["tool"] = None
                 elif kind == "error":
-                    v.note(f"Fehler: {payload}", "error")
+                    v.note(tr('Fehler: {0}', payload), "error")
                 elif kind == "compress":  # nur hier sichtbar – im Raum steht die Antwort noch auf „schreibt …“
                     v.hide_pending()
-                    v.show_pending("Fasse ältere Unterhaltung zusammen …")
+                    v.show_pending(tr('Fasse ältere Unterhaltung zusammen …'))
                 elif kind == "compressed":
                     self._add_summary(payload, loc.get("id"))
                     v.hide_pending()
@@ -1962,16 +1986,16 @@ class RoomMode:
                 elif kind == "context_full":  # mitten in der Antwort – statt der Fehlermeldung des Servers
                     v.hide_pending()
                     v.note(context.FULL_NOTE, "warn")
-                    v.show_pending("Komprimiere die Unterhaltung …")
+                    v.show_pending(tr('Komprimiere die Unterhaltung …'))
                 elif kind == "info":
                     v.note(payload)
                 elif kind == "assistant_start":
                     v.md_finish()
-                    v.show_pending("denkt nach …")
+                    v.show_pending(tr('denkt nach …'))
                     loc["parts"].append("")
                 elif kind == "asked":  # ki_fragen: diese Nachricht endet mit der Frage, die Fortsetzung kommt neu
                     if loc["tool"] is not None:
-                        v.tool_end(loc["tool"], "Frage gestellt – die Antwort steht darunter im Chat.", True)
+                        v.tool_end(loc["tool"], tr('Frage gestellt – die Antwort steht darunter im Chat.'), True)
                         loc["tool"] = None
                     v.md_append(payload)
                     loc["parts"][-1] += payload
@@ -2078,7 +2102,7 @@ class RoomMode:
 
     def send(self, text: str, content: str, files: list[dict]) -> bool:
         if not self.client:
-            dialogs.showinfo("Teamwork", "Erst links einen Raum erstellen oder beitreten.",
+            dialogs.showinfo("Teamwork", tr('Erst links einen Raum erstellen oder beitreten.'),
                              parent=self.app.root)
             return False
         if text.strip().lower() == "@main" and not files:  # allein gesendet: Hauptauftrag bearbeiten statt senden
@@ -2090,7 +2114,7 @@ class RoomMode:
             try:
                 uploads = [f for f in files if f.get("path")]
                 if uploads:
-                    self._put("room", ("state", f"Lade {len(uploads)} {'Datei' if len(uploads) == 1 else 'Dateien'} hoch …"))
+                    self._put("room", ("state", tr('Lade {0} {1} hoch …', len(uploads), tr('Datei') if len(uploads) == 1 else tr('Dateien'))))
                 meta = []
                 for f in files:
                     item = {"name": f["name"], "info": f.get("info", "")}
@@ -2104,7 +2128,7 @@ class RoomMode:
                 if uploads:
                     self._put("room", ("state", "ok"))
             except (room.RoomError, OSError, ValueError) as e:
-                self._put("room", ("state", f"Senden fehlgeschlagen: {e}"))
+                self._put("room", ("state", tr('Senden fehlgeschlagen: {0}', e)))
 
         threading.Thread(target=work, daemon=True).start()
         return True
@@ -2117,7 +2141,7 @@ class RoomMode:
         for f in m.get("files") or []:
             card = {"name": f["name"], "info": f.get("info", "")}
             if f.get("id"):
-                card["info"] = " · ".join(p for p in (card["info"], "⬇ Herunterladen") if p)
+                card["info"] = " · ".join(p for p in (card["info"], tr('⬇ Herunterladen')) if p)
                 card["action"] = lambda f=f, owner=m.get("owner") or m.get("name", "?"): self.download(f, owner)
                 self.cards.setdefault(f["id"], []).append(card)
                 if f.get("image"):
@@ -2184,18 +2208,22 @@ class RoomMode:
         """Geteilte Datei speichern – nur auf Klick, nie automatisch öffnen; Programme erst nach einer Warnung."""
         root = self.app.root
         if not self.client:
-            dialogs.showinfo("Teamwork", "Zum Herunterladen erst wieder dem Raum beitreten.", parent=root)
+            dialogs.showinfo("Teamwork", tr('Zum Herunterladen erst wieder dem Raum beitreten.'), parent=root)
             return
         name = room.safe_file_name(f["name"])
         if Path(name).suffix.lower() in RISKY_SUFFIXES:
-            if not dialogs.askyesno("Programm herunterladen?",
-                                    f"„{name}“ ist ein Programm oder Skript von {owner}.\n\nNur speichern und öffnen, "
-                                    f"wenn du {owner} vertraust und genau diese Datei erwartest – über geteilte "
-                                    "Programme kann Schadsoftware kommen. Windows fragt beim Öffnen zusätzlich nach "
-                                    "(die Datei wird als „aus dem Internet“ markiert).", parent=root):
+            if not dialogs.askyesno(tr('Programm herunterladen?'),
+                                    tr(
+                                        '„{0}“ ist ein Programm oder Skript von {1}.\n\nNur speichern und öffnen, '
+                                        'wenn du {2} vertraust und genau diese Datei erwartest – über geteilte '
+                                        'Programme kann Schadsoftware kommen. Windows fragt beim Öffnen zusätzlich '
+                                        'nach (die Datei wird als „aus dem Internet“ markiert).',
+                                        name,
+                                        owner,
+                                        owner), parent=root):
                 return
         downloads = Path.home() / "Downloads"
-        dest = filedialog.asksaveasfilename(parent=root, title="Geteilte Datei speichern", initialfile=name,
+        dest = filedialog.asksaveasfilename(parent=root, title=tr('Geteilte Datei speichern'), initialfile=name,
                                             initialdir=str(downloads if downloads.is_dir() else Path.home()))
         if not dest:
             return
@@ -2211,8 +2239,8 @@ class RoomMode:
 
         def done(path, err):
             if err:
-                dialogs.showerror("Teamwork", f"„{name}“ konnte nicht heruntergeladen werden: {err}", parent=root)
-            elif dialogs.askyesno("Heruntergeladen", f"„{name}“ wurde gespeichert:\n{path}\n\nIm Ordner zeigen?",
+                dialogs.showerror("Teamwork", tr('„{0}“ konnte nicht heruntergeladen werden: {1}', name, err), parent=root)
+            elif dialogs.askyesno(tr('Heruntergeladen'), tr('„{0}“ wurde gespeichert:\n{1}\n\nIm Ordner zeigen?', name, path),
                                   parent=root):
                 subprocess.Popen(f'explorer /select,"{path}"')
 

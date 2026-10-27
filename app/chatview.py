@@ -6,6 +6,8 @@ kopieren“, code:N, lnk:N, tbl:N, act:N anklickbare Zeile (action). Geschrieben
 Das Textfeld selbst nie per configure ändern (state, cursor …): Tk vermisst danach den ganzen Verlauf neu.
 """
 
+from i18n import error_text, tr
+
 import ctypes
 import math
 import os
@@ -131,13 +133,13 @@ class ChatView:
         t.tag_bind("clickable", "<Button-1>", self._on_click)
 
         self.menu = tk.Menu(t, tearoff=0)
-        self.menu.add_command(label="Kopieren", command=self._copy_selection)
-        self.menu.add_command(label="Alles markieren", command=lambda: t.tag_add("sel", "1.0", "end-1c"))
+        self.menu.add_command(label=tr('Kopieren'), command=self._copy_selection)
+        self.menu.add_command(label=tr('Alles markieren'), command=lambda: t.tag_add("sel", "1.0", "end-1c"))
         self.bubble_menu = tk.Menu(t, tearoff=0)
-        self.bubble_menu.add_command(label="Text kopieren", command=lambda: self._copy(self._bubble_text))
+        self.bubble_menu.add_command(label=tr('Text kopieren'), command=lambda: self._copy(self._bubble_text))
         self.file_menu = tk.Menu(t, tearoff=0)
-        self.file_menu.add_command(label="Öffnen", command=lambda: self._open_file(self._file_path))
-        self.file_menu.add_command(label="Pfad kopieren", command=lambda: self._copy(self._file_path))
+        self.file_menu.add_command(label=tr('Öffnen'), command=lambda: self._open_file(self._file_path))
+        self.file_menu.add_command(label=tr('Pfad kopieren'), command=lambda: self._copy(self._file_path))
         if register_menu:
             register_menu(self.menu)
             register_menu(self.bubble_menu)
@@ -449,10 +451,10 @@ class ChatView:
         n = self._new("umsg", text=text, canvas=bubble, on_edit=actions.get("on_edit"), shown=False, cur=cur,
                       on_version=actions.get("on_version"), base=base)
         tag, line = f"uact:{n}", f"uline:{n}"   # uact: ein-/ausgeblendet; uline: ganze Zeile (beim Bearbeiten weg)
-        self.t.insert(self._at, "⧉ Kopieren", (base, "clickable", f"ucp:{n}", tag, line))
+        self.t.insert(self._at, tr('⧉ Kopieren'), (base, "clickable", f"ucp:{n}", tag, line))
         if actions.get("on_edit"):
             self.t.insert(self._at, "      ", ("uact", tag, line))
-            self.t.insert(self._at, "✎ Bearbeiten", ("uact", "clickable", f"ued:{n}", tag, line))
+            self.t.insert(self._at, tr('✎ Bearbeiten'), ("uact", "clickable", f"ued:{n}", tag, line))
         if count > 1:  # Fassungen: immer sichtbar, ganz rechts unter der Blase
             self.t.insert(self._at, "      ", ("uact", tag, line))
             self.t.insert(self._at, "‹", ("uact", "uver", "uver_arrow", line)
@@ -564,9 +566,9 @@ class ChatView:
         def on_enter(e):
             return None if e.state & 0x0001 else submit()  # Umschalt+Enter: neue Zeile
 
-        ttk.Button(bar, text="Senden", style="Accent.TButton", command=submit).pack(side=tk.RIGHT)
-        ttk.Button(bar, text="Abbrechen", command=lambda: self._end_edit(n)).pack(side=tk.RIGHT, padx=(0, s(6)))
-        tk.Label(bar, text="Die bisherige Fassung bleibt erhalten (‹ ›).", background=self.bg,
+        ttk.Button(bar, text=tr('Senden'), style="Accent.TButton", command=submit).pack(side=tk.RIGHT)
+        ttk.Button(bar, text=tr('Abbrechen'), command=lambda: self._end_edit(n)).pack(side=tk.RIGHT, padx=(0, s(6)))
+        tk.Label(bar, text=tr('Die bisherige Fassung bleibt erhalten (‹ ›).'), background=self.bg,
                  foreground=col["muted"], font=self.f_tiny).pack(side=tk.LEFT)
         box.bind("<Return>", on_enter)
         box.bind("<Escape>", lambda e: self._end_edit(n))
@@ -753,7 +755,7 @@ class ChatView:
                 c.create_image(bx + pad, by + pad, image=img, anchor="nw", tags=(tag,))
                 tx, ty = bx + pad, by + pad + img.height() + s(6)
             else:
-                ext = (f.get("name", "").rsplit(".", 1)[-1].upper() if "." in f.get("name", "") else "DATEI")[:4]
+                ext = (f.get("name", "").rsplit(".", 1)[-1].upper() if "." in f.get("name", "") else tr("DATEI"))[:4]
                 color = BADGE_COLORS.get(ext, self.col["accent"])
                 self._rounded(c, bx + pad, by + (h - badge) // 2, badge, badge, s(7), color, tags=(tag,),
                               under=self.col["code_hdr"])
@@ -999,7 +1001,7 @@ class ChatView:
         if gap:
             self.t.insert(self._at, "\n", "gap")
         self.t.insert(self._at, (info["lang"] or "code") + "      ", "pre_hdr")
-        self.t.insert(self._at, "⧉ Kopieren", ("pre_hdr", "clickable", f"ccp:{n}"))
+        self.t.insert(self._at, tr('⧉ Kopieren'), ("pre_hdr", "clickable", f"ccp:{n}"))
         self.t.insert(self._at, "\n", "pre_hdr")
         self.t.insert(self._at, "\n", "pre_pad")
 
@@ -1116,7 +1118,7 @@ class ChatView:
 
     # ================================================================ „Arbeitet …“-Anzeige
 
-    def show_pending(self, label: str = "Arbeitet …"):
+    def show_pending(self, label: str = tr('Arbeitet …')):
         if self._pending:
             return
         self._ensure()
@@ -1178,10 +1180,10 @@ class ChatView:
         if b["kind"] == "think":
             if b["live"]:
                 secs = int(time.monotonic() - b["t0"])
-                return [(f"✻  Denkt nach …  {secs} s" if secs else "✻  Denkt nach …", ())]
+                return [(tr('✻  Denkt nach …  {0} s', secs) if secs else tr('✻  Denkt nach …'), ())]
             secs = f"  ·  {b['secs']} s" if b.get("secs") else ""
-            return [(f"{b.get('icon', '✻')}  {b['title'] or 'Gedankengang'}{secs}   {chev}", ())]
-        text = f"{b['icon']}  {b['label']}" + (f"  ·  {b['detail']}" if b["detail"] else "")
+            return [(f"{b.get('icon', '✻')}  {b['title'] or tr('Gedankengang')}{secs}   {chev}", ())]
+        text = f"{b['icon']}  {tr(b['label'])}" + (f"  ·  {b['detail']}" if b["detail"] else "")
         if b["live"]:
             return [(text + "  …", ())]
         mark = ("  ✓", ("st_ok",)) if b["ok"] else ("  ✗", ("st_err",))
@@ -1294,29 +1296,31 @@ class ChatView:
         self._live.add(n)
         with self._edit():
             self._insert_header(n)
-            self._tool_section(n, "EINGABE", args_text)
+            self._tool_section(n, tr("EINGABE"), args_text)
         self._animate()
         return n
 
     def tool_end(self, n: int, result: str, ok: bool):
+        result = error_text(result) if not ok else result
         b = self.blocks.get(n)
         if not b:
             return
         b["live"], b["ok"] = False, ok
         self._live.discard(n)
         with self._edit():
-            self._tool_section(n, "ERGEBNIS", result, last=True)
+            self._tool_section(n, tr("ERGEBNIS"), result, last=True)
         self._update_header(n)
 
     def tool_static(self, label: str, detail: str, args_text: str, result: str | None, ok: bool, icon="⚙"):
+        result = error_text(result) if result is not None and not ok else result
         self._ensure()
         self.md_finish()
         n = self._new("tool", open=False, live=False, label=label, detail=detail, icon=icon, ok=ok)
         self.t.tag_configure(f"body:{n}", elide=True)
         with self._edit():
             self._insert_header(n)
-            self._tool_section(n, "EINGABE", args_text)
-            self._tool_section(n, "ERGEBNIS", result if result is not None else "(kein Ergebnis)", last=True)
+            self._tool_section(n, tr("EINGABE"), args_text)
+            self._tool_section(n, tr("ERGEBNIS"), result if result is not None else tr('(kein Ergebnis)'), last=True)
 
     def _tool_section(self, n: int, label: str, text: str, last: bool = False):
         body = f"body:{n}"
@@ -1334,9 +1338,9 @@ class ChatView:
         self.md_finish()
         n = self._new("copy", text=raw)
         with self._edit():
-            self.t.insert(self._at, "⧉ Kopieren", ("footer", "clickable", f"cpy:{n}"))
+            self.t.insert(self._at, tr('⧉ Kopieren'), ("footer", "clickable", f"cpy:{n}"))
             if tps:
-                self.t.insert(self._at, f"      {tps:.1f} Tokens/s".replace(".", ","), "footer")
+                self.t.insert(self._at, tr('      {0:.1f} Tokens/s', tps).replace(".", ","), "footer")
             self.t.insert(self._at, "\n", "footer")
 
     def action(self, text: str, callback):
@@ -1353,7 +1357,7 @@ class ChatView:
         self.md_finish()
         self.hide_pending()
         with self._edit():
-            self.t.insert(self._at, text.strip() + "\n", kind)
+            self.t.insert(self._at, error_text(text).strip() + "\n", kind)
 
     # ================================================================ Animation
 
@@ -1449,16 +1453,16 @@ class ChatView:
                 self.toggle(n)
             elif kind == "cpy":
                 self._copy(b["text"])
-                self._flash(tag, "✓ Kopiert", ("footer", "clickable"))
+                self._flash(tag, tr('✓ Kopiert'), ("footer", "clickable"))
             elif kind == "ccp":
                 r = self.t.tag_ranges(f"code:{n}")
                 self._copy(self.t.get(r[0], r[-1]).rstrip("\n") if r else "")
-                self._flash(tag, "✓ Kopiert", ("pre_hdr", "clickable"))
+                self._flash(tag, tr('✓ Kopiert'), ("pre_hdr", "clickable"))
             elif kind == "lnk":
                 webbrowser.open(b["url"])
             elif kind == "ucp":
                 self._copy(b["text"])
-                self._flash(tag, "✓ Kopiert", (b["base"], "clickable", f"uact:{n}"))
+                self._flash(tag, tr('✓ Kopiert'), (b["base"], "clickable", f"uact:{n}"))
             elif kind == "ued":
                 self._begin_edit(n)
             elif kind in ("uvp", "uvn") and b.get("on_version"):
@@ -1524,7 +1528,7 @@ class ChatView:
             self._copy(text)
             self._hide_quote_pop()
 
-        for label, command in (("↳ Antworten", answer), ("⧉ Kopieren", copy)):
+        for label, command in ((tr('↳ Antworten'), answer), (tr('⧉ Kopieren'), copy)):
             btn = tk.Label(inner, text=label, font=self.f_small, background=col["code_hdr"], foreground=col["fg"],
                            padx=s(10), pady=s(5), cursor="hand2")
             btn.pack(side=tk.LEFT)

@@ -122,6 +122,21 @@ Gastgeber betrieben und benötigt einen erreichbaren Netzwerkzugang zu diesem Re
 Die Modellberechnung läuft lokal. Downloads, Websuche und Seitenabrufe benötigen
 Internetzugriff; der Teamwork-Modus überträgt geteilte Inhalte an die beteiligten Rechner.
 
+## Oberflächensprache
+
+Seit Version 1.3 lässt sich unter **Einstellungen → Darstellung → Oberflächensprache**
+zwischen **Deutsch** und **English** wählen. Die Auswahl wird gespeichert und beim nächsten
+Start von Monhip angewendet.
+
+Beim ersten Start ohne gespeicherte Sprachauswahl erkennt Monhip die Systemsprache automatisch:
+Bei Deutsch erscheint die Oberfläche auf Deutsch, bei Englisch und allen anderen Sprachen auf
+Englisch. Unter Windows wird dafür die Windows-Anzeigesprache verwendet. Eine später manuell
+gewählte Sprache hat Vorrang vor der Systemsprache.
+
+Die Oberflächensprache ist unabhängig von der Spracherkennung und dem System-Prompt des
+KI-Modells. Eigene Nachrichten, Modellantworten, Dokumentinhalte und gespeicherte Namen werden
+durch den Sprachwechsel nicht übersetzt oder verändert.
+
 ## Lokale Daten und Projektaufbau
 
 Monhip legt Einstellungen und Nutzungsdaten neben dem Startprogramm ab:

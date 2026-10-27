@@ -2,6 +2,8 @@
 Hugging Face (modelle/whisper/), Mikrofon-Aufnahme über die Windows-MCI-Schnittstelle, Abschreiben mit
 whisper-cli – mit Grafikkarte, sonst (z. B. Grafikspeicher voll) automatisch über den Prozessor."""
 
+from i18n import tr
+
 import ctypes
 import os
 import re
@@ -22,12 +24,12 @@ MODEL_DIR = Path(__file__).resolve().parent.parent / "modelle" / "whisper"
 RELEASES_URL = "https://api.github.com/repos/ggml-org/whisper.cpp/releases?per_page=10"
 MODEL_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/"
 MODELS = {  # Dateiname → Beschreibung in den Einstellungen
-    "ggml-large-v3-turbo-q8_0.bin": "Sehr gut – large-v3-turbo (834 MB, empfohlen)",
-    "ggml-large-v3-turbo-q5_0.bin": "Gut – large-v3-turbo, kleiner (547 MB)",
-    "ggml-small.bin": "Schnell – small (465 MB, für langsame PCs)",
+    "ggml-large-v3-turbo-q8_0.bin": tr('Sehr gut – large-v3-turbo (834 MB, empfohlen)'),
+    "ggml-large-v3-turbo-q5_0.bin": tr('Gut – large-v3-turbo, kleiner (547 MB)'),
+    "ggml-small.bin": tr('Schnell – small (465 MB, für langsame PCs)'),
 }
 DEFAULT_MODEL = "ggml-large-v3-turbo-q8_0.bin"
-LANGUAGES = {"Deutsch": "de", "Englisch": "en", "Automatisch erkennen": "auto"}
+LANGUAGES = {tr('Deutsch'): "de", tr('Englisch'): "en", tr('Automatisch erkennen'): "auto"}
 AUDIO_SUFFIXES = {".wav", ".mp3", ".flac", ".ogg"}  # liest whisper-cli selbst (ohne ffmpeg)
 _FOLDER_RE = re.compile(r"whisper-b(\d+)-(.+)$")
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -64,11 +66,11 @@ def ready(name: str = DEFAULT_MODEL) -> bool:
 def describe(name: str = DEFAULT_MODEL) -> str:
     exe, model = find_cli(), find_model(name)
     if not exe:
-        return "Noch nicht installiert."
+        return tr('Noch nicht installiert.')
     m = _FOLDER_RE.match(exe.parent.name)
     kind = llamacpp._kind_label(m.group(2)) if m else ""
     return (f"whisper.cpp b{m.group(1) if m else '?'} ({kind})"
-            + (f" · Modell {model.stem.removeprefix('ggml-')}" if model else " · noch kein Modell"))
+            + (tr(' · Modell {0}', model.stem.removeprefix('ggml-')) if model else tr(' · noch kein Modell')))
 
 
 # ---------------------------------------------------------------- Herunterladen
@@ -97,7 +99,7 @@ def plan(model: str = DEFAULT_MODEL) -> dict:
         if asset:
             break
     else:
-        raise RuntimeError("Auf GitHub wurde keine passende whisper.cpp-Version für Windows gefunden.")
+        raise RuntimeError(tr('Auf GitHub wurde keine passende whisper.cpp-Version für Windows gefunden.'))
     build = re.sub(r"\D", "", rel["tag_name"])
     target = WHISPER_DIR / f"whisper-b{build}-{kind}"
     program = None if (target / "whisper-cli.exe").is_file() else (
@@ -132,7 +134,7 @@ def transcribe(audio: Path, model: str = DEFAULT_MODEL, language: str = "de", gp
     """Audiodatei → Text, ein Abschnitt pro Zeile. Blockiert – im Thread aufrufen."""
     exe, weights = find_cli(), find_model(model)
     if not exe or not weights:
-        raise RuntimeError("Die Spracherkennung ist noch nicht installiert (Einstellungen → Sprache).")
+        raise RuntimeError(tr('Die Spracherkennung ist noch nicht installiert (Einstellungen → Sprache).'))
     TEMP_DIR.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix="whisper-", dir=TEMP_DIR))
     try:
@@ -149,7 +151,7 @@ def transcribe(audio: Path, model: str = DEFAULT_MODEL, language: str = "de", gp
             if gpu:  # z. B. Grafikspeicher vom Sprachmodell belegt
                 return transcribe(audio, model, language, gpu=False)
             last = [ln for ln in log.splitlines() if ln.strip()][-3:]
-            raise RuntimeError("Spracherkennung fehlgeschlagen: " + (" | ".join(last) or f"Code {proc.returncode}"))
+            raise RuntimeError(tr('Spracherkennung fehlgeschlagen: ') + (" | ".join(last) or tr('Code {0}', proc.returncode)))
         lines = [ln.strip() for ln in out.read_text(encoding="utf-8", errors="replace").splitlines()]
         return "\n".join(ln for ln in lines if ln and ln not in ("[BLANK_AUDIO]", "[Musik]", "[MUSIC]"))
     finally:
@@ -175,12 +177,12 @@ class Recorder:
 
     def _mci(self, command: str):
         if os.name != "nt":
-            raise RuntimeError("Aufnahme geht nur unter Windows.")
+            raise RuntimeError(tr('Aufnahme geht nur unter Windows.'))
         err = self._send(command, None, 0, None)
         if err:
             buf = ctypes.create_unicode_buffer(256)
             self._error(err, buf, 255)
-            raise RuntimeError(buf.value or f"MCI-Fehler {err}")
+            raise RuntimeError(buf.value or tr('MCI-Fehler {0}', err))
 
     def _close(self):
         try:

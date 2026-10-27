@@ -1,5 +1,7 @@
 """Monhip: lokale GGUF-Modelle laden, chatten und als Agent arbeiten lassen (Aufbau: siehe CLAUDE.md)."""
 
+from i18n import LANGUAGES as UI_LANGUAGES, error_text, get_language, initialize, resolve_language, tr
+
 import json
 import os
 import queue
@@ -11,6 +13,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from tkinter import filedialog, ttk
 from tkinter import font as tkfont
+
+initialize(Path(__file__).resolve().parent.parent / "config.json")
 
 import chats
 import context
@@ -34,7 +38,7 @@ from roomui import RoomMode
 from themes import THEMES, ThemeManager, label_to_key, mix_hex
 from widgets import ModeSwitch, rounded, scrolled
 
-VERSION = "1.2"  # auf GitHub als Release „v1.2“ (danach richtet sich das Update im Installer)
+VERSION = "1.3"  # auf GitHub als Release „v1.3“ (danach richtet sich das Update im Installer)
 APP_DIR = Path(__file__).resolve().parent.parent  # Code in app/, Daten daneben
 CONFIG_FILE = APP_DIR / "config.json"
 MODEL_DIR = APP_DIR / "modelle"  # wird immer durchsucht, Ziel für Downloads
@@ -42,6 +46,7 @@ ICON_FILE = Path(__file__).resolve().with_name("monhip.ico")
 MAX_ATTACHMENTS = 10
 
 DEFAULTS = {
+    "ui_language": get_language(),
     "folders": [],                 # weitere Modellordner
     "extra_models": [],
     "server_exe": "",
@@ -84,6 +89,7 @@ def load_config() -> dict:
         cfg.update(json.loads(CONFIG_FILE.read_text(encoding="utf-8")))
     except (OSError, ValueError):
         pass
+    cfg["ui_language"] = resolve_language(cfg.get("ui_language"))
     # Alte Einträge aus der Zeit mit LM Studio verwerfen
     if ".lmstudio" in cfg["server_exe"].lower():
         cfg["server_exe"] = ""
@@ -105,7 +111,7 @@ class App:
             self.cfg["client_id"] = secrets.token_hex(8)
         self.app_dir = APP_DIR
         self.mode = None                 # "chat" | "room", gesetzt durch set_mode()
-        self._chat_title = "Neuer Chat"
+        self._chat_title = tr('Neuer Chat')
         self.events: queue.Queue = queue.Queue()
         self.server = LlamaServer(lambda t: self.events.put(("log", t)))
         self.servers = llamacpp.find_llama_servers()
@@ -187,7 +193,7 @@ class App:
             try:
                 result, err = work(), None
             except Exception as e:
-                result, err = None, str(e) or type(e).__name__
+                result, err = None, error_text(e) or type(e).__name__
             if done:
                 self.ui(done, result, err)
         threading.Thread(target=run, daemon=True).start()
@@ -208,7 +214,7 @@ class App:
 
         bottom = ttk.Frame(side, style="Sidebar.TFrame", padding=(8, 6, 8, 10))
         bottom.pack(side=tk.BOTTOM, fill=tk.X)
-        ttk.Button(bottom, text="⚙   Einstellungen", style="Sidebar.TButton",
+        ttk.Button(bottom, text=tr('⚙   Einstellungen'), style="Sidebar.TButton",
                    command=self.open_settings).pack(fill=tk.X)
 
         # Chatliste und Raum-Panel liegen fertig übereinander; set_mode() holt eins nach vorn (flackert nicht)
@@ -223,7 +229,7 @@ class App:
 
         top = ttk.Frame(self.chat_side, style="Sidebar.TFrame", padding=(8, 6, 8, 6))
         top.pack(side=tk.TOP, fill=tk.X)
-        ttk.Button(top, text="+   Neuer Chat", style="Sidebar.TButton", command=self.new_chat).pack(fill=tk.X)
+        ttk.Button(top, text=tr('+   Neuer Chat'), style="Sidebar.TButton", command=self.new_chat).pack(fill=tk.X)
 
         lf = ttk.Frame(self.chat_side, style="Sidebar.TFrame", padding=(8, 0, 2, 0))
         lf.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
@@ -247,8 +253,8 @@ class App:
         self.chat_tree = tree
 
         menu = tk.Menu(self.root, tearoff=0)
-        menu.add_command(label="Umbenennen…", command=lambda: self.rename_chat(self._ctx_item))
-        menu.add_command(label="Löschen", command=lambda: self.delete_chat(self._ctx_item))
+        menu.add_command(label=tr('Umbenennen…'), command=lambda: self.rename_chat(self._ctx_item))
+        menu.add_command(label=tr('Löschen'), command=lambda: self.delete_chat(self._ctx_item))
         self.theme.register_menu(menu)
         self.chat_menu = menu
 
@@ -262,7 +268,7 @@ class App:
         # ---- Kopfzeile: Chat-Titel links, Modell rechts
         top = ttk.Frame(main, style="Top.TFrame", padding=(18, 10, 14, 8))
         top.pack(side=tk.TOP, fill=tk.X)
-        self.title_var = tk.StringVar(value="Neuer Chat")
+        self.title_var = tk.StringVar(value=tr('Neuer Chat'))
         # width=1 + Gewicht: langer Titel wird abgeschnitten, statt die Modellauswahl zu verdrängen
         ttk.Label(top, textvariable=self.title_var, style="Title.TLabel", width=1).grid(
             row=0, column=0, rowspan=2, sticky="ew", padx=(0, 12))
@@ -271,10 +277,10 @@ class App:
         self.model_combo.grid(row=0, column=2, sticky="e")
         self.model_combo.bind("<<ComboboxSelected>>", lambda e: self._select_model(self.model_combo.current()))
         self.theme.register_combo(self.model_combo)
-        self.load_btn = ttk.Button(top, text="▶ Laden", style="Accent.TButton", command=self.load_model)
+        self.load_btn = ttk.Button(top, text=tr('▶ Laden'), style="Accent.TButton", command=self.load_model)
         self.load_btn.grid(row=0, column=3, padx=(6, 0))
         ttk.Button(top, text="■", width=3, command=self.unload_model).grid(row=0, column=4, padx=(4, 0))
-        self.status_var = tk.StringVar(value="Kein Modell geladen")
+        self.status_var = tk.StringVar(value=tr('Kein Modell geladen'))
         ttk.Label(top, textvariable=self.status_var, style="Muted.TLabel").grid(
             row=1, column=2, columnspan=3, sticky="e", pady=(3, 0))
         top.columnconfigure(0, weight=1)
@@ -293,7 +299,7 @@ class App:
         self.expert_bar = ttk.Frame(meter)
         self.expert_bar.pack(side=tk.LEFT)
         self.expert_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(self.expert_bar, text="Experten-Modus", variable=self.expert_var,
+        ttk.Checkbutton(self.expert_bar, text=tr('Experten-Modus'), variable=self.expert_var,
                         command=self._toggle_expert).pack(side=tk.LEFT)
         self.expert_status = tk.StringVar()
         ttk.Label(self.expert_bar, textvariable=self.expert_status, style="Muted.TLabel", font=("Segoe UI", 8)).pack(
@@ -303,7 +309,7 @@ class App:
         inp = ttk.Frame(main, padding=(18, 6, 18, 4))
         inp.pack(side=tk.BOTTOM, fill=tk.X)
         self._inp_frame = inp
-        self.send_btn = ttk.Button(inp, text="Senden", style="Accent.TButton", width=8, command=self._send_or_stop)
+        self.send_btn = ttk.Button(inp, text=tr('Senden'), style="Accent.TButton", width=8, command=self._send_or_stop)
         self.send_btn.pack(side=tk.RIGHT, fill=tk.Y, padx=(8, 0))
         ttk.Button(inp, text="+", style="Attach.TButton", width=2, command=self.pick_attachments).pack(
             side=tk.LEFT, fill=tk.Y, padx=(0, 8))
@@ -354,7 +360,7 @@ class App:
         self._update_expert_row()
         (self.room_side if room else self.chat_side).tkraise()
         (self.room_frame if room else self.chat_frame).tkraise()
-        self.send_btn.configure(text="■ Stopp" if self.busy and not room else "Senden")
+        self.send_btn.configure(text=tr('■ Stopp') if self.busy and not room else tr('Senden'))
         self.update_title()
         self.input.focus_set()
 
@@ -375,7 +381,7 @@ class App:
     def _build_settings(self):
         win = tk.Toplevel(self.root)
         win.withdraw()
-        win.title("Einstellungen")
+        win.title(tr('Einstellungen'))
         w, h = round(840 * self.ui_scale), round(600 * self.ui_scale)
         win.geometry(f"{w}x{h}")
         win.minsize(560, 460)
@@ -390,16 +396,16 @@ class App:
         outer.pack(fill=tk.BOTH, expand=True)
         bar = ttk.Frame(outer)
         bar.pack(side=tk.BOTTOM, fill=tk.X, pady=(10, 0))
-        ttk.Button(bar, text="Schließen", command=self.close_settings).pack(side=tk.RIGHT)
-        ttk.Label(bar, text=f"Monhip v{VERSION}  ·  Änderungen werden automatisch gespeichert.",
+        ttk.Button(bar, text=tr('Schließen'), command=self.close_settings).pack(side=tk.RIGHT)
+        ttk.Label(bar, text=tr('Monhip v{0}  ·  Änderungen werden automatisch gespeichert.', VERSION),
                   style="Muted.TLabel").pack(side=tk.LEFT)
         nb = ttk.Notebook(outer)
         nb.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         self.settings_nb = nb
         tabs = {}
-        for key, title in [("models", "Modelle"), ("load", "Laden"), ("tools", "Werkzeuge"), ("memory", "Gedächtnis"),
-                           ("speech", "Sprache"), ("prompt", "System-Prompt"), ("look", "Darstellung"),
-                           ("log", "Server-Log")]:
+        for key, title in [("models", tr('Modelle')), ("load", tr('Laden')), ("tools", tr('Werkzeuge')), ("memory", tr('Gedächtnis')),
+                           ("speech", tr('Sprache')), ("prompt", tr('System-Prompt')), ("look", tr('Darstellung')),
+                           ("log", tr('Server-Log'))]:
             tabs[key] = ttk.Frame(nb, padding=14)
             nb.add(tabs[key], text=title)
         self.settings_tabs = tabs
@@ -415,24 +421,24 @@ class App:
                              lambda e: self.load_model() if self.models else self.open_model_dir())
         bf = ttk.Frame(t)
         bf.pack(fill=tk.X, pady=(8, 0))
-        for i, (txt, cmd) in enumerate([("Aktualisieren", self.refresh_models),
-                                        ("Modellordner öffnen", self.open_model_dir),
-                                        ("Weitere Ordner…", self.open_sources),
-                                        ("Datei öffnen…", lambda: self.add_file(self.settings_win)),
-                                        ("Herunterladen…", self.open_download)]):
+        for i, (txt, cmd) in enumerate([(tr('Aktualisieren'), self.refresh_models),
+                                        (tr('Modellordner öffnen'), self.open_model_dir),
+                                        (tr('Weitere Ordner…'), self.open_sources),
+                                        (tr('Datei öffnen…'), lambda: self.add_file(self.settings_win)),
+                                        (tr('Herunterladen…'), self.open_download)]):
             ttk.Button(bf, text=txt, command=cmd).grid(row=0, column=i, sticky="ew", padx=(0 if i == 0 else 4, 0))
             bf.columnconfigure(i, weight=1)
         lb = ttk.Frame(t)
         lb.pack(fill=tk.X, pady=(12, 0))
-        self.load_btn2 = ttk.Button(lb, text="▶ Modell laden", style="Accent.TButton", command=self.load_model)
+        self.load_btn2 = ttk.Button(lb, text=tr('▶ Modell laden'), style="Accent.TButton", command=self.load_model)
         self.load_btn2.pack(side=tk.LEFT)
-        ttk.Button(lb, text="■ Entladen", command=self.unload_model).pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Button(lb, text=tr('■ Entladen'), command=self.unload_model).pack(side=tk.LEFT, padx=(4, 0))
         ttk.Label(lb, textvariable=self.status_var, style="Muted.TLabel").pack(side=tk.LEFT, padx=(10, 0))
 
         # ---- Laden
         t = tabs["load"]
         self.server_var = tk.StringVar()
-        labels = [s["label"] for s in self.servers] + ["Eigene llama-server.exe…"]
+        labels = [s["label"] for s in self.servers] + [tr('Eigene llama-server.exe…')]
         ttk.Label(t, text="Backend").grid(row=0, column=0, sticky="w", padx=(0, 12), pady=3)
         self.server_combo = ttk.Combobox(t, textvariable=self.server_var, values=labels, state="readonly")
         self.server_combo.grid(row=0, column=1, sticky="ew", pady=3)
@@ -443,10 +449,10 @@ class App:
             self.server_var.set(match[0] if match else self.cfg["server_exe"])
         elif self.servers:
             self.server_var.set(self.servers[0]["label"])
-        self.srv_btn = ttk.Button(t, text="llama.cpp herunterladen / aktualisieren", command=self.download_server)
+        self.srv_btn = ttk.Button(t, text=tr('llama.cpp herunterladen / aktualisieren'), command=self.download_server)
         self.srv_btn.grid(row=1, column=1, sticky="w", pady=(4, 0))
-        self.srv_status = tk.StringVar(value="Neueste Version von github.com/ggml-org/llama.cpp, passend zur Grafikkarte"
-                                       if self.servers else "Noch nicht installiert – wird zum Laden von Modellen gebraucht")
+        self.srv_status = tk.StringVar(value=tr('Neueste Version von github.com/ggml-org/llama.cpp, passend zur Grafikkarte')
+                                       if self.servers else tr('Noch nicht installiert – wird zum Laden von Modellen gebraucht'))
         ttk.Label(t, textvariable=self.srv_status, style="Muted.TLabel", wraplength=round(480 * self.ui_scale)
                   ).grid(row=2, column=1, sticky="w", pady=(0, 8))
 
@@ -457,26 +463,27 @@ class App:
         self.maxtok_var = tk.StringVar(value=str(self.cfg["max_tokens"]))
         self.vision_var = tk.BooleanVar(value=self.cfg["vision"])
         self.imgtok_var = tk.StringVar(value=str(self.cfg["image_tokens"]))
-        rows = [("GPU-Layers", self.ngl_var, "„auto“ passt das Modell an den Grafikspeicher an"),
-                ("Extra-Argumente", self.extra_var, "z. B. --n-cpu-moe 10 oder -fa on"),
-                ("Temperatur", self.temp_var, "niedriger = sachlicher, höher = kreativer"),
-                ("Max. Antwort-Tokens", self.maxtok_var, ""),
-                ("Max. Tokens pro Bild", self.imgtok_var, "mehr = Details und kleine Schrift besser erkennbar, "
-                                                          "braucht aber mehr Kontext")]
+        rows = [(tr('GPU-Layers'), self.ngl_var, tr('„auto“ passt das Modell an den Grafikspeicher an')),
+                (tr('Extra-Argumente'), self.extra_var, tr('z. B. --n-cpu-moe 10 oder -fa on')),
+                (tr('Temperatur'), self.temp_var, tr('niedriger = sachlicher, höher = kreativer')),
+                (tr('Max. Antwort-Tokens'), self.maxtok_var, ""),
+                (tr('Max. Tokens pro Bild'), self.imgtok_var, tr('mehr = Details und kleine Schrift besser erkennbar, braucht aber mehr Kontext'))]
         # Kontext: „auto“ oder eine Zahl; darunter der Vorschlag für das gewählte Modell (_suggest_context)
-        ttk.Label(t, text="Kontext (Tokens)").grid(row=3, column=0, sticky="w", padx=(0, 12), pady=(3, 0))
+        ttk.Label(t, text=tr('Kontext (Tokens)')).grid(row=3, column=0, sticky="w", padx=(0, 12), pady=(3, 0))
         ctx_combo = ttk.Combobox(t, textvariable=self.ctx_var, values=["auto", "8192", "16384", "32768", "65536"])
         ctx_combo.grid(row=3, column=1, sticky="ew", pady=(3, 0))
         self.theme.register_combo(ctx_combo)
         lo, hi = (f"{n:,}".replace(",", ".") for n in (AUTO_TARGET_CTX, AUTO_MAX_CTX))
-        ttk.Label(t, text=f"„auto“ = {lo} bis {hi} – was nicht in den Grafikspeicher passt, kommt in den "
-                          "Arbeitsspeicher", style="Muted.TLabel").grid(row=4, column=1, sticky="w")
+        ttk.Label(t, text=tr(
+            '„auto“ = {0} bis {1} – was nicht in den Grafikspeicher passt, kommt in den Arbeitsspeicher',
+            lo,
+            hi), style="Muted.TLabel").grid(row=4, column=1, sticky="w")
         hint = ttk.Frame(t)
         hint.grid(row=5, column=1, sticky="ew")
         self.ctx_hint = tk.StringVar()
         ttk.Label(hint, textvariable=self.ctx_hint, style="Muted.TLabel", wraplength=round(470 * self.ui_scale)
                   ).pack(side=tk.LEFT)
-        self.ctx_take = ttk.Button(hint, text="Übernehmen", command=self._take_suggestion)
+        self.ctx_take = ttk.Button(hint, text=tr('Übernehmen'), command=self._take_suggestion)
         self._suggestion: dict | None = None
         self._suggest_gen = 0
         self._suggest_cache: dict = {}
@@ -490,10 +497,10 @@ class App:
             if hint:
                 ttk.Label(t, text=hint, style="Muted.TLabel").grid(row=r, column=1, sticky="w")
                 r += 1
-        ttk.Checkbutton(t, text="Bildverständnis laden (mmproj-Datei im Ordner des Modells, ca. 1 GB Grafikspeicher)",
+        ttk.Checkbutton(t, text=tr('Bildverständnis laden (mmproj-Datei im Ordner des Modells, ca. 1 GB Grafikspeicher)'),
                         variable=self.vision_var).grid(row=r, column=0, columnspan=2, sticky="w", pady=(8, 0))
         self.compress_var = tk.BooleanVar(value=self.cfg["auto_compress"])
-        ttk.Checkbutton(t, text="Ältere Unterhaltung automatisch zusammenfassen, wenn der Kontext knapp wird",
+        ttk.Checkbutton(t, text=tr('Ältere Unterhaltung automatisch zusammenfassen, wenn der Kontext knapp wird'),
                         variable=self.compress_var).grid(row=r + 1, column=0, columnspan=2, sticky="w", pady=(4, 0))
         t.columnconfigure(1, weight=1)
 
@@ -506,34 +513,35 @@ class App:
         self.confirm_var = tk.BooleanVar(value=self.cfg["agent_confirm"])
         self.ws_var = tk.StringVar(value=self.cfg["agent_workspace"])
         self.extra_folders: list[str] = list(self.cfg["agent_folders"])
-        ttk.Checkbutton(t, text="Internetzugriff (Websuche & Seiten lesen)", variable=self.web_var).grid(
+        ttk.Checkbutton(t, text=tr('Internetzugriff (Websuche & Seiten lesen)'), variable=self.web_var).grid(
             row=0, column=0, columnspan=2, sticky="w")
-        ttk.Label(t, text="Brave-API-Key (optional, falls DuckDuckGo blockiert)", style="Muted.TLabel").grid(
+        ttk.Label(t, text=tr('Brave-API-Key (optional, falls DuckDuckGo blockiert)'), style="Muted.TLabel").grid(
             row=1, column=0, columnspan=2, sticky="w", pady=(6, 2))
         ttk.Entry(t, textvariable=self.brave_var, show="•").grid(row=2, column=0, columnspan=2, sticky="ew")
         ttk.Separator(t).grid(row=3, column=0, columnspan=2, sticky="ew", pady=12)
         self.screen_var = tk.BooleanVar(value=self.cfg["screenshots_enabled"])
-        ttk.Checkbutton(t, text="Dateien & Ordner – lesen, schreiben, Bilder ansehen, Word/Excel/PowerPoint, "
-                                "Programmierprojekte", variable=self.agent_var).grid(row=4, column=0, columnspan=2,
+        ttk.Checkbutton(t, text=tr(
+            'Dateien & Ordner – lesen, schreiben, Bilder ansehen, Word/Excel/PowerPoint, Programmierprojekte'), variable=self.agent_var).grid(row=4, column=0, columnspan=2,
                                                                                      sticky="w")
-        ttk.Checkbutton(t, text="Befehle & Programme ausführen (PowerShell, Python)", variable=self.cmd_var).grid(
+        ttk.Checkbutton(t, text=tr('Befehle & Programme ausführen (PowerShell, Python)'), variable=self.cmd_var).grid(
             row=5, column=0, columnspan=2, sticky="w", pady=(4, 0))
-        ttk.Checkbutton(t, text="Bildschirmfotos – das Modell darf deinen Bildschirm ansehen (fragt jedes Mal, "
-                                "nur mit Bildverständnis)", variable=self.screen_var).grid(
+        ttk.Checkbutton(t, text=tr(
+            'Bildschirmfotos – das Modell darf deinen Bildschirm ansehen (fragt jedes Mal, nur mit Bildverständnis)'), variable=self.screen_var).grid(
             row=6, column=0, columnspan=2, sticky="w", pady=(4, 0))
-        ttk.Checkbutton(t, text="Jede Aktion bestätigen (empfohlen)", variable=self.confirm_var).grid(
+        ttk.Checkbutton(t, text=tr('Jede Aktion bestätigen (empfohlen)'), variable=self.confirm_var).grid(
             row=7, column=0, columnspan=2, sticky="w", pady=(4, 0))
-        ttk.Label(t, text="Freigegebene Ordner – nur hier darf das Modell lesen und schreiben. "
-                          "★ = Arbeitsordner (Standard für neue Dateien):", style="Muted.TLabel",
+        ttk.Label(t, text=tr(
+            'Freigegebene Ordner – nur hier darf das Modell lesen und schreiben. ★ = Arbeitsordner (Standard für '
+            'neue Dateien):'), style="Muted.TLabel",
                   wraplength=round(600 * self.ui_scale)).grid(row=8, column=0, columnspan=2, sticky="w", pady=(10, 2))
         lf, self.folder_list = self._listbox(t, height=5)
         lf.grid(row=9, column=0, columnspan=2, sticky="nsew")
         self.folder_list.bind("<Delete>", lambda e: self._remove_folder())
         bf = ttk.Frame(t)
         bf.grid(row=10, column=0, columnspan=2, sticky="w", pady=(6, 0))
-        ttk.Button(bf, text="Ordner hinzufügen…", command=self._add_folder).pack(side=tk.LEFT)
-        ttk.Button(bf, text="★ Als Arbeitsordner", command=self._main_folder).pack(side=tk.LEFT, padx=(4, 0))
-        ttk.Button(bf, text="Entfernen", command=self._remove_folder).pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Button(bf, text=tr('Ordner hinzufügen…'), command=self._add_folder).pack(side=tk.LEFT)
+        ttk.Button(bf, text=tr('★ Als Arbeitsordner'), command=self._main_folder).pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Button(bf, text=tr('Entfernen'), command=self._remove_folder).pack(side=tk.LEFT, padx=(4, 0))
         t.columnconfigure(0, weight=1)
         t.rowconfigure(9, weight=1)
         self._fill_folders()
@@ -543,28 +551,29 @@ class App:
         self.memory_var = tk.BooleanVar(value=self.cfg["memory_enabled"])
         self.reminder_var = tk.BooleanVar(value=self.cfg["reminders_enabled"])
         wrap = round(600 * self.ui_scale)
-        ttk.Checkbutton(t, text="Gedächtnis – das Modell darf sich Dinge über alle Chats hinweg merken",
+        ttk.Checkbutton(t, text=tr('Gedächtnis – das Modell darf sich Dinge über alle Chats hinweg merken'),
                         variable=self.memory_var).grid(row=0, column=0, sticky="w")
-        ttk.Label(t, text="Zum Beispiel „Merk dir, dass ich kurze Antworten mag“. Jeder neue Chat bekommt das "
-                          "Gemerkte mit.", style="Muted.TLabel", wraplength=wrap).grid(row=1, column=0, sticky="w",
+        ttk.Label(t, text=tr(
+            'Zum Beispiel „Merk dir, dass ich kurze Antworten mag“. Jeder neue Chat bekommt das Gemerkte mit.'), style="Muted.TLabel", wraplength=wrap).grid(row=1, column=0, sticky="w",
                                                                                      pady=(2, 6))
         frame, self.memory_list = self._listbox(t, height=4)
         frame.grid(row=2, column=0, sticky="nsew")
         self.memory_list.bind("<Delete>", lambda e: self._forget_selected())
         bf = ttk.Frame(t)
         bf.grid(row=3, column=0, sticky="w", pady=(6, 0))
-        ttk.Button(bf, text="Löschen", command=self._forget_selected).pack(side=tk.LEFT)
-        ttk.Button(bf, text="Alles vergessen", command=self._forget_all).pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Button(bf, text=tr('Löschen'), command=self._forget_selected).pack(side=tk.LEFT)
+        ttk.Button(bf, text=tr('Alles vergessen'), command=self._forget_all).pack(side=tk.LEFT, padx=(4, 0))
         ttk.Separator(t).grid(row=4, column=0, sticky="ew", pady=12)
-        ttk.Checkbutton(t, text="Erinnerungen – das Modell darf Erinnerungen stellen (Windows-Benachrichtigung)",
+        ttk.Checkbutton(t, text=tr('Erinnerungen – das Modell darf Erinnerungen stellen (Windows-Benachrichtigung)'),
                         variable=self.reminder_var).grid(row=5, column=0, sticky="w")
-        ttk.Label(t, text="Zum Beispiel „Erinnere mich in 20 Minuten an den Ofen“. Fällige Erinnerungen erscheinen, "
-                          "solange das Programm läuft – sonst beim nächsten Start.", style="Muted.TLabel",
+        ttk.Label(t, text=tr(
+            'Zum Beispiel „Erinnere mich in 20 Minuten an den Ofen“. Fällige Erinnerungen erscheinen, solange das '
+            'Programm läuft – sonst beim nächsten Start.'), style="Muted.TLabel",
                   wraplength=wrap).grid(row=6, column=0, sticky="w", pady=(2, 6))
         frame, self.reminder_list = self._listbox(t, height=4)
         frame.grid(row=7, column=0, sticky="nsew")
         self.reminder_list.bind("<Delete>", lambda e: self._cancel_selected_reminder())
-        ttk.Button(t, text="Löschen", command=self._cancel_selected_reminder).grid(row=8, column=0, sticky="w",
+        ttk.Button(t, text=tr('Löschen'), command=self._cancel_selected_reminder).grid(row=8, column=0, sticky="w",
                                                                                  pady=(6, 0))
         t.columnconfigure(0, weight=1)
         t.rowconfigure(2, weight=1)
@@ -576,17 +585,17 @@ class App:
         self.speech_model_var = tk.StringVar(value=speech.MODELS.get(self.cfg["speech_model"],
                                                                      speech.MODELS[speech.DEFAULT_MODEL]))
         self.speech_lang_var = tk.StringVar(value=next((k for k, v in speech.LANGUAGES.items()
-                                                        if v == self.cfg["speech_language"]), "Deutsch"))
-        ttk.Label(t, text="Spracherkennung",
+                                                        if v == self.cfg["speech_language"]), tr("Deutsch")))
+        ttk.Label(t, text=tr('Spracherkennung'),
                   style="Title.TLabel").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
-        self.speech_btn = ttk.Button(t, text="Spracherkennung herunterladen / aktualisieren",
+        self.speech_btn = ttk.Button(t, text=tr('Spracherkennung herunterladen / aktualisieren'),
                                      command=self.download_speech)
         self.speech_btn.grid(row=2, column=0, columnspan=2, sticky="w")
         self.speech_status = tk.StringVar(value=speech.describe())
         ttk.Label(t, textvariable=self.speech_status, style="Muted.TLabel", wraplength=wrap).grid(
             row=3, column=0, columnspan=2, sticky="w", pady=(2, 12))
-        for r, (label, var, values) in enumerate((("Modell", self.speech_model_var, list(speech.MODELS.values())),
-                                                  ("Sprache", self.speech_lang_var, list(speech.LANGUAGES))), 4):
+        for r, (label, var, values) in enumerate(((tr('Modell'), self.speech_model_var, list(speech.MODELS.values())),
+                                                  (tr('Sprache'), self.speech_lang_var, list(speech.LANGUAGES))), 4):
             ttk.Label(t, text=label).grid(row=r, column=0, sticky="w", padx=(0, 12), pady=3)
             combo = ttk.Combobox(t, textvariable=var, values=values, state="readonly", width=48)
             combo.grid(row=r, column=1, sticky="w", pady=3)
@@ -595,7 +604,7 @@ class App:
 
         # ---- System-Prompt
         t = tabs["prompt"]
-        ttk.Label(t, text="Wird jeder Unterhaltung als Anweisung vorangestellt:").pack(anchor="w", pady=(0, 6))
+        ttk.Label(t, text=tr('Wird jeder Unterhaltung als Anweisung vorangestellt:')).pack(anchor="w", pady=(0, 6))
         sys_frame, self.sys_text = scrolled(t, wrap=tk.WORD, font=("Segoe UI", 10), padx=8, pady=6)
         sys_frame.pack(fill=tk.BOTH, expand=True)
         self.sys_text.insert("1.0", self.cfg["system_prompt"])
@@ -603,7 +612,7 @@ class App:
 
         # ---- Darstellung
         t = tabs["look"]
-        ttk.Label(t, text="Design").grid(row=0, column=0, sticky="w", padx=(0, 12))
+        ttk.Label(t, text=tr('Design')).grid(row=0, column=0, sticky="w", padx=(0, 12))
         self.theme_var = tk.StringVar()
         self.theme_combo = ttk.Combobox(t, textvariable=self.theme_var, state="readonly", width=28,
                                         values=[th["label"] for th in THEMES.values()])
@@ -611,16 +620,25 @@ class App:
         self.theme_combo.bind("<<ComboboxSelected>>",
                               lambda e: self.set_theme(label_to_key(self.theme_var.get())))
         self.theme.register_combo(self.theme_combo)
-        ttk.Label(t, text="Eigene Farben: in themes.py einen Eintrag in THEMES anpassen oder hinzufügen.",
+        ttk.Label(t, text=tr('Eigene Farben: in themes.py einen Eintrag in THEMES anpassen oder hinzufügen.'),
                   style="Muted.TLabel").grid(row=1, column=0, columnspan=2, sticky="w", pady=(10, 0))
         ttk.Separator(t).grid(row=2, column=0, columnspan=2, sticky="ew", pady=14)
         self.think_title_var = tk.BooleanVar(value=self.cfg["think_titles"])
-        ttk.Checkbutton(t, text="Denkprozess mit kurzer Überschrift zusammenfassen",
+        ttk.Checkbutton(t, text=tr('Denkprozess mit kurzer Überschrift zusammenfassen'),
                         variable=self.think_title_var).grid(row=3, column=0, columnspan=2, sticky="w")
-        ttk.Label(t, text="Nach jeder Antwort fasst das geladene Modell seinen (zugeklappten) Denkprozess in "
-                          "wenigen Wörtern zusammen – eine kleine zusätzliche Anfrage. Ausgeschaltet heißt der "
-                          "Block einfach „Gedankengang“.", style="Muted.TLabel",
+        ttk.Label(t, text=tr(
+            'Nach jeder Antwort fasst das geladene Modell seinen (zugeklappten) Denkprozess in wenigen Wörtern '
+            'zusammen – eine kleine zusätzliche Anfrage. Ausgeschaltet heißt der Block einfach „Gedankengang“.'), style="Muted.TLabel",
                   wraplength=round(560 * self.ui_scale)).grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 0))
+
+        ttk.Label(t, text=tr("Oberflächensprache")).grid(row=5, column=0, sticky="w", pady=(18, 0))
+        self.ui_language_var = tk.StringVar(value=next(
+            label for label, code in UI_LANGUAGES.items() if code == self.cfg["ui_language"]))
+        self.ui_language_combo = ttk.Combobox(t, textvariable=self.ui_language_var, values=list(UI_LANGUAGES),
+                                             state="readonly", width=28)
+        self.ui_language_combo.grid(row=5, column=1, sticky="w", pady=(18, 0))
+        self.ui_language_combo.bind("<<ComboboxSelected>>", self._change_ui_language)
+        self.theme.register_combo(self.ui_language_combo)
 
         # ---- Server-Log
         t = tabs["log"]
@@ -628,6 +646,16 @@ class App:
                                             padx=6, pady=4)
         log_frame.pack(fill=tk.BOTH, expand=True)
         self.theme.register_text(self.log)
+
+    def _change_ui_language(self, _event=None):
+        language = UI_LANGUAGES.get(self.ui_language_var.get())
+        if not language or language == self.cfg["ui_language"]:
+            return
+        self.cfg["ui_language"] = language
+        self.save_config()
+        dialogs.showinfo(tr("Oberflächensprache"),
+                         tr("Die neue Oberflächensprache wird beim nächsten Start von Monhip verwendet."),
+                         parent=self.settings_win)
 
     def open_settings(self, tab: str | None = None):
         win = self.settings_win
@@ -689,7 +717,7 @@ class App:
             if group != last:
                 rows.append((f"grp:{group}", "  " + group.upper(), "group"))
                 last = group
-            rows.append((c["id"], ("  Experte · " if c.get("expert") else "  ") + c["title"], "chat"))
+            rows.append((c["id"], (tr('  Experte · ') if c.get("expert") else "  ") + c["title"], "chat"))
         if rows != self._tree_rows:
             tree = self.chat_tree
             self._tree_rows, self._hover, self._dots = rows, None, set()
@@ -730,7 +758,7 @@ class App:
             return
         if self.busy:
             self._sync_tree_selection()
-            dialogs.showinfo("Monhip", "Bitte warten, bis die Antwort fertig ist (oder „Stopp“ drücken).")
+            dialogs.showinfo("Monhip", tr('Bitte warten, bis die Antwort fertig ist (oder „Stopp“ drücken).'))
             return
         self.open_chat(item)
 
@@ -802,14 +830,14 @@ class App:
         data = current or chats.load(chat_id)
         if not data:
             return
-        title = dialogs.askstring("Chat umbenennen", "Neuer Name:", data.get("title", ""))
+        title = dialogs.askstring(tr('Chat umbenennen'), tr('Neuer Name:'), data.get("title", ""))
         if not title:
             return
         data["title"] = title
         if current is not None:
             self._set_title(title)
             if self.busy:  # wird nach der Antwort ohnehin gespeichert
-                self.chat_tree.item(chat_id, text=("  Experte · " if current.get("experte") else "  ") + title)
+                self.chat_tree.item(chat_id, text=(tr('  Experte · ') if current.get("experte") else "  ") + title)
                 return
             data["messages"] = self.history
         chats.save(data, touch=False)  # touch=False: Sortierung bleibt
@@ -820,7 +848,7 @@ class App:
             return
         is_current = self.chat_data and self.chat_data["id"] == chat_id
         if is_current and self.busy:
-            dialogs.showinfo("Monhip", "Dieser Chat läuft gerade noch. Bitte erst „Stopp“ drücken.")
+            dialogs.showinfo("Monhip", tr('Dieser Chat läuft gerade noch. Bitte erst „Stopp“ drücken.'))
             return
         if self.expert_job and self._expert_job_chat == chat_id:  # Auswertung dieses Chats anhalten
             self.expert_job.stop_event.set()
@@ -839,7 +867,7 @@ class App:
             return
         self.chat_data = None
         self.history = []
-        self._set_title("Neuer Chat")
+        self._set_title(tr('Neuer Chat'))
         self._sync_tree_selection()
         self._show_placeholder()
         self._estimate_context()
@@ -849,7 +877,7 @@ class App:
     def open_chat(self, chat_id):
         data = chats.load(chat_id)
         if not data:
-            dialogs.showerror("Monhip", "Der Chat konnte nicht geladen werden.")
+            dialogs.showerror("Monhip", tr('Der Chat konnte nicht geladen werden.'))
             self.refresh_chat_list()
             return
         self.chat_data = data
@@ -862,16 +890,20 @@ class App:
     def _show_placeholder(self):
         expert = (self.chat_data or {}).get("experte")
         if expert and self.server.model:
-            self.view.placeholder(f"Experte für „{Path(expert['quelle']).name}“",
-                                  "Stelle Fragen zu den Dokumenten im Ordner – die KI sucht die passenden Stellen und "
-                                  "nennt Datei und Seite.\n\nDie Auswertung steht unten im Fenster; Fragen gehen schon, "
-                                  "während sie läuft.")
+            self.view.placeholder(tr('Experte für „{0}“', Path(expert['quelle']).name),
+                                  tr(
+                                      'Stelle Fragen zu den Dokumenten im Ordner – die KI sucht die passenden '
+                                      'Stellen und nennt Datei und Seite.\n\nDie Auswertung steht unten im Fenster; '
+                                      'Fragen gehen schon, während sie läuft.'))
         elif self.server.model:
-            what = "Dokumente und Bilder" if self.server.vision else "Dokumente"
-            self.view.placeholder("Womit kann ich helfen?", f"Geladen: {self.server.model.stem}\n\n{what} "
-                                  "anhängen: „+“ klicken, Dateien ins Fenster ziehen oder mit Strg+V einfügen")
+            what = tr('Dokumente und Bilder') if self.server.vision else tr('Dokumente')
+            self.view.placeholder(tr(
+                'Womit kann ich helfen?'), tr(
+                'Geladen: {0}\n\n{1} anhängen: „+“ klicken, Dateien ins Fenster ziehen oder mit Strg+V einfügen',
+                self.server.model.stem,
+                what))
         else:
-            self.view.placeholder("Kein Modell geladen", "Oben rechts ein Modell auswählen und „▶ Laden“ klicken.")
+            self.view.placeholder(tr('Kein Modell geladen'), tr('Oben rechts ein Modell auswählen und „▶ Laden“ klicken.'))
 
     def _render_history(self):
         """Gespeicherten Chat anzeigen: Nutzer rechts, Antworten links, Denkprozess/Werkzeuge zugeklappt."""
@@ -912,7 +944,7 @@ class App:
         try:
             chats.save(self.chat_data, touch=touch)
         except OSError as e:
-            self.view.note(f"Chat konnte nicht gespeichert werden: {e}", "error")
+            self.view.note(tr('Chat konnte nicht gespeichert werden: {0}', e), "error")
         self.refresh_chat_list()
 
     # ================================================================ Modelle
@@ -933,15 +965,15 @@ class App:
             gb = p.stat().st_size / 1024 ** 3
             self.model_list.insert(tk.END, f"  {p.stem}   ({gb:.1f} GB)")
         if self.models:
-            self.models_info.set(f"{len(self.models)} Modelle gefunden")
+            self.models_info.set(tr('{0} Modelle gefunden', len(self.models)))
             self.model_combo.configure(values=[p.stem for p in self.models])
         else:
-            self.models_info.set("Keine Modelle gefunden")
-            self.model_list.insert(tk.END, "  Keine .gguf-Modelle gefunden.")
-            self.model_list.insert(tk.END, "  Doppelklick hier öffnet den Modellordner – Modelle einfach hineinlegen")
-            self.model_list.insert(tk.END, "  und „Aktualisieren“ klicken, oder über „Herunterladen…“ laden.")
+            self.models_info.set(tr('Keine Modelle gefunden'))
+            self.model_list.insert(tk.END, tr('  Keine .gguf-Modelle gefunden.'))
+            self.model_list.insert(tk.END, tr('  Doppelklick hier öffnet den Modellordner – Modelle einfach hineinlegen'))
+            self.model_list.insert(tk.END, tr('  und „Aktualisieren“ klicken, oder über „Herunterladen…“ laden.'))
             self.model_combo.configure(values=[])
-            self.model_var.set("Keine Modelle – siehe ⚙ Einstellungen")
+            self.model_var.set(tr('Keine Modelle – siehe ⚙ Einstellungen'))
 
         wanted = self.sel_model or (Path(self.cfg["last_model"]) if self.cfg["last_model"] else None)
         idx = next((i for i, p in enumerate(self.models) if wanted and same_path(p, wanted)), None)
@@ -970,7 +1002,7 @@ class App:
             self._select_model(sel[0])
 
     def add_folder(self, parent=None) -> bool:
-        d = filedialog.askdirectory(title="Ordner mit GGUF-Modellen wählen", parent=parent or self.root)
+        d = filedialog.askdirectory(title=tr('Ordner mit GGUF-Modellen wählen'), parent=parent or self.root)
         if not d:
             return False
         if not any(same_path(d, f) for f in [str(MODEL_DIR)] + self.cfg["folders"]):
@@ -980,7 +1012,7 @@ class App:
         return True
 
     def add_file(self, parent=None):
-        f = filedialog.askopenfilename(title="GGUF-Modell öffnen", filetypes=[("GGUF-Modelle", "*.gguf")],
+        f = filedialog.askopenfilename(title=tr('GGUF-Modell öffnen'), filetypes=[(tr("GGUF-Modelle"), "*.gguf")],
                                        parent=parent or self.root)
         if f:
             f = str(Path(f))
@@ -998,13 +1030,14 @@ class App:
         if self.sources_win and self.sources_win.winfo_exists():
             self.sources_win.lift()
             return
-        win = dialogs.window("Weitere Modellordner", self.settings_win, resizable=True)
+        win = dialogs.window(tr('Weitere Modellordner'), self.settings_win, resizable=True)
         win.minsize(520, 300)
         self.sources_win = win
         body = ttk.Frame(win, padding=12)
         body.pack(fill=tk.BOTH, expand=True)
-        ttk.Label(body, text="In diesen Ordnern (inkl. aller Unterordner) wird nach .gguf-Modellen gesucht. "
-                             "Der eigene Ordner „modelle“ ist immer dabei:").pack(anchor="w")
+        ttk.Label(body, text=tr(
+            'In diesen Ordnern (inkl. aller Unterordner) wird nach .gguf-Modellen gesucht. Der eigene Ordner '
+            '„modelle“ ist immer dabei:')).pack(anchor="w")
         lf, lst = self._listbox(body)
         lf.pack(fill=tk.BOTH, expand=True, pady=(6, 0))
         self.sources_list = lst
@@ -1013,14 +1046,14 @@ class App:
 
         bf = ttk.Frame(body)
         bf.pack(fill=tk.X, pady=(8, 0))
-        ttk.Button(bf, text="Ordner hinzufügen…", style="Accent.TButton",
+        ttk.Button(bf, text=tr('Ordner hinzufügen…'), style="Accent.TButton",
                    command=lambda: self.add_folder(win)).pack(side=tk.LEFT)
-        ttk.Button(bf, text="Datei hinzufügen…", command=lambda: self.add_file(win)).pack(side=tk.LEFT, padx=(4, 0))
-        ttk.Button(bf, text="Ändern…", command=self._change_source).pack(side=tk.LEFT, padx=(4, 0))
-        ttk.Button(bf, text="Entfernen", command=self._remove_source).pack(side=tk.LEFT, padx=(4, 0))
-        ttk.Button(bf, text="Schließen", command=win.destroy).pack(side=tk.RIGHT)
+        ttk.Button(bf, text=tr('Datei hinzufügen…'), command=lambda: self.add_file(win)).pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Button(bf, text=tr('Ändern…'), command=self._change_source).pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Button(bf, text=tr('Entfernen'), command=self._remove_source).pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Button(bf, text=tr('Schließen'), command=win.destroy).pack(side=tk.RIGHT)
         ttk.Label(body, style="Muted.TLabel",
-                  text="„Entfernen“ nimmt den Eintrag nur aus der Liste, die Modelldateien bleiben erhalten."
+                  text=tr('„Entfernen“ nimmt den Eintrag nur aus der Liste, die Modelldateien bleiben erhalten.')
                   ).pack(anchor="w", pady=(6, 0))
         self._fill_sources()
         dialogs.present(win, self.settings_win, size=(round(760 * self.ui_scale), round(400 * self.ui_scale)))
@@ -1039,13 +1072,13 @@ class App:
             p = Path(path)
             if kind in ("own", "folders"):
                 if not p.is_dir():
-                    info = "Ordner nicht gefunden"
+                    info = tr('Ordner nicht gefunden')
                 else:
                     n = sum(1 for m in self.models if m.is_relative_to(p))
-                    info = f"{n} Modell" + ("" if n == 1 else "e")
-                lst.insert(tk.END, f"{'Eigener Ordner' if kind == 'own' else 'Ordner'}  ·  {info}  ·  {path}")
+                    info = tr('{0} Modell', n) + ("" if n == 1 else "e")
+                lst.insert(tk.END, f"{tr('Eigener Ordner') if kind == 'own' else tr('Ordner')}  ·  {info}  ·  {path}")
             else:
-                lst.insert(tk.END, "Datei  ·  " + ("" if p.is_file() else "nicht gefunden  ·  ") + path)
+                lst.insert(tk.END, tr('Datei  ·  ') + ("" if p.is_file() else tr('nicht gefunden  ·  ')) + path)
         if sel and sel[0] < lst.size():
             lst.selection_set(sel[0])
 
@@ -1053,12 +1086,14 @@ class App:
         sel = self.sources_list.curselection()
         items = self._sources()
         if not sel or sel[0] >= len(items):
-            dialogs.showinfo("Modellordner", "Bitte zuerst einen Eintrag in der Liste auswählen.",
+            dialogs.showinfo(tr('Modellordner'), tr('Bitte zuerst einen Eintrag in der Liste auswählen.'),
                              parent=self.sources_win)
             return None
         if items[sel[0]][0] == "own":
-            dialogs.showinfo("Modellordner", "Der eigene Ordner „modelle“ gehört zum Programm und wird immer "
-                             "durchsucht – Modelle einfach dort hineinlegen.", parent=self.sources_win)
+            dialogs.showinfo(tr(
+                'Modellordner'), tr(
+                'Der eigene Ordner „modelle“ gehört zum Programm und wird immer durchsucht – Modelle einfach dort '
+                'hineinlegen.'), parent=self.sources_win)
             return None
         return items[sel[0]]
 
@@ -1068,11 +1103,11 @@ class App:
             return
         kind, old = item
         if kind == "folders":
-            new = filedialog.askdirectory(title="Neuen Modellordner wählen", parent=self.sources_win,
+            new = filedialog.askdirectory(title=tr('Neuen Modellordner wählen'), parent=self.sources_win,
                                           initialdir=old if Path(old).is_dir() else None)
         else:
-            new = filedialog.askopenfilename(title="GGUF-Modell wählen", parent=self.sources_win,
-                                             filetypes=[("GGUF-Modelle", "*.gguf")])
+            new = filedialog.askopenfilename(title=tr('GGUF-Modell wählen'), parent=self.sources_win,
+                                             filetypes=[(tr("GGUF-Modelle"), "*.gguf")])
         if not new:
             return
         lst = self.cfg[kind]
@@ -1096,8 +1131,8 @@ class App:
     # ---------------------------------------------------------------- Backend (llama.cpp) und Downloads
 
     def _on_server_selected(self, _e=None):
-        if self.server_var.get().startswith("Eigene"):
-            f = filedialog.askopenfilename(title="llama-server.exe wählen", filetypes=[("llama-server", "*.exe")],
+        if self.server_var.get().startswith(tr('Eigene')):
+            f = filedialog.askopenfilename(title=tr('llama-server.exe wählen'), filetypes=[("llama-server", "*.exe")],
                                            parent=self.settings_win)
             self.server_var.set(f or (self.servers[0]["label"] if self.servers else ""))
 
@@ -1114,7 +1149,7 @@ class App:
         """Liest server/ neu ein und aktualisiert die Backend-Auswahl."""
         self.servers = llamacpp.find_llama_servers()
         labels = [s["label"] for s in self.servers]
-        self.server_combo.configure(values=labels + ["Eigene llama-server.exe…"])
+        self.server_combo.configure(values=labels + [tr('Eigene llama-server.exe…')])
         match = [s["label"] for s in self.servers if select_exe and same_path(s["exe"], select_exe)]
         if match:
             self.server_var.set(match[0])
@@ -1131,36 +1166,36 @@ class App:
         if btn.instate(["disabled"]):
             return
         btn.configure(state=tk.DISABLED)
-        status.set("Erkenne Grafikkarte und suche die neueste Version …")
+        status.set(tr('Erkenne Grafikkarte und suche die neueste Version …'))
         label = btn.cget("text")
 
         def progress(name, done, total):
             pct = f"{done * 100 / total:.0f} % " if total else ""
-            status.set(f"Lade {name} … {pct}({done / 1024 ** 2:.0f} / {total / 1024 ** 2:.0f} MB)")
+            status.set(tr('Lade {0} … {1}({2:.0f} / {3:.0f} MB)', name, pct, done / 1024 ** 2, total / 1024 ** 2))
 
         def installed(plan, name, cancel, result, err):
             self._downloads.pop(key, None)
             btn.configure(text=label)
             if err:
-                status.set("Download abgebrochen." if cancel.is_set() else f"Download von {name} fehlgeschlagen: {err}")
+                status.set(tr('Download abgebrochen.') if cancel.is_set() else tr('Download von {0} fehlgeschlagen: {1}', name, err))
             else:
                 finished(plan, result)
 
         def planned(plan, err):
             btn.configure(state=tk.NORMAL)
             if err:
-                status.set(f"Suche fehlgeschlagen: {err}")
+                status.set(tr('Suche fehlgeschlagen: {0}', err))
                 return
             question = offer(plan)
             if not question:
                 return
             title, text, name = question
             if confirm and not dialogs.askyesno(title, text, parent=self.settings_win):
-                status.set("Download abgebrochen.")
+                status.set(tr('Download abgebrochen.'))
                 return
             cancel = self._downloads[key] = threading.Event()
-            btn.configure(text="Download abbrechen")
-            status.set(f"Lade {name} … 0 %")
+            btn.configure(text=tr('Download abbrechen'))
+            status.set(tr('Lade {0} … 0 %', name))
             self.background(lambda: install(plan, lambda d, n: self.ui(progress, name, d, n), cancel),
                             lambda result, err: installed(plan, name, cancel, result, err))
 
@@ -1171,16 +1206,19 @@ class App:
             name = f"llama.cpp {plan['tag']} ({plan['kind']})"
             if plan["installed"]:
                 self._refresh_servers(str(plan["target"] / "llama-server.exe"))
-                self.srv_status.set(f"✔ {name} ist bereits die neueste Version.")
+                self.srv_status.set(tr('✔ {0} ist bereits die neueste Version.', name))
                 return None
-            return ("llama.cpp herunterladen", f"Grafikkarte: {plan['gpu']}\nPassende Version: {name}\n"
-                    f"Download: {plan['size'] / 1024 ** 2:.0f} MB\n\nJetzt herunterladen?", name)
+            return (tr(
+                'llama.cpp herunterladen'), tr(
+                'Grafikkarte: {0}\nPassende Version: {1}\nDownload: {2:.0f} MB\n\nJetzt herunterladen?',
+                plan['gpu'],
+                name,
+                plan['size'] / 1024 ** 2), name)
 
         def finished(plan, exe):
             self._refresh_servers(str(exe))
             self.save_config()
-            self.srv_status.set(f"✔ llama.cpp {plan['tag']} ({plan['kind']}) installiert – "
-                                "Modelle können jetzt geladen werden.")
+            self.srv_status.set(tr('✔ llama.cpp {0} ({1}) installiert – Modelle können jetzt geladen werden.', plan['tag'], plan['kind']))
 
         self._download_flow(self.srv_btn, self.srv_status, llamacpp.plan, offer, llamacpp.install, finished, confirm)
 
@@ -1194,17 +1232,19 @@ class App:
         model = self.sel_model
         if not model:
             if not self.models:
-                dialogs.showinfo("Monhip", "Es wurden keine Modelle gefunden. Lege deine .gguf-Modelle "
-                                 "in den Ordner „modelle“ („Modellordner öffnen“) oder lade eines herunter.")
+                dialogs.showinfo("Monhip", tr(
+                    'Es wurden keine Modelle gefunden. Lege deine .gguf-Modelle in den Ordner „modelle“ '
+                    '(„Modellordner öffnen“) oder lade eines herunter.'))
                 self.open_settings("models")
             else:
-                dialogs.showinfo("Monhip", "Bitte zuerst ein Modell auswählen.")
+                dialogs.showinfo("Monhip", tr('Bitte zuerst ein Modell auswählen.'))
             return
         server = self._selected_server()
         if not server:
-            if dialogs.askyesno("Monhip", "Zum Laden von Modellen wird llama.cpp gebraucht, das noch "
-                                "nicht installiert ist.\n\nJetzt die passende Version für deine Grafikkarte "
-                                "von GitHub herunterladen (einmalig, je nach Grafikkarte 20–600 MB)?"):
+            if dialogs.askyesno("Monhip", tr(
+                'Zum Laden von Modellen wird llama.cpp gebraucht, das noch nicht installiert ist.\n\nJetzt die '
+                'passende Version für deine Grafikkarte von GitHub herunterladen (einmalig, je nach Grafikkarte '
+                '20–600 MB)?')):
                 self.open_settings("load")
                 self.download_server(confirm=False)
             return
@@ -1212,13 +1252,13 @@ class App:
         try:
             ctx = None if raw in ("", "auto") else int(raw)  # None = „auto“ (backend.LlamaServer.start)
         except ValueError:
-            dialogs.showerror("Monhip", "Kontext muss „auto“ oder eine Zahl sein (Einstellungen → Laden).")
+            dialogs.showerror("Monhip", tr('Kontext muss „auto“ oder eine Zahl sein (Einstellungen → Laden).'))
             return
         mmproj = find_mmproj(model) if self.vision_var.get() else None
         try:
             image_tokens = int(self.imgtok_var.get()) if self.imgtok_var.get().strip() else None
         except ValueError:
-            dialogs.showerror("Monhip", "„Max. Tokens pro Bild“ muss eine Zahl sein (Einstellungen → Laden).")
+            dialogs.showerror("Monhip", tr('„Max. Tokens pro Bild“ muss eine Zahl sein (Einstellungen → Laden).'))
             return
         self.cfg["last_model"] = str(model)
         self.save_config()
@@ -1226,7 +1266,7 @@ class App:
         cancel = self.load_cancel = threading.Event()
         ngl, extra = self.ngl_var.get().strip(), self.extra_var.get()
         self._set_load_buttons(tk.DISABLED)
-        self.status_var.set(f"Lade {model.stem} …")
+        self.status_var.set(tr('Lade {0} …', model.stem))
         self.background(lambda: self.server.start(server, model, ctx, ngl, extra, cancel, mmproj=mmproj,
                                                   image_tokens=image_tokens),
                         lambda _, err: self._loaded(model, cancel, err))
@@ -1236,11 +1276,11 @@ class App:
             return
         self._set_load_buttons(tk.NORMAL)
         if err:
-            self.status_var.set("Laden fehlgeschlagen – Details unter ⚙ Einstellungen → Server-Log")
+            self.status_var.set(tr('Laden fehlgeschlagen – Details unter ⚙ Einstellungen → Server-Log'))
             dialogs.showerror("Monhip", err)
             return
-        self.status_var.set(f"✔ Geladen: {model.stem}" + ("  ·  versteht Bilder" if self.server.vision else "")
-                            + (f"  ·  Kontext {self.server.n_ctx:,}".replace(",", ".") if self.server.n_ctx else ""))
+        self.status_var.set(tr('✔ Geladen: {0}', model.stem) + (tr('  ·  versteht Bilder') if self.server.vision else "")
+                            + (tr('  ·  Kontext {0:,}', self.server.n_ctx).replace(",", ".") if self.server.n_ctx else ""))
         if self.view.is_placeholder:
             self._show_placeholder()
         self.room.model_changed()
@@ -1254,7 +1294,7 @@ class App:
             self.expert_job.stop_event.set()
         self.server.model = None
         threading.Thread(target=self.server.stop, daemon=True).start()
-        self.status_var.set("Kein Modell geladen")
+        self.status_var.set(tr('Kein Modell geladen'))
         self._set_load_buttons(tk.NORMAL)
         if self.view.is_placeholder:
             self._show_placeholder()
@@ -1282,9 +1322,8 @@ class App:
             return
         if self.server.model:
             self._suggestion = None
-            note = (f"Geladen mit {self.server.n_ctx:,} Tokens Kontext. ".replace(",", ".") if self.server.n_ctx else "")
-            self.ctx_hint.set(note + "Vorschläge für andere Modelle gibt es nach dem Entladen (das geladene Modell "
-                                     "belegt den Grafikspeicher).")
+            note = (tr('Geladen mit {0:,} Tokens Kontext. ', self.server.n_ctx).replace(",", ".") if self.server.n_ctx else "")
+            self.ctx_hint.set(note + tr('Vorschläge für andere Modelle gibt es nach dem Entladen (das geladene Modell belegt den Grafikspeicher).'))
             self._show_suggestion(text_only=True)
             return
         mmproj = find_mmproj(model) if self.vision_var.get() else None
@@ -1295,7 +1334,7 @@ class App:
             self._show_suggestion()
             return
         self._suggestion = None
-        self.ctx_hint.set(f"Vorschlag für {model.stem} wird berechnet …")
+        self.ctx_hint.set(tr('Vorschlag für {0} wird berechnet …', model.stem))
         self._show_suggestion(text_only=True)
 
         def work():
@@ -1322,22 +1361,22 @@ class App:
                 if ngl is None:
                     where = ""
                 elif total and ngl > total:
-                    where = " · komplett auf der Grafikkarte"
+                    where = tr(' · komplett auf der Grafikkarte')
                 elif total:
-                    where = f" · {ngl} von {total + 1} Schichten auf der Grafikkarte, Rest im Arbeitsspeicher"
+                    where = tr(' · {0} von {1} Schichten auf der Grafikkarte, Rest im Arbeitsspeicher', ngl, total + 1)
                 else:
-                    where = f" · {ngl} Schichten auf der Grafikkarte"
+                    where = tr(' · {0} Schichten auf der Grafikkarte', ngl)
                 if s.get("experts_on_cpu"):
-                    where += ", ein Teil der Experten im Arbeitsspeicher"
+                    where += tr(', ein Teil der Experten im Arbeitsspeicher')
                 if s.get("host_mib", 0) >= 1024:
                     where += f" (~{s['host_mib'] / 1024:.1f} GB)".replace(".", ",")
-                more = (f" (begrenzt – das Modell könnte bis {fmt(s['context_length'])})"
+                more = (tr(' (begrenzt – das Modell könnte bis {0})', fmt(s['context_length']))
                         if s["ctx"] > AUTO_MAX_CTX and s.get("context_length") else "")
-                self.ctx_hint.set(f"{'Auto ergibt' if auto else 'Vorschlag'} für {s['model']}: {fmt(ctx)} Tokens"
-                                  f"{where}{more}")
+                self.ctx_hint.set(tr('{0} für {1}: {2} Tokens{3}{4}', tr('Auto ergibt') if auto else tr('Vorschlag'), s['model'], fmt(ctx), where, more))
             elif self.sel_model and not self.server.model:
-                self.ctx_hint.set("Kein Vorschlag möglich – dafür wird eine neuere llama.cpp-Version gebraucht "
-                                  "(„llama.cpp herunterladen / aktualisieren“). „auto“ nimmt dann 16.384.")
+                self.ctx_hint.set(tr(
+                    'Kein Vorschlag möglich – dafür wird eine neuere llama.cpp-Version gebraucht („llama.cpp '
+                    'herunterladen / aktualisieren“). „auto“ nimmt dann 16.384.'))
         show = bool(self._suggestion) and not auto and not text_only
         if show and not self.ctx_take.winfo_ismapped():
             self.ctx_take.pack(side=tk.LEFT, padx=(8, 0))
@@ -1358,7 +1397,7 @@ class App:
             lst.insert(tk.END, f"     {f}")
 
     def _add_folder(self):
-        d = filedialog.askdirectory(title="Ordner für das Modell freigeben", parent=self.settings_win)
+        d = filedialog.askdirectory(title=tr('Ordner für das Modell freigeben'), parent=self.settings_win)
         if not d:
             return
         d = str(Path(d))
@@ -1370,7 +1409,7 @@ class App:
     def _selected_folder(self) -> int | None:
         sel = self.folder_list.curselection()
         if not sel:
-            dialogs.showinfo("Freigegebene Ordner", "Bitte zuerst einen Ordner in der Liste auswählen.",
+            dialogs.showinfo(tr('Freigegebene Ordner'), tr('Bitte zuerst einen Ordner in der Liste auswählen.'),
                              parent=self.settings_win)
             return None
         return sel[0]
@@ -1391,8 +1430,9 @@ class App:
             return
         if i == 0:
             if not self.extra_folders:
-                dialogs.showinfo("Freigegebene Ordner", "Mindestens ein Arbeitsordner wird gebraucht. "
-                                 "Erst einen weiteren Ordner hinzufügen.", parent=self.settings_win)
+                dialogs.showinfo(tr(
+                    'Freigegebene Ordner'), tr(
+                    'Mindestens ein Arbeitsordner wird gebraucht. Erst einen weiteren Ordner hinzufügen.'), parent=self.settings_win)
                 return
             self.ws_var.set(self.extra_folders.pop(0))
         else:
@@ -1413,8 +1453,8 @@ class App:
         self._memory_items = memory.load()
         self._reminder_items = reminders.load()
         for lst, items, text, empty in (
-                (self.memory_list, self._memory_items, lambda n: n["text"], "(noch nichts gemerkt)"),
-                (self.reminder_list, self._reminder_items, reminders.describe, "(keine offenen Erinnerungen)")):
+                (self.memory_list, self._memory_items, lambda n: n["text"], tr('(noch nichts gemerkt)')),
+                (self.reminder_list, self._reminder_items, reminders.describe, tr('(keine offenen Erinnerungen)'))):
             lst.delete(0, tk.END)
             for item in items:
                 lst.insert(tk.END, f"[{item['id']}]  {text(item)}")
@@ -1433,7 +1473,7 @@ class App:
             self._fill_memory()
 
     def _forget_all(self):
-        if self._memory_items and dialogs.askyesno("Gedächtnis", "Alles Gemerkte löschen?", parent=self.settings_win):
+        if self._memory_items and dialogs.askyesno(tr('Gedächtnis'), tr('Alles Gemerkte löschen?'), parent=self.settings_win):
             memory.clear()
             self._fill_memory()
 
@@ -1452,7 +1492,7 @@ class App:
         now = datetime.now()
         for item in fired:
             due = datetime.strptime(item["due"], "%Y-%m-%d %H:%M")
-            text = item["text"] + (f"  (verpasst – war für {due:%d.%m. %H:%M} Uhr)"
+            text = item["text"] + (tr('  (verpasst – war für {0:%d.%m. %H:%M} Uhr)', due)
                                    if now - due > timedelta(minutes=2) else "")
             threading.Thread(target=self._notify_reminder, args=(text,), daemon=True).start()
         if fired:
@@ -1460,8 +1500,8 @@ class App:
         self.root.after(15_000, self._check_reminders)
 
     def _notify_reminder(self, text: str):
-        if not reminders.notify("Erinnerung", text):  # Benachrichtigungen aus? Dann eine Meldung im Programm
-            self.ui(dialogs.showinfo, "Erinnerung", text)
+        if not reminders.notify(tr('Erinnerung'), text):  # Benachrichtigungen aus? Dann eine Meldung im Programm
+            self.ui(dialogs.showinfo, tr('Erinnerung'), text)
 
     def _screenshot_from_worker(self):
         """Läuft im Agenten-Thread (take_screenshot) und wartet, bis der Tk-Thread das Foto gemacht hat."""
@@ -1480,7 +1520,7 @@ class App:
             try:
                 box["shot"] = images.screenshot()
             except Exception as e:
-                box["error"] = str(e) or type(e).__name__
+                box["error"] = error_text(e) or type(e).__name__
             finally:
                 self.root.deiconify()
                 self.root.lift()
@@ -1505,7 +1545,7 @@ class App:
                 path = self.recorder.stop()
             except RuntimeError as e:
                 self.mic_btn.configure(text="🎤", width=2)
-                dialogs.showerror("Spracherkennung", f"Die Aufnahme konnte nicht gespeichert werden: {e}")
+                dialogs.showerror(tr('Spracherkennung'), tr('Die Aufnahme konnte nicht gespeichert werden: {0}', e))
                 return
             self._transcribing = True
             self.mic_btn.configure(text="…", width=2)
@@ -1519,17 +1559,20 @@ class App:
             self.background(work, self._dictated)
             return
         if not speech.ready(model):
-            if dialogs.askyesno("Spracherkennung", "Zum Diktieren wird die Spracherkennung (whisper.cpp und ein "
-                                "Whisper-Modell) gebraucht. Sie läuft komplett auf deinem PC.\n\nJetzt herunterladen "
-                                "(einmalig, je nach Grafikkarte etwa 0,5–1,5 GB)?"):
+            if dialogs.askyesno(tr(
+                'Spracherkennung'), tr(
+                'Zum Diktieren wird die Spracherkennung (whisper.cpp und ein Whisper-Modell) gebraucht. Sie läuft '
+                'komplett auf deinem PC.\n\nJetzt herunterladen (einmalig, je nach Grafikkarte etwa 0,5–1,5 GB)?')):
                 self.open_settings("speech")
                 self.download_speech(confirm=False)
             return
         try:
             self.recorder.start()
         except RuntimeError as e:
-            dialogs.showerror("Spracherkennung", f"Die Aufnahme konnte nicht starten: {e}\n\nIst ein Mikrofon "
-                              "angeschlossen und in Windows freigegeben?")
+            dialogs.showerror(tr(
+                'Spracherkennung'), tr(
+                'Die Aufnahme konnte nicht starten: {0}\n\nIst ein Mikrofon angeschlossen und in Windows freigegeben?',
+                e))
             return
         self._tick_recording()
 
@@ -1546,11 +1589,11 @@ class App:
         self._transcribing = False
         self.mic_btn.configure(text="🎤", width=2)
         if err:
-            dialogs.showerror("Spracherkennung", err)
+            dialogs.showerror(tr('Spracherkennung'), err)
             return
         spoken = " ".join(text.split())
         if not spoken:
-            dialogs.showinfo("Spracherkennung", "Es wurde nichts erkannt. War das Mikrofon an (und nicht stumm)?")
+            dialogs.showinfo(tr('Spracherkennung'), tr('Es wurde nichts erkannt. War das Mikrofon an (und nicht stumm)?'))
             return
         before = self.input.get("insert-1c", "insert")
         self.input.insert("insert", (" " if before and not before.isspace() else "") + spoken)
@@ -1561,18 +1604,18 @@ class App:
 
         def offer(plan):
             if not plan["program"] and not plan["model"]:
-                self.speech_status.set(f"✔ Alles aktuell: {speech.describe(model)}")
+                self.speech_status.set(tr('✔ Alles aktuell: {0}', speech.describe(model)))
                 return None
             parts = []
             if plan["program"]:
                 parts.append(f"whisper.cpp {plan['tag']} ({plan['kind']}): {plan['program'][2] / 1024 ** 2:.0f} MB")
             if plan["model"]:
-                parts.append(f"Modell {plan['model'][0]}: {plan['model'][2] / 1024 ** 2:.0f} MB")
-            return ("Spracherkennung herunterladen", f"Grafikkarte: {plan['gpu']}\n" + "\n".join(parts)
-                    + f"\n\nZusammen {plan['size'] / 1024 ** 2:.0f} MB – jetzt herunterladen?", "Spracherkennung")
+                parts.append(tr('Modell {0}: {1:.0f} MB', plan['model'][0], plan['model'][2] / 1024 ** 2))
+            return (tr('Spracherkennung herunterladen'), tr('Grafikkarte: {0}\n', plan['gpu']) + "\n".join(parts)
+                    + tr('\n\nZusammen {0:.0f} MB – jetzt herunterladen?', plan['size'] / 1024 ** 2), tr('Spracherkennung'))
 
         def finished(plan, _):
-            self.speech_status.set(f"✔ Installiert: {speech.describe(model)} – 🎤 neben dem Eingabefeld zum Diktieren.")
+            self.speech_status.set(tr('✔ Installiert: {0} – 🎤 neben dem Eingabefeld zum Diktieren.', speech.describe(model)))
 
         self._download_flow(self.speech_btn, self.speech_status, lambda: speech.plan(model), offer, speech.install,
                             finished, confirm)
@@ -1581,12 +1624,12 @@ class App:
 
     def pick_attachments(self):
         files = filedialog.askopenfilenames(
-            title="Dokumente, Bilder und Audio anhängen", parent=self.root,
-            filetypes=[("Dokumente, Bilder und Audio", "*.pdf *.docx *.xlsx *.pptx *.odt *.ods *.odp *.rtf *.txt *.md "
+            title=tr('Dokumente, Bilder und Audio anhängen'), parent=self.root,
+            filetypes=[(tr('Dokumente, Bilder und Audio'), "*.pdf *.docx *.xlsx *.pptx *.odt *.ods *.odp *.rtf *.txt *.md "
                                                        "*.csv *.json *.html *.htm *.xml *.log *.png *.jpg *.jpeg *.bmp "
                                                        "*.gif *.wav *.mp3 *.flac *.ogg"),
-                       ("Bilder", "*.png *.jpg *.jpeg *.bmp *.gif"), ("Audio", "*.wav *.mp3 *.flac *.ogg"),
-                       ("Alle Dateien", "*.*")])
+                       (tr('Bilder'), "*.png *.jpg *.jpeg *.bmp *.gif"), ("Audio", "*.wav *.mp3 *.flac *.ogg"),
+                       (tr('Alle Dateien'), "*.*")])
         self.add_attachments(files)
 
     def add_attachments(self, paths):
@@ -1606,8 +1649,7 @@ class App:
                             lambda doc, err, att=att: self._attached(att, doc, err))
         self._render_attachments()
         if skipped:
-            dialogs.showinfo("Monhip", f"Höchstens {MAX_ATTACHMENTS} Dateien pro Nachricht – "
-                                                 f"{skipped} wurden nicht angehängt.")
+            dialogs.showinfo("Monhip", tr('Höchstens {0} Dateien pro Nachricht – {1} wurden nicht angehängt.', MAX_ATTACHMENTS, skipped))
         self.input.focus_set()
 
     @staticmethod
@@ -1621,7 +1663,7 @@ class App:
             if not share or not path.is_file():
                 raise
         if path.stat().st_size > room_net.MAX_FILE:
-            raise ValueError(f"Zu groß zum Teilen ({documents.human_size(path.stat().st_size)}, höchstens 100 MB).")
+            raise ValueError(tr('Zu groß zum Teilen ({0}, höchstens 100 MB).', documents.human_size(path.stat().st_size)))
         return documents.Document(path, projekt.file_kind(path), "", share_only=True)
 
     @staticmethod
@@ -1630,11 +1672,11 @@ class App:
             return images.read(path, images.TEMP_DIR / f"vorschau-{secrets.token_hex(4)}.png", thumb_size)
         if speech.is_audio(path):
             if not speech.ready(speech_opts[0]):
-                raise ValueError("Zum Abschreiben erst die Spracherkennung herunterladen (Einstellungen → Sprache).")
+                raise ValueError(tr('Zum Abschreiben erst die Spracherkennung herunterladen (Einstellungen → Sprache).'))
             text = speech.transcribe(path, *speech_opts)
             if not text.strip():
-                raise ValueError("In der Aufnahme wurde keine Sprache erkannt.")
-            return documents.Document(path, f"Audio ({path.suffix[1:].upper()}, abgeschrieben)", text)
+                raise ValueError(tr('In der Aufnahme wurde keine Sprache erkannt.'))
+            return documents.Document(path, tr('Audio ({0}, abgeschrieben)', path.suffix[1:].upper()), text)
         return documents.read(path)
 
     def _attached(self, att: dict, doc, err: str | None):
@@ -1660,7 +1702,7 @@ class App:
         if self.quote:
             short = " ".join(self.quote.split())
             short = short if len(short) <= 90 else short[:89].rstrip() + "…"
-            self._chip(bar, "↳ Antwort auf", f"„{short}“", "ChipInfo.TLabel",
+            self._chip(bar, tr('↳ Antwort auf'), f"„{short}“", "ChipInfo.TLabel",
                        lambda: (setattr(self, "quote", None), self._render_attachments())
                        ).pack(side=tk.TOP, anchor="w", pady=(0, 4))
         avail = max(300, self.chat.winfo_width() - round(36 * self.ui_scale))
@@ -1671,7 +1713,7 @@ class App:
             name = name if len(name) <= 34 else name[:22] + "…" + name[-10:]
             if att["status"] == "loading":
                 label, style = name, "ChipInfo.TLabel"
-                info = "wird abgeschrieben …" if speech.is_audio(att["path"]) else "wird gelesen …"
+                info = tr('wird abgeschrieben …') if speech.is_audio(att["path"]) else tr('wird gelesen …')
             elif att["status"] == "ok":
                 label, info, style = name, att["doc"].info, "ChipInfo.TLabel"
             else:
@@ -1712,7 +1754,7 @@ class App:
         if path:
             self.add_attachments([path])
         else:
-            dialogs.showerror("Monhip", "Das Bild aus der Zwischenablage konnte nicht übernommen werden.")
+            dialogs.showerror("Monhip", tr('Das Bild aus der Zwischenablage konnte nicht übernommen werden.'))
 
     def _display_files(self, files: list[dict] | None) -> list[dict] | None:
         """Kärtchen-Daten für die Anzeige: bei Bildern Pfad und Vorschaubild aus chats/bilder/ ergänzen."""
@@ -1778,14 +1820,14 @@ class App:
     def _set_busy(self, busy: bool):
         self.busy = busy
         if self.mode == "chat":  # im Raum-Modus bleibt der Knopf „Senden“ (die eigene KI stoppt man links)
-            self.send_btn.configure(text="■ Stopp" if busy else "Senden")
+            self.send_btn.configure(text=tr('■ Stopp') if busy else tr('Senden'))
 
     def send(self):
         text = self.input.get("1.0", tk.END).strip()
         if self.busy and self.mode == "chat":
             return
         if any(a["status"] == "loading" for a in self.attachments):
-            dialogs.showinfo("Monhip", "Die angehängten Dokumente werden noch gelesen – einen Moment bitte.")
+            dialogs.showinfo("Monhip", tr('Die angehängten Dokumente werden noch gelesen – einen Moment bitte.'))
             return
         docs = [a["doc"] for a in self.attachments if a["status"] == "ok"]
         if not text and not docs:
@@ -1803,13 +1845,15 @@ class App:
             return
         only_shared = [d.name for d in docs if d.share_only]
         if only_shared:
-            dialogs.showinfo("Monhip", "„" + "“, „".join(only_shared) + "“ kann das Modell nicht lesen – solche "
-                             "Dateien lassen sich nur in Teamwork teilen. Bitte entfernen (✕).")
+            dialogs.showinfo("Monhip", "„" + "“, „".join(only_shared) + tr(
+                '“ kann das Modell nicht lesen – solche Dateien lassen sich nur in Teamwork teilen. Bitte entfernen'
+                ' (✕).'))
             return
         if pics and self.server.model and not self.server.vision:
-            dialogs.showinfo("Monhip", "Das geladene Modell kann keine Bilder ansehen. Dafür muss neben "
-                             "dem Modell eine mmproj-Datei liegen und unter Einstellungen → Laden "
-                             "„Bildverständnis laden“ eingeschaltet sein – dann das Modell neu laden.")
+            dialogs.showinfo("Monhip", tr(
+                'Das geladene Modell kann keine Bilder ansehen. Dafür muss neben dem Modell eine mmproj-Datei '
+                'liegen und unter Einstellungen → Laden „Bildverständnis laden“ eingeschaltet sein – dann das '
+                'Modell neu laden.'))
             return
         prepared = self._prepare_turn()
         if not prepared:
@@ -1823,7 +1867,7 @@ class App:
         try:  # Bilder zum Chat kopieren (chats/bilder/<id>/), damit sie auch später noch ans Modell gehen
             rels = [chats.store_image(self.chat_data["id"], d.path, d.thumb) for d in pics]
         except OSError as e:
-            dialogs.showerror("Monhip", f"Bild konnte nicht gespeichert werden: {e}")
+            dialogs.showerror("Monhip", tr('Bild konnte nicht gespeichert werden: {0}', e))
             return
         self.input.delete("1.0", tk.END)
         content, files_meta = self._compose_message(text, [d for d in docs if not d.image])
@@ -1846,19 +1890,19 @@ class App:
     def _prepare_turn(self):
         """Prüft, ob eine Antwort gestartet werden kann, und baut die Werkzeuge. → (params, agent) oder None."""
         if not self.server.is_running() or not self.server.model:
-            dialogs.showinfo("Monhip", "Bitte zuerst oben rechts ein Modell laden.")
+            dialogs.showinfo("Monhip", tr('Bitte zuerst oben rechts ein Modell laden.'))
             return None
         try:
             params = {"temperature": float(self.temp_var.get()), "max_tokens": int(self.maxtok_var.get())}
         except ValueError:
-            dialogs.showerror("Monhip", "Temperatur / Max. Tokens ungültig (Einstellungen → Laden).")
+            dialogs.showerror("Monhip", tr('Temperatur / Max. Tokens ungültig (Einstellungen → Laden).'))
             return None
 
         if (self.agent_var.get() or self.cmd_var.get()):
             try:
                 Path(self.ws_var.get()).mkdir(parents=True, exist_ok=True)
             except OSError as e:
-                dialogs.showerror("Monhip", f"Arbeitsordner nicht verfügbar: {e}")
+                dialogs.showerror("Monhip", tr('Arbeitsordner nicht verfügbar: {0}', e))
                 return None
         return params, self._make_agent()
 
@@ -1916,7 +1960,7 @@ class App:
             try:
                 messages = window.begin()  # fasst vor dem Senden zusammen, wenn der Verlauf zu voll ist
             except Exception as e:  # z. B. Server beim Zählen nicht erreichbar – dann eben ohne Zusammenfassen
-                put("error", f"Kontext konnte nicht geprüft werden: {e}")
+                put("error", tr('Kontext konnte nicht geprüft werden: {0}', e))
                 messages = window.plain()
             if self.stop_event.is_set():  # beim Zusammenfassen gestoppt
                 put("done", [])
@@ -1928,7 +1972,7 @@ class App:
                 run_conversation(base_url, messages, params, agent, self.stop_event, put, budget=budget,
                                  prepare=window.prepare, on_overflow=window.overflow)
             except Exception as e:
-                put("error", str(e))
+                put("error", error_text(e))
             # Neue Nachrichten (Antworten, Tool-Ergebnisse) in den Verlauf übernehmen
             put("done", messages[n_before:])
 
@@ -1944,14 +1988,17 @@ class App:
 
     def _expert_on(self) -> bool:
         if self.busy:
-            dialogs.showinfo("Experten-Modus", "Bitte warten, bis die laufende Antwort fertig ist.")
+            dialogs.showinfo(tr('Experten-Modus'), tr('Bitte warten, bis die laufende Antwort fertig ist.'))
             return False
         if not (self.server.is_running() and self.server.model):
-            dialogs.showinfo("Experten-Modus", "Zuerst oben rechts ein Modell laden – es wertet die Dokumente aus.")
+            dialogs.showinfo(tr('Experten-Modus'), tr('Zuerst oben rechts ein Modell laden – es wertet die Dokumente aus.'))
             return False
         if self.expert_job:
-            dialogs.showinfo("Experten-Modus", f"Es läuft schon eine Auswertung („{self.expert_job.source.name}“). "
-                                               "Bitte warten, bis sie fertig ist, oder sie unten im Fenster stoppen.")
+            dialogs.showinfo(tr(
+                'Experten-Modus'), tr(
+                'Es läuft schon eine Auswertung („{0}“). Bitte warten, bis sie fertig ist, oder sie unten im '
+                'Fenster stoppen.',
+                self.expert_job.source.name))
             return False
         choice = self._expert_dialog()
         if not choice:
@@ -1973,12 +2020,13 @@ class App:
         if not cfg:
             return True
         if self.busy:
-            dialogs.showinfo("Experten-Modus", "Bitte warten, bis die laufende Antwort fertig ist.")
+            dialogs.showinfo(tr('Experten-Modus'), tr('Bitte warten, bis die laufende Antwort fertig ist.'))
             return False
         if self.expert_job and self._expert_job_chat == self.chat_data["id"]:
-            if not dialogs.askyesno("Experten-Modus beenden", "Die Auswertung läuft noch. Anhalten und den "
-                                    "Experten-Modus für diesen Chat beenden?\n\nDie bisherigen Ergebnisse bleiben "
-                                    "erhalten – beim erneuten Einschalten geht es dort weiter."):
+            if not dialogs.askyesno(tr(
+                'Experten-Modus beenden'), tr(
+                'Die Auswertung läuft noch. Anhalten und den Experten-Modus für diesen Chat beenden?\n\nDie '
+                'bisherigen Ergebnisse bleiben erhalten – beim erneuten Einschalten geht es dort weiter.')):
                 return False
             self.expert_job.stop_event.set()
         self.chat_data.pop("experte", None)
@@ -1990,35 +2038,39 @@ class App:
 
     def _expert_dialog(self) -> tuple[Path, str] | None:
         """Ordner wählen, dann kurzer Dialog mit Anzahl der Dokumente und optionalem Schwerpunkt."""
-        chosen = filedialog.askdirectory(title="Ordner mit den Dokumenten wählen", parent=self.root)
+        chosen = filedialog.askdirectory(title=tr('Ordner mit den Dokumenten wählen'), parent=self.root)
         if not chosen:
             return None
         folder = Path(chosen).resolve()
         count = len(experte.find_documents(folder))
         if not count:
-            dialogs.showinfo("Experten-Modus", "In diesem Ordner wurden keine lesbaren Dokumente gefunden (PDF, Word, "
-                                               "Excel, PowerPoint, OpenDocument, RTF, Text).")
+            dialogs.showinfo(tr(
+                'Experten-Modus'), tr(
+                'In diesem Ordner wurden keine lesbaren Dokumente gefunden (PDF, Word, Excel, PowerPoint, '
+                'OpenDocument, RTF, Text).'))
             return None
         status = experte.status_of(folder)
         if status:
-            about = (f"{count} Dokumente – {status['ok']} davon sind schon ausgewertet; neue und geänderte werden "
-                     "ergänzt.")
+            about = (tr('{0} Dokumente – {1} davon sind schon ausgewertet; neue und geänderte werden ergänzt.', count, status['ok']))
         else:
-            about = (f"{count} Dokumente. Jedes wird einzeln vom geladenen Modell zusammengefasst und für die Suche "
-                     "erfasst – bei vielen Dateien kann das Stunden dauern. Fragen gehen schon währenddessen.")
-        win = dialogs.window("Experten-Modus", self.root)
+            about = (tr(
+                '{0} Dokumente. Jedes wird einzeln vom geladenen Modell zusammengefasst und für die Suche erfasst –'
+                ' bei vielen Dateien kann das Stunden dauern. Fragen gehen schon währenddessen.',
+                count))
+        win = dialogs.window(tr('Experten-Modus'), self.root)
         body = ttk.Frame(win, padding=18)
         body.pack(fill=tk.BOTH, expand=True)
         wrap = round(460 * self.ui_scale)
-        ttk.Label(body, text="Experten-Modus", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(body, text=tr('Experten-Modus'), style="Title.TLabel").pack(anchor="w")
         ttk.Label(body, text=str(folder), wraplength=wrap).pack(anchor="w", pady=(8, 0))
         ttk.Label(body, text=about, style="Muted.TLabel", wraplength=wrap).pack(anchor="w", pady=(4, 12))
-        ttk.Label(body, text="Schwerpunkt (optional)").pack(anchor="w")
+        ttk.Label(body, text=tr('Schwerpunkt (optional)')).pack(anchor="w")
         focus = tk.StringVar(value=(status or {}).get("schwerpunkt", ""))
         entry = ttk.Entry(body, textvariable=focus, width=58)
         entry.pack(fill=tk.X, pady=(4, 2))
-        ttk.Label(body, text="Zum Beispiel „Kündigungsfristen“ – jede Zusammenfassung arbeitet das zusätzlich heraus. "
-                             "Ein geänderter Schwerpunkt wertet alle Dokumente neu aus.", style="Muted.TLabel",
+        ttk.Label(body, text=tr(
+            'Zum Beispiel „Kündigungsfristen“ – jede Zusammenfassung arbeitet das zusätzlich heraus. Ein geänderter'
+            ' Schwerpunkt wertet alle Dokumente neu aus.'), style="Muted.TLabel",
                   wraplength=wrap).pack(anchor="w")
         result = {}
 
@@ -2028,8 +2080,8 @@ class App:
 
         bf = ttk.Frame(body)
         bf.pack(fill=tk.X, pady=(16, 0))
-        ttk.Button(bf, text="Abbrechen", command=win.destroy).pack(side=tk.RIGHT)
-        ttk.Button(bf, text="Auswertung starten", style="Accent.TButton", command=start).pack(side=tk.RIGHT,
+        ttk.Button(bf, text=tr('Abbrechen'), command=win.destroy).pack(side=tk.RIGHT)
+        ttk.Button(bf, text=tr('Auswertung starten'), style="Accent.TButton", command=start).pack(side=tk.RIGHT,
                                                                                             padx=(0, 6))
         entry.bind("<Return>", start)
         win.bind("<Escape>", lambda e: win.destroy())
@@ -2042,14 +2094,14 @@ class App:
         if not cfg or self.expert_job:
             return
         if not (self.server.is_running() and self.server.model):
-            dialogs.showinfo("Experten-Modus", "Zum Fortsetzen zuerst oben rechts ein Modell laden.")
+            dialogs.showinfo(tr('Experten-Modus'), tr('Zum Fortsetzen zuerst oben rechts ein Modell laden.'))
             return
         holder = {}
         job = experte.Job(Path(cfg["quelle"]), self.server.base_url, self._ctx_value(), self.server.vision,
                           cfg.get("schwerpunkt", ""), lambda k, d: self.ui(self._expert_event, holder["job"], k, d))
         holder["job"] = job
         self.expert_job, self._expert_job_chat = job, self.chat_data["id"]
-        self._expert_text, self._expert_paused = f"Auswertung „{job.source.name}“ beginnt …", False
+        self._expert_text, self._expert_paused = tr('Auswertung „{0}“ beginnt …', job.source.name), False
         if self.busy:  # gestartet von der KI mitten in einer Antwort
             job.pause_chat.set()
         job.start()
@@ -2061,17 +2113,29 @@ class App:
             return
         name = job.source.name
         if kind == "start":
-            self._expert_text = (f"Auswertung „{name}“: {data['total'] - data['todo']} von {data['total']} Dokumenten"
-                                 if data["todo"] else f"Auswertung „{name}“: alles aktuell, Überblick wird geprüft")
+            self._expert_text = (tr('Auswertung „{0}“: {1} von {2} Dokumenten', name, data['total'] - data['todo'], data['total'])
+                                 if data["todo"] else tr('Auswertung „{0}“: alles aktuell, Überblick wird geprüft', name))
         elif kind == "file":
             if data["rel"]:
-                self._expert_text = (f"Auswertung „{name}“: {data['done']} von {data['total']} · "
-                                     f"{Path(data['rel']).name}{self._eta_text(data.get('eta'))}")
+                self._expert_text = (tr(
+                    'Auswertung „{0}“: {1} von {2} · {3}{4}',
+                    name,
+                    data['done'],
+                    data['total'],
+                    Path(data['rel']).name,
+                    self._eta_text(data.get('eta'))))
             else:
-                self._expert_text = f"Auswertung „{name}“: Gesamtüberblick wird erstellt"
+                self._expert_text = tr('Auswertung „{0}“: Gesamtüberblick wird erstellt', name)
         elif kind == "page":  # eingescanntes PDF: Seite für Seite
-            self._expert_text = (f"Auswertung „{name}“: {data['done']} von {data['total']} · {Path(data['rel']).name}"
-                                 f" · Seite {data['page']} von {data['pages']}{self._eta_text(data.get('eta'))}")
+            self._expert_text = (tr(
+                'Auswertung „{0}“: {1} von {2} · {3} · Seite {4} von {5}{6}',
+                name,
+                data['done'],
+                data['total'],
+                Path(data['rel']).name,
+                data['page'],
+                data['pages'],
+                self._eta_text(data.get('eta'))))
         elif kind in ("paused", "resumed"):
             self._expert_paused = kind == "paused"
         elif kind in ("finished", "stopped", "fatal"):
@@ -2079,13 +2143,20 @@ class App:
             if kind == "fatal":
                 note = str(data)
             else:
-                extras = [f"{data[k]} {label}" for k, label in (("scan", "Scans ohne Bildverständnis nicht gelesen"),
-                                                                 ("fehler", "nicht lesbar"), ("leer", "ohne Text"))
+                extras = [f"{data[k]} {label}" for k, label in (("scan", tr('Scans ohne Bildverständnis nicht gelesen')),
+                                                                 ("fehler", tr('nicht lesbar')), (tr('leer'), tr('ohne Text')))
                           if data.get(k)]
-                note = ((f"Auswertung abgeschlossen: {data['ok']} von {data['total']} Dokumenten in „{name}“ "
-                         "ausgewertet" if kind == "finished" else
-                         f"Auswertung gestoppt: {data['ok']} von {data['total']} Dokumenten in „{name}“ ausgewertet – "
-                         "„Fortsetzen“ macht dort weiter") + (f" ({', '.join(extras)})" if extras else "") + ".")
+                note = ((tr(
+                    'Auswertung abgeschlossen: {0} von {1} Dokumenten in „{2}“ ausgewertet',
+                    data['ok'],
+                    data['total'],
+                    name) if kind == "finished" else
+                         tr(
+                             'Auswertung gestoppt: {0} von {1} Dokumenten in „{2}“ ausgewertet – „Fortsetzen“ macht'
+                             ' dort weiter',
+                             data['ok'],
+                             data['total'],
+                             name)) + (f" ({', '.join(extras)})" if extras else "") + ".")
             if self.chat_data and self.chat_data["id"] == self._expert_job_chat and not self.busy:
                 self.view.note(note, "warn" if kind == "fatal" else "note")
         self._update_expert_row()
@@ -2095,8 +2166,8 @@ class App:
         """„ · noch ca. 12 Min.“ bzw. „ · noch ca. 2,5 Std.“ (leer, solange die Restzeit unbekannt ist)."""
         if eta is None:
             return ""
-        return (f" · noch ca. {f'{eta / 3600:.1f}'.replace('.', ',')} Std." if eta >= 5400
-                else f" · noch ca. {max(1, round(eta / 60))} Min.")
+        return (tr(' · noch ca. {0} Std.', f'{eta / 3600:.1f}'.replace('.', ',')) if eta >= 5400
+                else tr(' · noch ca. {0} Min.', max(1, round(eta / 60))))
 
     def _update_expert_row(self):
         """Leiste unten links: Häkchen nach dem Chat, Fortschritt bzw. Stand, passende Verweise."""
@@ -2112,10 +2183,10 @@ class App:
         job = self.expert_job
         if job:
             # Zusatz erst hier: ein schon unterwegs befindlicher Fortschritt überschreibt ihn sonst
-            pause = (" · angehalten" if self._expert_paused else " · wird angehalten …") if job.pause_user.is_set() else ""
+            pause = (tr(' · angehalten') if self._expert_paused else tr(' · wird angehalten …')) if job.pause_user.is_set() else ""
             self.expert_status.set(self._expert_text + pause)
-            self._expert_link("Fortsetzen" if job.pause_user.is_set() else "Pausieren", self._expert_pause)
-            self._expert_link("Stoppen", lambda: job.stop_event.set())
+            self._expert_link(tr('Fortsetzen') if job.pause_user.is_set() else tr('Pausieren'), self._expert_pause)
+            self._expert_link(tr('Stoppen'), lambda: job.stop_event.set())
             return
         if not cfg:
             self.expert_status.set("")
@@ -2123,14 +2194,17 @@ class App:
         folder = Path(cfg["quelle"])
         st = experte.status_of(folder)
         if not folder.is_dir():
-            self.expert_status.set(f"Ordner „{folder.name}“ nicht gefunden")
+            self.expert_status.set(tr('Ordner „{0}“ nicht gefunden', folder.name))
         elif st and st["fertig"]:
-            self.expert_status.set(f"Experte für „{folder.name}“ · {st['ok']} Dokumente")
-            self._expert_link("Aktualisieren", self._start_expert_job)
+            self.expert_status.set(tr('Experte für „{0}“ · {1} Dokumente', folder.name, st['ok']))
+            self._expert_link(tr('Aktualisieren'), self._start_expert_job)
         else:
-            self.expert_status.set(f"Auswertung „{folder.name}“ unvollständig ({st['ok'] if st else 0} von "
-                                   f"{st['dateien'] if st and st['dateien'] else '…'})")
-            self._expert_link("Fortsetzen", self._start_expert_job)
+            self.expert_status.set(tr(
+                'Auswertung „{0}“ unvollständig ({1} von {2})',
+                folder.name,
+                st['ok'] if st else 0,
+                st['dateien'] if st and st['dateien'] else '…'))
+            self._expert_link(tr('Fortsetzen'), self._start_expert_job)
 
     def _expert_link(self, text: str, command):
         link = ttk.Label(self.expert_links, text=text, style="Muted.TLabel", font=("Segoe UI", 8, "underline"),
@@ -2155,7 +2229,7 @@ class App:
             try:
                 box["msg"] = self._expert_start_from_ai(folder, focus)
             except Exception as e:
-                box["msg"] = f"Fehler: {e}"
+                box["msg"] = tr('Fehler: {0}', e)
             finally:
                 done.set()
 
@@ -2183,7 +2257,7 @@ class App:
 
     @staticmethod
     def _summary_title(count: int) -> str:
-        return f"Ältere Unterhaltung zusammengefasst  ·  {count} Nachrichten"
+        return tr('Ältere Unterhaltung zusammengefasst  ·  {0} Nachrichten', count)
 
     def _estimate_context(self):
         """Kontextanzeige für den gezeigten Chat neu bestimmen (zählt im Hintergrund mit dem Server). Genaue
@@ -2236,7 +2310,7 @@ class App:
             self.ctx_text.set("")
             return
         fmt = lambda n: f"{n:,}".replace(",", ".")
-        label = "Kontext deiner KI" if room else "Kontext"
+        label = tr('Kontext deiner KI') if room else tr('Kontext')
         if used is None:
             self.ctx_text.set(f"{label} … / {fmt(total)}")
             return
@@ -2272,7 +2346,7 @@ class App:
         Fassungen liegen in der Nachricht: `_variants` = Verläufe ab hier; an der Stelle `_variant` (der gerade
         gezeigten) steht None, weil diese Fassung im Verlauf selbst steht."""
         if self.busy:
-            dialogs.showinfo("Monhip", "Bitte warten, bis die laufende Antwort fertig ist (oder „■ Stopp“).")
+            dialogs.showinfo("Monhip", tr('Bitte warten, bis die laufende Antwort fertig ist (oder „■ Stopp“).'))
             return
         m = self.history[index] if 0 <= index < len(self.history) else {}
         variants, cur = list(m.get("_variants") or []), m.get("_variant", 0)
@@ -2290,7 +2364,7 @@ class App:
         """Eigene Nachricht ändern: Die bisherige Fassung samt allem danach bleibt als Version erhalten (‹ 1/2 ›),
         das Modell antwortet auf die neue. False = nicht möglich (das Bearbeitungsfeld bleibt offen)."""
         if self.busy:
-            dialogs.showinfo("Monhip", "Bitte warten, bis die laufende Antwort fertig ist (oder „■ Stopp“).")
+            dialogs.showinfo("Monhip", tr('Bitte warten, bis die laufende Antwort fertig ist (oder „■ Stopp“).'))
             return False
         if not (0 <= index < len(self.history)) or self.history[index].get("role") != "user":
             return False
@@ -2349,7 +2423,7 @@ class App:
         body = ttk.Frame(win, padding=16)
         body.pack(fill=tk.BOTH, expand=True)
         ttk.Label(body, text=title, style="Title.TLabel").pack(anchor="w")
-        ttk.Label(body, text="Das Modell möchte folgende Aktion ausführen:", style="Muted.TLabel").pack(
+        ttk.Label(body, text=tr('Das Modell möchte folgende Aktion ausführen:'), style="Muted.TLabel").pack(
             anchor="w", pady=(2, 8))
         lines = text.count("\n") + 1
         frame, box = scrolled(body, wrap=tk.WORD, width=88, height=max(4, min(lines + 1, 18)),
@@ -2366,11 +2440,11 @@ class App:
 
         bf = ttk.Frame(body)
         bf.pack(fill=tk.X, pady=(12, 0))
-        ttk.Button(bf, text="Ablehnen", command=lambda: answer("no")).pack(side=tk.RIGHT)
-        ttk.Button(bf, text="Alle erlauben", command=lambda: answer("all")).pack(side=tk.RIGHT, padx=(0, 6))
-        ok = ttk.Button(bf, text="Erlauben", style="Accent.TButton", command=lambda: answer("yes"))
+        ttk.Button(bf, text=tr('Ablehnen'), command=lambda: answer("no")).pack(side=tk.RIGHT)
+        ttk.Button(bf, text=tr('Alle erlauben'), command=lambda: answer("all")).pack(side=tk.RIGHT, padx=(0, 6))
+        ok = ttk.Button(bf, text=tr('Erlauben'), style="Accent.TButton", command=lambda: answer("yes"))
         ok.pack(side=tk.RIGHT, padx=(0, 6))
-        ttk.Label(bf, text="„Alle erlauben“ gilt bis zum Ende dieser Antwort.", style="Muted.TLabel").pack(
+        ttk.Label(bf, text=tr('„Alle erlauben“ gilt bis zum Ende dieser Antwort.'), style="Muted.TLabel").pack(
             side=tk.LEFT)
         win.bind("<Escape>", lambda e: answer("no"))
         win.protocol("WM_DELETE_WINDOW", lambda: answer("no"))
@@ -2492,11 +2566,11 @@ class App:
         elif kind == "context_full":  # mitten in der Antwort – statt der Server-Fehlermeldung
             self._close_think()
             view.hide_pending()
-            view.note(context.FULL_NOTE, "warn")
-            view.show_pending("Komprimiere die Unterhaltung …")
+            view.note(tr(context.FULL_NOTE), "warn")
+            view.show_pending(tr('Komprimiere die Unterhaltung …'))
         elif kind == "compress":
             view.hide_pending()
-            view.show_pending("Fasse ältere Unterhaltung zusammen …")
+            view.show_pending(tr('Fasse ältere Unterhaltung zusammen …'))
         elif kind == "compressed":  # Zusammenfassung an die erste vollständige Nachricht hängen (wird gespeichert)
             index, summary, count = data
             if 0 <= index < len(self.history):
@@ -2510,7 +2584,7 @@ class App:
             view.note(data)
         elif kind == "error":
             self._close_think()
-            view.note(f"Fehler: {data}", "error")
+            view.note(tr('Fehler: {0}', data), "error")
         elif kind == "confirm":
             title, text, done, box = data
             box["answer"] = self.ask_confirm(title, text)
@@ -2546,7 +2620,7 @@ class App:
                 if len(msg.get("_thinking", "")) >= 40:  # für ein paar Wörter lohnt keine Überschrift
                     jobs.append((n, msg))
         if self.stop_event.is_set():
-            self.view.note("[gestoppt]")
+            self.view.note(tr('[gestoppt]'))
         last = assistants[-1] if assistants else None
         if last and last.get("content") and not last.get("tool_calls"):
             self.view.footer(last["content"], self.turn.get("tps"))
@@ -2611,15 +2685,15 @@ class App:
         if self.dl_win and self.dl_win.winfo_exists():
             self.dl_win.lift()
             return
-        win = self.dl_win = dialogs.window("Modell herunterladen", self.settings_win)
+        win = self.dl_win = dialogs.window(tr('Modell herunterladen'), self.settings_win)
         body = ttk.Frame(win, padding=10)
         body.pack(fill=tk.BOTH, expand=True)
-        ttk.Label(body, text="Direktlink zu einer .gguf-Datei (z.B. Hugging Face → Files → Datei → Link kopieren):"
+        ttk.Label(body, text=tr('Direktlink zu einer .gguf-Datei (z.B. Hugging Face → Files → Datei → Link kopieren):')
                   ).pack(anchor="w", pady=(0, 2))
         url_var = tk.StringVar()
         entry = ttk.Entry(body, textvariable=url_var)
         entry.pack(fill=tk.X)
-        ttk.Label(body, text=f"Ziel: {MODEL_DIR}", style="Muted.TLabel").pack(anchor="w", pady=4)
+        ttk.Label(body, text=tr('Ziel: {0}', MODEL_DIR), style="Muted.TLabel").pack(anchor="w", pady=4)
         self.dl_bar = ttk.Progressbar(body, maximum=100)
         self.dl_bar.pack(fill=tk.X)
         self.dl_label = ttk.Label(body, text="")
@@ -2636,9 +2710,9 @@ class App:
 
         bf = ttk.Frame(body)
         bf.pack(pady=(6, 0))
-        start_btn = ttk.Button(bf, text="Herunterladen", style="Accent.TButton", command=start)
+        start_btn = ttk.Button(bf, text=tr('Herunterladen'), style="Accent.TButton", command=start)
         start_btn.pack(side=tk.LEFT, padx=4)
-        ttk.Button(bf, text="Abbrechen", command=close).pack(side=tk.LEFT, padx=4)
+        ttk.Button(bf, text=tr('Abbrechen'), command=close).pack(side=tk.LEFT, padx=4)
         win.protocol("WM_DELETE_WINDOW", close)
         entry.bind("<Return>", lambda e: start_btn.invoke())
         dialogs.present(win, self.settings_win, size=(round(640 * self.ui_scale), round(200 * self.ui_scale)),
@@ -2648,7 +2722,7 @@ class App:
         url = url.replace("/blob/", "/resolve/")
         name = url.split("?")[0].rstrip("/").split("/")[-1]
         if not name.lower().endswith(".gguf"):
-            dialogs.showerror("Download", "Der Link muss auf eine .gguf-Datei zeigen.", parent=self.dl_win)
+            dialogs.showerror("Download", tr('Der Link muss auf eine .gguf-Datei zeigen.'), parent=self.dl_win)
             return False
         MODEL_DIR.mkdir(exist_ok=True)
         target = MODEL_DIR / name
@@ -2678,12 +2752,12 @@ class App:
         open_win = self.dl_win and self.dl_win.winfo_exists()
         if err:
             if open_win:  # sonst hat der Nutzer selbst abgebrochen
-                dialogs.showerror("Download", f"Fehlgeschlagen: {err}", parent=self.dl_win)
+                dialogs.showerror("Download", tr('Fehlgeschlagen: {0}', err), parent=self.dl_win)
             return
         self.refresh_models()
         if open_win:
             self.dl_win.destroy()
-        dialogs.showinfo("Download", "Modell heruntergeladen und zur Liste hinzugefügt.")
+        dialogs.showinfo("Download", tr('Modell heruntergeladen und zur Liste hinzugefügt.'))
 
     # ================================================================ Konfiguration
 
@@ -2692,6 +2766,7 @@ class App:
         raw = self.ctx_var.get().strip().lower()
         ctx = int(raw) if raw.isdigit() else "auto"
         self.cfg.update({
+            "ui_language": UI_LANGUAGES.get(self.ui_language_var.get(), self.cfg["ui_language"]),
             "server_exe": server["exe"] if server else "",
             "ctx": ctx,
             "ngl": self.ngl_var.get().strip() or "auto",

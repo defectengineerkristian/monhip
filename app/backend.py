@@ -1,5 +1,7 @@
 """Backend: findet Modelle, startet/stoppt llama-server und spricht mit seiner OpenAI-kompatiblen API."""
 
+from i18n import tr
+
 import ctypes
 import json
 import os
@@ -265,7 +267,7 @@ class LlamaServer:
             if ctx is None:
                 fit = auto_context(server["exe"], model, mmproj, ngl) if can_fit else None
                 ctx = min(fit["ctx"], AUTO_MAX_CTX) if fit else (None if can_fit else AUTO_MIN_CTX)
-                self.log_cb(f"Kontext auto: {ctx or 'llama.cpp passt selbst an (mind. ' + str(AUTO_MIN_CTX) + ')'}"
+                self.log_cb(tr("Kontext auto: {0}", ctx or tr("llama.cpp passt selbst an (mind. {0})", AUTO_MIN_CTX))
                             + (f" (llama-fit-params: {fit['ctx']})" if fit else "") + "\n")
                 if cancel.is_set():
                     raise RuntimeError("Laden abgebrochen.")
@@ -295,8 +297,9 @@ class LlamaServer:
             with self._lock:
                 self.proc, self.port = proc, port
         if not _end_with_app(proc):
-            self.log_cb("Hinweis: llama-server konnte nicht an das Programm gebunden werden – nach einem Absturz "
-                        "läuft er evtl. weiter (Task-Manager: llama-server.exe).\n")
+            self.log_cb(tr(
+                'Hinweis: llama-server konnte nicht an das Programm gebunden werden – nach einem Absturz läuft er '
+                'evtl. weiter (Task-Manager: llama-server.exe).\n'))
         threading.Thread(target=self._pump_log, args=(proc,), daemon=True).start()
 
         # Nur den eigenen Prozess (und Port) beobachten: self.proc kann inzwischen ein anderer sein

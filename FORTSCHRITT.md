@@ -5,8 +5,8 @@ Gemini, lokale Modelle …). Sie soll verhindern, dass zwei gleichzeitig an ders
 noch einmal gebaut oder eine getroffene Entscheidung wieder umgeworfen wird. Ausführliche Entwicklernotizen führt
 der Projektinhaber lokal; diese Datei ist der gemeinsame Auszug daraus.
 
-**Stand:** 27.10.2026 · **neuestes Release:** v1.2 · der Hauptzweig enthält zusätzlich die Scan-Erweiterung im
-Experten-Modus (ohne Release) und die ausführliche README.
+**Stand:** 27.10.2026 · **neuestes Release:** v1.2 · das Sprachupdate v1.3 ist im Hauptzweig vorbereitet;
+Veröffentlichung über den bestehenden Installer erfolgt über ein GitHub-Release.
 
 ---
 
@@ -40,7 +40,7 @@ Experten-Modus (ohne Release) und die ausführliche README.
 
 | Wer (Mensch + Modell) | Was | Dateien | Seit |
 |---|---|---|---|
-| Auftraggeber + Codex | Deutsch/Englisch für sämtliche Oberflächentexte, Systemsprache beim ersten Start, Update vorbereiten | `app/`, `tests/`, `README.md`, `FORTSCHRITT.md` | 27.10.2026 |
+| Auftraggeber + Codex | Sprachupdate v1.3 fertigstellen und Release für den bestehenden Installer veröffentlichen | `app/`, `tests/`, `README.md`, `FORTSCHRITT.md` | 27.10.2026 |
 
 ---
 
@@ -86,7 +86,12 @@ Vom Projektinhaber so festgelegt – nicht ohne Rücksprache ändern und nicht w
   `server/` (Download direkt von github.com/ggml-org/llama.cpp), Modelle nach `modelle/`. Auch kein Ollama.
 - **Kein Installer- oder Update-Code in Monhip.** Der Installer ist ein eigenständiges Programm (C#, nicht in
   diesem Repo).
-- Oberfläche, Meldungen und Code-Kommentare auf Deutsch.
+- Oberfläche und Meldungen wahlweise auf Deutsch oder Englisch; Code-Kommentare auf Deutsch.
+- Oberflächensprache beim ersten Start ohne gespeicherte Auswahl aus der Windows-Anzeigesprache erkennen:
+  Deutsch → Deutsch, Englisch und alle anderen Sprachen → Englisch. Manuelle Auswahl in den Einstellungen hat
+  Vorrang, wird in `config.json` als `ui_language` gespeichert und gilt ab dem nächsten Programmstart.
+- Oberflächensprache, Spracherkennung und Modell-Prompts bleiben unabhängig. Keine Übersetzung von Nutzerdaten,
+  Dateipfaden oder internen Teamwork-Kennungen. Kein neuer Installer- oder Update-Code in Monhip.
 - Name „Monhip“; der Gruppenchat heißt „Teamwork“ (interne Namen `room*`/`RoomMode` und Einstellungen `room_*`
   bleiben).
 
@@ -171,6 +176,7 @@ mit `py Monhip.pyw`).
 | `chats.py`, `memory.py`, `reminders.py` | Chats speichern, Gedächtnis, Erinnerungen |
 | `themes.py`, `dialogs.py`, `widgets.py` | Designs und runde Ecken, Meldungen und Fenster-Grundgerüst, eigene Bedienelemente |
 | `web.py`, `projects.py` | Websuche und Seitenabruf, Projektvorlagen |
+| `i18n.py`, `i18n_en.py` | Erkennung und gespeicherte Wahl der Oberflächensprache, deutsche Originaltexte und englischer Katalog |
 
 **Nutzerdaten (nie ins Repo):** `config.json`, `gedaechtnis.json`, `erinnerungen.json`, `chats/`, `modelle/`,
 `raeume/`, `sicherungen/`, `server/`, `__pycache__/`.
@@ -182,6 +188,9 @@ mit `py Monhip.pyw`).
 - **Tests, die Fenster öffnen oder ein Modell auf die Grafikkarte laden, vorher ankündigen.** Reine Datei- und
   Kompiliertests sind unproblematisch.
 - Schnellcheck vom Repo-Ordner aus: `py -m compileall -q app` (den entstehenden `__pycache__/` nicht committen).
+- Sprach- und Regressionstests: `py -m unittest discover -s tests -v`. Die zwei GUI-Tests brauchen einen Bildschirm
+  (unter Linux z. B. Xvfb über `DISPLAY`); ohne Bildschirm werden sie ausdrücklich übersprungen. GUI-Tests laufen
+  in getrennten Prozessen mit temporären Einstellungen und Nutzerdaten. Kein echtes KI-Modell erforderlich.
 - Ohne echte Nutzerdaten testen: `CONFIG_FILE` in `monhip.py`, `chats.CHAT_DIR`, `memory.FILE`, `reminders.FILE`,
   im Teamwork `app.app_dir` und `roomui.CACHE_DIR` auf Testordner umbiegen.
 - Ohne Modell: `run_conversation` bzw. `agent.chat_turn` durch Fakes ersetzen oder einen nachgestellten llama-server
@@ -223,6 +232,13 @@ Neueste zuerst. Neue Einträge oben im Abschnitt „Seit …“:
 `- TT.MM.JJJJ · Wer · Was · getestet: … · offen: …`
 
 ### Seit v1.2 (ohne Release)
+- 27.10.2026 · Auftraggeber + Codex · Sprachupdate v1.3 vorbereitet: 664 englische Oberflächentexte, Deutsch
+  bleibt erhalten; automatische Erkennung beim ersten Start, gespeicherte Auswahl unter Einstellungen →
+  Darstellung → Oberflächensprache (wirksam nach Neustart). Modell-Prompts, Nutzerdaten und Protokollwerte bleiben
+  unverändert. Getestet: 17 Tests mit Python 3.13 und Tk 8.6/Xvfb, einschließlich beider Oberflächen, Sprachwechsel,
+  alter Konfiguration, Windows-Spracherkennung mit simulierten Sprachkennungen, echter lokaler Teamwork-Verbindung,
+  Aufgabenstatus und schreibgeschütztem Projektordner; Syntaxprüfung und zeilenendengerechte Formatprüfung.
+  Offen: Release veröffentlichen und Quellarchiv prüfen; echter Windows-Installer und echte KI-Modelle hier nicht getestet.
 - 27.10.2026 · Auftraggeber + Codex · Versehentlich geleerte README exakt aus `db18120` wiederhergestellt.
   Getestet: bytegenauer Vergleich mit der ursprünglichen Fassung und `git diff --check`; keine Anwendungstests
   (reine Dokumentationsänderung). Offen: die unter „Als Nächstes“ genannten README-Ergänzungen bleiben unverändert ausstehend.

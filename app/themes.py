@@ -3,6 +3,8 @@
 Neue Designs: einfach einen weiteren Eintrag in THEMES mit denselben Schlüsseln anlegen.
 """
 
+from i18n import tr
+
 import base64
 import math
 import struct
@@ -16,7 +18,7 @@ FONT = ("Segoe UI", 9)
 
 THEMES = {
     "dark": {
-        "label": "Dunkel (Grau/Orange)",
+        "label": tr('Dunkel (Grau/Orange)'),
         "dark": True,
         "bg": "#262624",          # Hauptfläche / Chat
         "sidebar": "#1f1e1d",     # Chatliste links
@@ -46,7 +48,7 @@ THEMES = {
         },
     },
     "light": {
-        "label": "Hell (Weiß/Violett)",
+        "label": tr('Hell (Weiß/Violett)'),
         "dark": False,
         "bg": "#ffffff",
         "sidebar": "#f5f2fe",
@@ -74,7 +76,7 @@ THEMES = {
         },
     },
     "system": {
-        "label": "Windows-Standard",
+        "label": tr('Windows-Standard'),
         "dark": False,
         "chat": {
             "fg": "#1b1b1b", "muted": "#6b6b6b", "accent": "#0b63c5",

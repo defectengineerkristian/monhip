@@ -11,6 +11,8 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from i18n import tr
+
 import office
 import pdftext
 import web
@@ -53,18 +55,19 @@ class Document:
 
     @property
     def info(self) -> str:
+        kind = tr("{0}-Datei", self.kind[:-6]) if self.kind.endswith("-Datei") else tr(self.kind)
         if self.share_only:
             try:
-                return f"{self.kind} · {human_size(self.path.stat().st_size)}"
+                return f"{kind} · {human_size(self.path.stat().st_size)}"
             except OSError:
-                return self.kind
+                return kind
         if self.image:
-            return f"{self.kind} · {self.image[0]} × {self.image[1]}"
+            return f"{kind} · {self.image[0]} × {self.image[1]}"
         plural = {"Seite": "Seiten", "Folie": "Folien", "Blatt": "Blätter"}
-        parts = [self.kind]
+        parts = [kind]
         if self.pages:
-            parts.append(f"{self.pages} {self.unit if self.pages == 1 else plural[self.unit]}")
-        parts.append(f"{len(self.text):,} Zeichen".replace(",", "."))
+            parts.append(f"{self.pages} {tr(self.unit if self.pages == 1 else plural[self.unit])}")
+        parts.append(tr("{0:,} Zeichen", len(self.text)).replace(",", "."))
         return " · ".join(parts)
 
 

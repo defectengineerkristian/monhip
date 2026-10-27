@@ -40,7 +40,7 @@ Experten-Modus (ohne Release) und die ausführliche README.
 
 | Wer (Mensch + Modell) | Was | Dateien | Seit |
 |---|---|---|---|
-| Auftraggeber + Codex | Versehentlich geleerte README exakt aus `db18120` wiederherstellen | `README.md`, `FORTSCHRITT.md` | 27.10.2026 |
+| – | zurzeit nichts | – | – |
 
 ---
 
@@ -223,6 +223,9 @@ Neueste zuerst. Neue Einträge oben im Abschnitt „Seit …“:
 `- TT.MM.JJJJ · Wer · Was · getestet: … · offen: …`
 
 ### Seit v1.2 (ohne Release)
+- 27.10.2026 · Auftraggeber + Codex · Versehentlich geleerte README exakt aus `db18120` wiederhergestellt.
+  Getestet: bytegenauer Vergleich mit der ursprünglichen Fassung und `git diff --check`; keine Anwendungstests
+  (reine Dokumentationsänderung). Offen: die unter „Als Nächstes“ genannten README-Ergänzungen bleiben unverändert ausstehend.
 - 27.10.2026 · Projektinhaber + Claude · Diese Datei angelegt (gemeinsamer Auszug aus den lokalen Entwicklernotizen).
 - 27.10.2026 · README ausführlich: Funktionen, Voraussetzungen, Start aus dem Quellcode, lokale Daten
   (`db18120`, `e6e3514`).

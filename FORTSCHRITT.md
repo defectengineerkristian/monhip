@@ -40,7 +40,7 @@ GitHub-Release und Quellarchiv sind für den bestehenden Installer veröffentlic
 
 | Wer (Mensch + Modell) | Was | Dateien | Seit |
 |---|---|---|---|
-| – | zurzeit nichts | – | – |
+| Projektinhaber + Claude | 19 Agenten-Werkzeuge (Paket eines Mitwirkenden) mit v1.3 zusammenführen und als v1.4 veröffentlichen | `app/agent.py`, `app/monhip.py`, `app/i18n_en.py`, neue Module in `app/`, `tests/` | 27.10.2026 |
 
 ---
 

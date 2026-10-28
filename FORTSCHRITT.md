@@ -127,6 +127,8 @@ Vom Projektinhaber so festgelegt – nicht ohne Rücksprache ändern und nicht w
   Zusatzdateien für einzelne Werkzeuge (eine `AGENTS.md` wurde am 28.10.2026 wieder entfernt). Wer mit einer KI
   arbeitet, sagt ihr zu Beginn, dass sie diese Datei lesen soll.
 - Commits **ohne** „Co-Authored-By“-Zeile.
+- **Commit-Text ist nur die Versionsnummer** (z. B. „v1.4.2“) – auch bei Commits ohne eigenes Release (Doku,
+  Zwischenstände); sie heißen nach der aktuellen bzw. der anstehenden Version. Was neu ist, steht im Release.
 - Ein Programm-Update, das bei installierten Fassungen ankommen soll, braucht ein Release mit Versionsnummer; die
   Nummer stimmt der Projektinhaber ab.
 
@@ -254,12 +256,12 @@ mit `py Monhip.pyw`).
 - Vor dem Hochladen nach Namen, Benutzerpfaden, Schlüsseln, Mail- und IP-Adressen durchsuchen.
 - **Zeilenenden** sind je Datei verschieden (`git ls-files --eol`, `core.autocrlf=true`). Zeigt `git diff --stat`
   eine ganze Datei als geändert, hat sie ihr Zeilenende gewechselt → auf das bisherige zurückstellen.
-- **Versionen:** `VERSION` in `app/monhip.py` erhöhen, Commit-Text „v1.3 – <ein Satz>“, dann:
+- **Versionen:** `VERSION` in `app/monhip.py` erhöhen, Commit-Text nur „v1.3“ (siehe „Entscheidungen → GitHub“), dann:
 
   ```sh
   git tag -a v1.3 -m "v1.3"
   git push origin main v1.3
-  gh release create v1.3 --verify-tag --title "v1.3" --notes "<derselbe Satz>"
+  gh release create v1.3 --verify-tag --title "v1.3" --notes "<ein Satz, was neu ist>"
   ```
 
   1.0.1 für Fehlerbehebungen, 1.1 für Neues – die Nummer mit dem Projektinhaber abstimmen.
@@ -274,6 +276,11 @@ Neueste zuerst. Neue Einträge oben im Abschnitt „Seit …“:
 `- TT.MM.JJJJ · Wer · Was · getestet: … · offen: …`
 
 ### Seit v1.4.2
+- 28.10.2026 · Projektinhaber + Claude · **Commits heißen nur noch nach der Version** (Wunsch des Projektinhabers):
+  die vier Commits seit v1.4.1 nachträglich in „v1.4.2“ umbenannt (Inhalt, Autor und Datum unverändert; `main` und
+  Tag `v1.4.2` per Force-Push neu gesetzt, das Release blieb), Regel unter „Entscheidungen → GitHub“ und „Versionen“.
+  **Wer vorher geklont hat** und keine eigenen, noch nicht hochgeladenen Commits hat: `git fetch origin`,
+  `git fetch --tags --force`, dann `git reset --keep origin/main`. Nur Doku, ohne Tag/Release.
 - 28.10.2026 · Projektinhaber + Claude · **`AGENTS.md` wieder entfernt** (Wunsch des Projektinhabers): alle
   Fortschritte stehen in dieser Datei, siehe „Entscheidungen → GitHub“. Nur Doku, ohne Tag/Release.
 

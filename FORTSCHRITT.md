@@ -3,9 +3,10 @@
 Gemeinsame Arbeitsliste für alle, die an Monhip mitarbeiten – Menschen und KI-Modelle (Claude, ChatGPT/Codex,
 Gemini, lokale Modelle …). Sie soll verhindern, dass zwei gleichzeitig an derselben Stelle arbeiten, Erledigtes
 noch einmal gebaut oder eine getroffene Entscheidung wieder umgeworfen wird. Ausführliche Entwicklernotizen führt
-der Projektinhaber lokal; diese Datei ist der gemeinsame Auszug daraus.
+der Projektinhaber lokal; diese Datei ist der gemeinsame Auszug daraus. `AGENTS.md` (liest Codex von selbst) verweist
+hierher.
 
-**Stand:** 27.10.2026 · **neuestes Release:** v1.4.1 · Kontextgröße wieder frei einstellbar (ohne Automatik),
+**Stand:** 28.10.2026 · **neuestes Release:** v1.4.1 · Kontextgröße wieder frei einstellbar (ohne Automatik),
 schnellere Antworten in langen Chats, flüssigeres Ziehen am Fensterrand, PowerShell-Hinweise für die KI – auf Basis
 von v1.4 (19 neue Agenten-Werkzeuge) und v1.3 (Deutsch und Englisch für die Oberfläche).
 
@@ -266,6 +267,10 @@ mit `py Monhip.pyw`).
 
 Neueste zuerst. Neue Einträge oben im Abschnitt „Seit …“:
 `- TT.MM.JJJJ · Wer · Was · getestet: … · offen: …`
+
+### Seit v1.4.1
+- 28.10.2026 · Projektinhaber + Claude · **`AGENTS.md` angelegt:** Codex liest sie von selbst; sie verweist auf diese
+  Datei und nennt die wichtigsten Regeln. Nur Doku, ohne Tag/Release.
 
 ### v1.4.1 – 27.10.2026
 - 27.10.2026 · Projektinhaber + Claude · **Kontext „auto“ samt Vorschlag entfernt** (Wunsch des Projektinhabers: jeder

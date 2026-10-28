@@ -152,6 +152,10 @@ Die wichtigsten Stolpersteine – fast jede Regel hier steht da, weil ihr Bruch 
 - **Abgerundete Flächen mit Rand in einem Stück:** `widgets.rounded(…, outline=, width=)` – nicht zwei `rounded()`
   übereinander (Randfarbe, darauf kleiner die Fläche); sonst übermalen die Ecken der inneren Fläche die geglättete
   Rundung mit eckigen Pixeln.
+- **Kontextmenüs nur über `widgets.PopupMenu`** (+ `theme.register_menu`), nie `tk.Menu` direkt: Das native Menü
+  bekommt unter Windows immer den klassischen hellen Menürahmen in Systemfarben – auch im dunklen Design, weder
+  Tk-Optionen noch der Dunkelmodus von uxtheme ändern ihn. Im Design „Windows-Standard“ nimmt `PopupMenu` selbst das
+  native Menü.
 - **Anfang des Prompts stabil halten:** llama.cpp rechnet bei der nächsten Anfrage nur ab der ersten geänderten
   Stelle neu. Im System-Prompt deshalb nichts, was sich laufend ändert – keine Uhrzeit (`agent.date_line()` = nur
   Datum; die Uhrzeit hängt `_api_message` fest an jede Nutzernachricht), keine Laufzeiten, keine Zähler. Mit der
@@ -207,7 +211,7 @@ mit `py Monhip.pyw`).
 | `images.py`, `filedrop.py` | Bilder, Bildschirmfotos, Zwischenablage; Drag & Drop (Windows) |
 | `room.py`, `roomui.py`, `projekt.py` | Teamwork: Netzwerk (Gastgeber/Teilnehmer), Oberfläche und eigene KI im Raum, gemeinsamer Projektordner |
 | `chats.py`, `memory.py`, `reminders.py` | Chats speichern, Gedächtnis, Erinnerungen |
-| `themes.py`, `dialogs.py`, `widgets.py` | Designs und runde Ecken, Meldungen und Fenster-Grundgerüst, eigene Bedienelemente |
+| `themes.py`, `dialogs.py`, `widgets.py` | Designs und runde Ecken, Meldungen und Fenster-Grundgerüst, eigene Bedienelemente (u. a. Umschalter, Kontextmenü `PopupMenu`) |
 | `web.py`, `projects.py` | Websuche und Seitenabruf, Projektvorlagen |
 | `i18n.py`, `i18n_en.py` | Erkennung und gespeicherte Wahl der Oberflächensprache, deutsche Originaltexte und englischer Katalog |
 | `rechner.py` | Werkzeug `rechnen`: exakt mit Brüchen, sicher über `ast` (kein `eval`), Prozent, Statistik, Einheiten, Datum, Zinsen |
@@ -279,6 +283,13 @@ Neueste zuerst. Neue Einträge oben im Abschnitt „Seit …“:
 `- TT.MM.JJJJ · Wer · Was · getestet: … · offen: …`
 
 ### Seit v1.4.2
+- 28.10.2026 · Projektinhaber + Claude · **Kontextmenüs ohne weißen Rahmen:** Das Menü „Umbenennen…/Löschen“ (und
+  die Menüs im Chatverlauf, an Sprechblasen und Datei-Kärtchen) hatte im dunklen Design einen hellen Rahmen – den
+  zeichnet Windows bei nativen Menüs immer in Systemfarben. Jetzt `widgets.PopupMenu`: eigenes randloses Fenster im
+  Design (Windows 11: runde Ecken), gleiche Aufrufe wie `tk.Menu`, Maus und Tastatur wie gewohnt, klappt am
+  Bildschirmrand; schließt bei Klick daneben, Escape, Wechsel in ein anderes Programm oder wenn ein Dialog erscheint.
+  Im Design „Windows-Standard“ bleibt das native Menü. Getestet im Fenster: 22 Prüfungen dreimal grün (Dunkel, Hell,
+  Windows-Standard), Bildschirmfotos sauber, Sprachtests grün; mit echter Maus noch nicht. Ohne Tag/Release.
 - 28.10.2026 · Projektinhaber + Claude · **Umschalter „Chat | Teamwork“ mit sauber runden Ecken:** Der Rand der
   Markierung lief bisher eckig in die Ecken (zwei abgerundete Flächen übereinander, siehe Code-Regeln). Jetzt
   `widgets.rounded()` mit `outline=` – Rand und Fläche in einem Stück, Ecken als geglätteter Ring. Sprechblasen,

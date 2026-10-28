@@ -36,7 +36,7 @@ from backend import LlamaServer, find_mmproj, find_models, thinking_title
 from chatview import ChatView
 from roomui import RoomMode
 from themes import THEMES, ThemeManager, label_to_key, mix_hex
-from widgets import ModeSwitch, rounded, scrolled
+from widgets import ModeSwitch, PopupMenu, rounded, scrolled
 
 VERSION = "1.4.2"  # auf GitHub als Release „v1.4.2“ (danach richtet sich das Update im Installer)
 TIME_FMT = "%Y-%m-%d %H:%M"  # „_time“ einer Nutzernachricht: ihre Uhrzeit fürs Modell (_api_message)
@@ -258,7 +258,7 @@ class App:
         tree.bind("<Delete>", lambda e: self.delete_chat(self._current_tree_chat()))
         self.chat_tree = tree
 
-        menu = tk.Menu(self.root, tearoff=0)
+        menu = PopupMenu(self.root, self.ui_scale)
         menu.add_command(label=tr('Umbenennen…'), command=lambda: self.rename_chat(self._ctx_item))
         menu.add_command(label=tr('Löschen'), command=lambda: self.delete_chat(self._ctx_item))
         self.theme.register_menu(menu)

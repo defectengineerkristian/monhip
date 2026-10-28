@@ -22,7 +22,7 @@ from tkinter import ttk
 
 from markdown_lite import ListLevels, classify, closes_fence, inline, is_separator_row, plain, split_row
 from themes import mix_hex
-from widgets import rounded
+from widgets import PopupMenu, rounded
 
 FAMILY, MONO = "Segoe UI", "Consolas"
 MAX_COLUMN = 820          # maximale Breite der Chatspalte (Pixel bei 100 %)
@@ -134,12 +134,12 @@ class ChatView:
         t.tag_bind("clickable", "<Leave>", self._on_leave_click)
         t.tag_bind("clickable", "<Button-1>", self._on_click)
 
-        self.menu = tk.Menu(t, tearoff=0)
+        self.menu = PopupMenu(t, scale)
         self.menu.add_command(label=tr('Kopieren'), command=self._copy_selection)
         self.menu.add_command(label=tr('Alles markieren'), command=lambda: t.tag_add("sel", "1.0", "end-1c"))
-        self.bubble_menu = tk.Menu(t, tearoff=0)
+        self.bubble_menu = PopupMenu(t, scale)
         self.bubble_menu.add_command(label=tr('Text kopieren'), command=lambda: self._copy(self._bubble_text))
-        self.file_menu = tk.Menu(t, tearoff=0)
+        self.file_menu = PopupMenu(t, scale)
         self.file_menu.add_command(label=tr('Öffnen'), command=lambda: self._open_file(self._file_path))
         self.file_menu.add_command(label=tr('Pfad kopieren'), command=lambda: self._copy(self._file_path))
         if register_menu:

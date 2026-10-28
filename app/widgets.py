@@ -1,12 +1,15 @@
-"""Eigene Bedienelemente: Felder mit einfärbbarem Scrollbalken, abgerundete Rechtecke, ModeSwitch."""
+"""Eigene Bedienelemente: Felder mit einfärbbarem Scrollbalken, abgerundete Rechtecke, ModeSwitch, PopupMenu."""
 
 import math
+import sys
 import time
 import tkinter as tk
 from tkinter import font as tkfont
 from tkinter import ttk
 
 from themes import mix_hex
+
+WATCH_MS = 150  # PopupMenu: so oft prüfen, ob das Programm noch im Vordergrund ist
 
 
 def scrolled(parent, widget=tk.Text, **kw):
@@ -185,3 +188,261 @@ class ModeSwitch(tk.Canvas):
         if key != self.hover:
             self.hover = key
             self._redraw()
+
+
+def _work_area(x: int, y: int, widget: tk.Misc) -> tuple[int, int, int, int]:
+    """Arbeitsbereich (ohne Taskleiste) des Bildschirms, auf dem der Punkt liegt: links, oben, rechts, unten."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class MonitorInfo(ctypes.Structure):
+                _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT), ("rcWork", wintypes.RECT),
+                            ("dwFlags", wintypes.DWORD)]
+            user32 = ctypes.windll.user32
+            user32.MonitorFromPoint.restype = ctypes.c_void_p
+            user32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
+            user32.GetMonitorInfoW.argtypes = [ctypes.c_void_p, ctypes.POINTER(MonitorInfo)]
+            info = MonitorInfo()
+            info.cbSize = ctypes.sizeof(info)
+            if user32.GetMonitorInfoW(user32.MonitorFromPoint(wintypes.POINT(x, y), 2), ctypes.byref(info)):
+                r = info.rcWork
+                return r.left, r.top, r.right, r.bottom
+        except Exception:
+            pass
+    return 0, 0, widget.winfo_screenwidth(), widget.winfo_screenheight()
+
+
+def _app_active() -> bool:
+    """Gehört das Vordergrundfenster zu diesem Programm? (Ohne Fenster im Vordergrund – kurz beim Umschalten – ja.)"""
+    if sys.platform != "win32":
+        return True
+    try:
+        import ctypes
+        import os
+        user32 = ctypes.windll.user32
+        user32.GetForegroundWindow.restype = ctypes.c_void_p
+        user32.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return True
+        pid = ctypes.c_ulong()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        return pid.value == os.getpid()
+    except Exception:
+        return True
+
+
+def _round_window(win: tk.Misc, border: str):
+    """Windows 11: kleine runde Ecken wie bei Systemmenüs, Rahmenlinie in der Designfarbe (sonst wirkungslos)."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        hwnd = int(win.wm_frame(), 16)
+        dwm = ctypes.windll.dwmapi
+        corner = ctypes.c_int(3)  # DWMWCP_ROUNDSMALL
+        dwm.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(corner), ctypes.sizeof(corner))
+        r, g, b = (int(border[i:i + 2], 16) for i in (1, 3, 5))
+        color = ctypes.c_uint(r | g << 8 | b << 16)
+        dwm.DwmSetWindowAttribute(hwnd, 34, ctypes.byref(color), ctypes.sizeof(color))
+    except Exception:
+        pass
+
+
+class PopupMenu:
+    """Kontextmenü im Design, mit den Aufrufen von tk.Menu (add_command, entryconfigure(i, state=…), tk_popup,
+    grab_release). Das native Menü hat unter Windows immer den klassischen hellen Rahmen (1 px grau + 2 px #f0f0f0 in
+    Systemfarben) – auch im dunklen Design; weder Tk-Optionen noch der Dunkelmodus von uxtheme ändern ihn. In eigenen
+    Designs deshalb ein randloses Fenster, im Design „Windows-Standard“ (Palette None) das native Menü.
+    tk_popup wartet wie das native Menü, bis es zu ist; der gewählte Befehl läuft erst danach (after_idle)."""
+
+    def __init__(self, master: tk.Misc, scale: float = 1.0):
+        self.master, self.s = master, scale
+        self.items: list[list] = []        # [Text, Befehl, Zustand]
+        self.pal: dict | None = None
+        self.native = tk.Menu(master, tearoff=0)
+        self.win: tk.Toplevel | None = None
+        self._labels: list[tk.Label] = []
+        self._active: int | None = None
+        self._pressed = False              # Maustaste wurde im Menü gedrückt (sonst löst Loslassen nichts aus)
+        self._grabbed = False
+        self._chosen = None
+
+    # ------------------------------------------------------------ wie tk.Menu
+
+    def add_command(self, label: str, command):
+        self.items.append([label, command, tk.NORMAL])
+        self.native.add_command(label=label, command=command)
+
+    def entryconfigure(self, index: int, state: str):
+        self.items[index][2] = state
+        self.native.entryconfigure(index, state=state)
+
+    def grab_release(self):
+        """Nichts zu tun: das eigene Fenster gibt den Griff beim Schließen frei."""
+
+    def winfo_exists(self) -> bool:
+        return bool(self.master.winfo_exists())
+
+    def set_palette(self, pal: dict | None):
+        """Aus ThemeManager.register_menu und bei jedem Designwechsel; None = Windows-Standard."""
+        self.pal = pal
+
+    def tk_popup(self, x: int, y: int):
+        if not self.pal:
+            try:
+                self.native.tk_popup(x, y)
+            finally:
+                self.native.grab_release()
+            return
+        self.close()
+        win = self._build()
+        self._place(win, x, y)
+        try:
+            win.grab_set()
+            self._grabbed = True
+        except tk.TclError:
+            self._grabbed = False
+        win.focus_force()
+        win.after(WATCH_MS, self._watch)
+        win.wait_window()
+        command, self._chosen = self._chosen, None
+        if command:
+            self.master.after_idle(command)
+
+    def close(self):
+        win, self.win = self.win, None
+        if win is not None:
+            try:
+                win.destroy()
+            except tk.TclError:
+                pass
+
+    # ------------------------------------------------------------ Fenster
+
+    def _build(self) -> tk.Toplevel:
+        p, s = self.pal, self.s
+        win = self.win = tk.Toplevel(self.master)
+        win.withdraw()
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
+        box = tk.Frame(win, background=p["surface"], highlightthickness=1, highlightbackground=p["border"],
+                       highlightcolor=p["border"], padx=round(4 * s), pady=round(4 * s))
+        box.pack(fill=tk.BOTH, expand=True)
+        font = tkfont.nametofont("TkMenuFont")
+        self._labels, self._active, self._pressed = [], None, False
+        for i, (label, _command, _state) in enumerate(self.items):
+            lab = tk.Label(box, text=label, anchor="w", font=font, borderwidth=0, padx=round(12 * s),
+                           pady=round(4 * s))
+            lab.pack(fill=tk.X)
+            lab.bind("<Enter>", lambda e, i=i: self._activate(i))
+            lab.bind("<Leave>", lambda e: self._activate(None))
+            lab.bind("<ButtonRelease-1>", lambda e, i=i: self._release(e, i))
+            self._labels.append(lab)
+        self._paint()
+        win.bind("<ButtonPress>", self._press)
+        win.bind("<Escape>", lambda e: self.close())
+        win.bind("<Up>", lambda e: self._step(-1))
+        win.bind("<Down>", lambda e: self._step(1))
+        for key in ("<Return>", "<KP_Enter>", "<space>"):
+            win.bind(key, lambda e: self._invoke(self._active))
+        win.bind("<FocusOut>", lambda e: win.after(10, self._check_focus))
+        return win
+
+    def _place(self, win: tk.Toplevel, x: int, y: int):
+        """An (x, y) zeigen, am Bildschirmrand nach links bzw. oben klappen."""
+        win.update_idletasks()
+        w, h = max(win.winfo_reqwidth(), round(120 * self.s)), win.winfo_reqheight()
+        left, top, right, bottom = _work_area(x, y, win)
+        if x + w > right:
+            x = max(left, x - w)
+        if y + h > bottom:
+            y = max(top, y - h)
+        win.geometry(f"{w}x{h}+{x}+{y}")
+        win.attributes("-alpha", 0.0)  # erst nach dem Runden der Ecken zeigen (sonst kurz eckig)
+        win.deiconify()
+        win.update_idletasks()
+        _round_window(win, self.pal["border"])
+        win.attributes("-alpha", 1.0)
+
+    def _paint(self):
+        p = self.pal
+        for i, lab in enumerate(self._labels):
+            if self.items[i][2] == tk.DISABLED:
+                lab.configure(background=p["surface"], foreground=mix_hex(p["muted"], p["surface"], 0.3))
+            elif i == self._active:
+                lab.configure(background=p["select_bg"], foreground=p["select_fg"])
+            else:
+                lab.configure(background=p["surface"], foreground=p["fg"])
+
+    def _enabled(self) -> list[int]:
+        return [i for i, item in enumerate(self.items) if item[2] != tk.DISABLED]
+
+    def _activate(self, index: int | None):
+        if index is not None and index not in self._enabled():
+            index = None
+        if index != self._active:
+            self._active = index
+            self._paint()
+
+    def _step(self, delta: int):
+        enabled = self._enabled()
+        if not enabled:
+            return
+        if self._active not in enabled:
+            self._activate(enabled[0] if delta > 0 else enabled[-1])
+        else:
+            self._activate(enabled[(enabled.index(self._active) + delta) % len(enabled)])
+
+    def _invoke(self, index: int | None):
+        if index is not None and index in self._enabled():
+            self._chosen = self.items[index][1]
+            self.close()
+
+    # ------------------------------------------------------------ Maus und Fokus
+
+    def _inside(self, x: int, y: int) -> bool:
+        win = self.win
+        return bool(win) and win.winfo_rootx() <= x < win.winfo_rootx() + win.winfo_width() \
+            and win.winfo_rooty() <= y < win.winfo_rooty() + win.winfo_height()
+
+    def _press(self, e):
+        """Mit dem Griff kommt jeder Klick im Programm hier an – außerhalb des Menüs schließt er es (wie nativ)."""
+        self._pressed = self._inside(e.x_root, e.y_root)
+        if not self._pressed:
+            self.close()
+        return "break"
+
+    def _release(self, e, index: int):
+        if self._pressed and str(e.widget.winfo_containing(e.x_root, e.y_root)) == str(e.widget):
+            self._invoke(index)
+
+    def _watch(self):
+        """Solange offen: schließen, wenn ein anderes Programm in den Vordergrund kommt oder ein Dialog den Griff
+        übernimmt. Auf <FocusOut> allein ist kein Verlass – ein randloses Fenster bekommt unter Windows nicht immer
+        selbst den Fokus, dann bliebe das Menü (immer im Vordergrund) über anderen Programmen stehen."""
+        win = self.win
+        if win is None:
+            return
+        try:
+            lost = self._grabbed and str(win.grab_current()) != str(win)
+        except (KeyError, tk.TclError):
+            lost = True
+        if lost or not _app_active():
+            self.close()
+        else:
+            win.after(WATCH_MS, self._watch)
+
+    def _check_focus(self):
+        """Fokus ging an ein anderes Programm (oder anderswohin) → schließen."""
+        win = self.win
+        if win is None:
+            return
+        try:
+            focus = win.focus_get()
+        except (KeyError, tk.TclError):
+            focus = None
+        if focus is None or not str(focus).startswith(str(win)):
+            self.close()

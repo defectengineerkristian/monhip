@@ -340,8 +340,10 @@ class ThemeManager:
         self._style_text(w)
         return w
 
-    def register_menu(self, m: tk.Menu):
-        self._remember(m, MENU_OPTS)
+    def register_menu(self, m):
+        """tk.Menu oder widgets.PopupMenu (eigenes Menüfenster, bekommt nur die Palette über set_palette)."""
+        if not hasattr(m, "set_palette"):
+            self._remember(m, MENU_OPTS)
         self._menus.append(m)
         self._style_menu(m)
         return m
@@ -456,8 +458,11 @@ class ThemeManager:
         # Abstand zum runden Rand, damit das eckige Textfeld nicht über die Ecken ragt; „system“ bleibt nativ
         frame.configure(padding=round(5 * self.scale) if self.pal else 0)
 
-    def _style_menu(self, m: tk.Menu):
+    def _style_menu(self, m):
         p = self.pal
+        if hasattr(m, "set_palette"):
+            m.set_palette(p)
+            return
         if not p:
             m.configure(**self._orig[str(m)])
             return

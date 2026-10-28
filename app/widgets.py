@@ -20,16 +20,25 @@ def scrolled(parent, widget=tk.Text, **kw):
     return frame, w
 
 
-def _corners(master, cache: dict, r: int, fill: str, under: str) -> list:
+def _pixel(under: str, fill: str, outline: str | None, width: int, r: int, d: float) -> str:
+    """Farbe eines Eck-Pixels im Abstand d vom Mittelpunkt; mit Rand ein Ring der Breite width um denselben Punkt."""
+    if not outline:
+        return mix_hex(under, fill, r - d + 0.5)
+    outer = max(0.0, min(1.0, r - d + 0.5))
+    inner = max(0.0, min(1.0, r - width - d + 0.5))
+    return mix_hex(under, mix_hex(outline, fill, inner / outer), outer) if outer else under
+
+
+def _corners(master, cache: dict, r: int, fill: str, under: str, outline: str | None = None, width: int = 0) -> list:
     """Kantengeglättete Viertelkreise (oben links, oben rechts, unten links, unten rechts)."""
-    key = (r, fill, under)
+    key = (r, fill, under, outline, width)
     if key not in cache:
         imgs = []
         for cx, cy in ((r, r), (0, r), (r, 0), (0, 0)):
             img = tk.PhotoImage(master=master, width=r, height=r)
             rows = []
             for y in range(r):
-                row = [mix_hex(under, fill, r - math.hypot(x + 0.5 - cx, y + 0.5 - cy) + 0.5) for x in range(r)]
+                row = [_pixel(under, fill, outline, width, r, math.hypot(x + 0.5 - cx, y + 0.5 - cy)) for x in range(r)]
                 rows.append("{" + " ".join(row) + "}")
             img.put(" ".join(rows))
             imgs.append(img)
@@ -38,13 +47,23 @@ def _corners(master, cache: dict, r: int, fill: str, under: str) -> list:
 
 
 def rounded(canvas: tk.Canvas, cache: dict, x: float, y: float, w: float, h: float, r: int, fill: str, under: str,
-            tags=()):
-    """Abgerundetes Rechteck mit glatten Ecken auf einem Canvas."""
+            tags=(), outline: str | None = None, width: int = 1):
+    """Abgerundetes Rechteck mit glatten Ecken auf einem Canvas, optional mit Rand (outline, width Pixel).
+
+    Den Rand in einem Stück zeichnen, nicht als zwei Rechtecke übereinander – sonst übermalen die Ecken des inneren
+    die geglättete Rundung des äußeren mit eckigen Pixeln."""
     x, y, w, h = round(x), round(y), round(w), round(h)
     r = max(1, min(r, w // 2, h // 2))
-    canvas.create_rectangle(x + r, y, x + w - r, y + h, fill=fill, outline="", tags=tags)
-    canvas.create_rectangle(x, y + r, x + w, y + h - r, fill=fill, outline="", tags=tags)
-    nw, ne, sw, se = _corners(canvas, cache, r, fill, under)
+    if outline:
+        width = max(1, min(width, r - 1)) if r > 1 else 0
+        canvas.create_rectangle(x + r, y, x + w - r, y + h, fill=outline, outline="", tags=tags)
+        canvas.create_rectangle(x, y + r, x + w, y + h - r, fill=outline, outline="", tags=tags)
+        canvas.create_rectangle(x + r, y + width, x + w - r, y + h - width, fill=fill, outline="", tags=tags)
+        canvas.create_rectangle(x + width, y + r, x + w - width, y + h - r, fill=fill, outline="", tags=tags)
+    else:
+        canvas.create_rectangle(x + r, y, x + w - r, y + h, fill=fill, outline="", tags=tags)
+        canvas.create_rectangle(x, y + r, x + w, y + h - r, fill=fill, outline="", tags=tags)
+    nw, ne, sw, se = _corners(canvas, cache, r, fill, under, outline, width if outline else 0)
     canvas.create_image(x, y, image=nw, anchor="nw", tags=tags)
     canvas.create_image(x + w - r, y, image=ne, anchor="nw", tags=tags)
     canvas.create_image(x, y + h - r, image=sw, anchor="nw", tags=tags)
@@ -138,9 +157,8 @@ class ModeSwitch(tk.Canvas):
         if self._pill:
             x, pw = self._pill
             inset = 3 * s
-            rounded(self, self._cache, x, inset, pw, h - 2 * inset, round(7 * s), c["border"], c["track"])
-            rounded(self, self._cache, x + 1, inset + 1, pw - 2, h - 2 * inset - 2, round(6 * s), c["pill"],
-                    c["border"])
+            rounded(self, self._cache, x, inset, pw, h - 2 * inset, round(7 * s), c["pill"], c["track"],
+                    outline=c["border"])
         for key, x, sw in self._segments():
             label = dict(self.items)[key]
             on = key == self.value

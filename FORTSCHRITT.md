@@ -149,6 +149,9 @@ Die wichtigsten Stolpersteine – fast jede Regel hier steht da, weil ihr Bruch 
 - **`themes.no_resize_redraw()` nicht entfernen:** Tk legt seine Windows-Fensterklassen „TkTopLevel“/„TkChild“ mit
   `CS_HREDRAW|CS_VREDRAW` an – Windows zeichnet dann bei jedem Zieh-Schritt alle Bedienelemente neu, auch
   unveränderte. Die Funktion (aus `ThemeManager.present`) nimmt die beiden Stile weg; Tk zeichnet Geändertes selbst.
+- **Abgerundete Flächen mit Rand in einem Stück:** `widgets.rounded(…, outline=, width=)` – nicht zwei `rounded()`
+  übereinander (Randfarbe, darauf kleiner die Fläche); sonst übermalen die Ecken der inneren Fläche die geglättete
+  Rundung mit eckigen Pixeln.
 - **Anfang des Prompts stabil halten:** llama.cpp rechnet bei der nächsten Anfrage nur ab der ersten geänderten
   Stelle neu. Im System-Prompt deshalb nichts, was sich laufend ändert – keine Uhrzeit (`agent.date_line()` = nur
   Datum; die Uhrzeit hängt `_api_message` fest an jede Nutzernachricht), keine Laufzeiten, keine Zähler. Mit der
@@ -276,6 +279,12 @@ Neueste zuerst. Neue Einträge oben im Abschnitt „Seit …“:
 `- TT.MM.JJJJ · Wer · Was · getestet: … · offen: …`
 
 ### Seit v1.4.2
+- 28.10.2026 · Projektinhaber + Claude · **Umschalter „Chat | Teamwork“ mit sauber runden Ecken:** Der Rand der
+  Markierung lief bisher eckig in die Ecken (zwei abgerundete Flächen übereinander, siehe Code-Regeln). Jetzt
+  `widgets.rounded()` mit `outline=` – Rand und Fläche in einem Stück, Ecken als geglätteter Ring. Sprechblasen,
+  Kärtchen und Kontextbalken unverändert. Getestet: Bildschirmaufnahmen in Dunkel, Hell und Windows-Standard (beide
+  Stellungen, auch mitten im Gleiten) und bei 125/150/200 % – keine eckigen Pixel mehr; Gegenprobe mit der alten
+  Fassung schlägt an; Flächen ohne Rand Pixel für Pixel wie vorher. Ohne Tag/Release.
 - 28.10.2026 · Projektinhaber + Claude · **Commits heißen nur noch nach der Version** (Wunsch des Projektinhabers):
   die vier Commits seit v1.4.1 nachträglich in „v1.4.2“ umbenannt (Inhalt, Autor und Datum unverändert; `main` und
   Tag `v1.4.2` per Force-Push neu gesetzt, das Release blieb), Regel unter „Entscheidungen → GitHub“ und „Versionen“.

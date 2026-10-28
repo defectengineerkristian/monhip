@@ -3,8 +3,7 @@
 Gemeinsame Arbeitsliste für alle, die an Monhip mitarbeiten – Menschen und KI-Modelle (Claude, ChatGPT/Codex,
 Gemini, lokale Modelle …). Sie soll verhindern, dass zwei gleichzeitig an derselben Stelle arbeiten, Erledigtes
 noch einmal gebaut oder eine getroffene Entscheidung wieder umgeworfen wird. Ausführliche Entwicklernotizen führt
-der Projektinhaber lokal; diese Datei ist der gemeinsame Auszug daraus. `AGENTS.md` (liest Codex von selbst) verweist
-hierher.
+der Projektinhaber lokal; diese Datei ist der gemeinsame Auszug daraus.
 
 **Stand:** 28.10.2026 · **neuestes Release:** v1.4.2 · Ziehen am Fensterrand 3–4-mal so flüssig – auf Basis von
 v1.4.1 (Kontextgröße frei einstellbar, schnellere Antworten in langen Chats, PowerShell-Hinweise für die KI), v1.4
@@ -124,6 +123,9 @@ Vom Projektinhaber so festgelegt – nicht ohne Rücksprache ändern und nicht w
   Modellfassung: Q4_K_M statt Q8_0 war in der Messung fast doppelt so schnell.
 
 **GitHub**
+- **Alle Fortschritte, Regeln und Absprachen stehen nur in dieser Datei** – keine `AGENTS.md` oder ähnliche
+  Zusatzdateien für einzelne Werkzeuge (eine `AGENTS.md` wurde am 28.10.2026 wieder entfernt). Wer mit einer KI
+  arbeitet, sagt ihr zu Beginn, dass sie diese Datei lesen soll.
 - Commits **ohne** „Co-Authored-By“-Zeile.
 - Ein Programm-Update, das bei installierten Fassungen ankommen soll, braucht ein Release mit Versionsnummer; die
   Nummer stimmt der Projektinhaber ab.
@@ -270,6 +272,10 @@ mit `py Monhip.pyw`).
 
 Neueste zuerst. Neue Einträge oben im Abschnitt „Seit …“:
 `- TT.MM.JJJJ · Wer · Was · getestet: … · offen: …`
+
+### Seit v1.4.2
+- 28.10.2026 · Projektinhaber + Claude · **`AGENTS.md` wieder entfernt** (Wunsch des Projektinhabers): alle
+  Fortschritte stehen in dieser Datei, siehe „Entscheidungen → GitHub“. Nur Doku, ohne Tag/Release.
 
 ### v1.4.2 – 28.10.2026
 - 28.10.2026 · Projektinhaber + Claude · **Ziehen am Fensterrand 3–4-mal so flüssig:** Ursache waren Tks

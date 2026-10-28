@@ -142,6 +142,9 @@ Die wichtigsten Stolpersteine – fast jede Regel hier steht da, weil ihr Bruch 
   innerhalb `with self._edit():` schreiben; wegen der Slots im Teamwork nie fest „end-1c“, sondern `self._at`.
   Das Textfeld hat eine **feste Breite** (`fixed_column`, liegt per `place` mittig) – nicht wieder an die
   Fensterbreite koppeln: jedes Pixel beim Ziehen am Fensterrand brach sonst Chat und Teamwork-Verlauf neu um.
+- **`themes.no_resize_redraw()` nicht entfernen:** Tk legt seine Windows-Fensterklassen „TkTopLevel“/„TkChild“ mit
+  `CS_HREDRAW|CS_VREDRAW` an – Windows zeichnet dann bei jedem Zieh-Schritt alle Bedienelemente neu, auch
+  unveränderte. Die Funktion (aus `ThemeManager.present`) nimmt die beiden Stile weg; Tk zeichnet Geändertes selbst.
 - **Anfang des Prompts stabil halten:** llama.cpp rechnet bei der nächsten Anfrage nur ab der ersten geänderten
   Stelle neu. Im System-Prompt deshalb nichts, was sich laufend ändert – keine Uhrzeit (`agent.date_line()` = nur
   Datum; die Uhrzeit hängt `_api_message` fest an jede Nutzernachricht), keine Laufzeiten, keine Zähler. Mit der
@@ -269,6 +272,13 @@ Neueste zuerst. Neue Einträge oben im Abschnitt „Seit …“:
 `- TT.MM.JJJJ · Wer · Was · getestet: … · offen: …`
 
 ### Seit v1.4.1
+- 28.10.2026 · Projektinhaber + Claude · **Ziehen am Fensterrand 3–4-mal so flüssig:** Ursache waren Tks
+  Windows-Fensterklassen mit `CS_HREDRAW|CS_VREDRAW` – bei jeder Größenänderung zeichnete Windows alle Bedienelemente
+  neu (auch die verdeckte Teamwork-Ebene und die Seitenleiste). Neu: `themes.no_resize_redraw()`. Gemessen (langer
+  Chat + Teamwork-Verlauf, 8-px-Schritte im 60-Hz-Takt): breiter/schmaler 83 → 22 ms je Schritt, schmaler als die
+  Spalte 109 → 39 ms, Höhe 87 → 29 ms. Getestet: nach 9 Zieh-Arten und im Einstellungsfenster pixelgleich mit einem
+  komplett neu gezeichneten Fenster (Dunkel, Hell, Windows-Standard), alle Testdateien grün, vom Projektinhaber mit
+  der Maus geprüft. Offen: ~7 ms für die runden Ecken; im schmalen Fenster bricht der Chat neu um (~16 ms).
 - 28.10.2026 · Projektinhaber + Claude · **`AGENTS.md` angelegt:** Codex liest sie von selbst; sie verweist auf diese
   Datei und nennt die wichtigsten Regeln. Nur Doku, ohne Tag/Release.
 

@@ -245,6 +245,35 @@ def set_titlebar(win: tk.Misc, pal: dict | None):
         pass
 
 
+_resize_redraw_off = False
+
+
+def no_resize_redraw(win: tk.Misc):
+    """Windows zeichnet Tk-Fenster bei jeder Größenänderung komplett neu (Fensterklassen „TkTopLevel“ und „TkChild“
+    mit CS_HREDRAW|CS_VREDRAW) – auch jedes Bedienelement, das sich gar nicht ändert. Tk zeichnet geänderte Elemente
+    ohnehin selbst neu; ohne die beiden Klassen-Stile ist Ziehen am Fensterrand 3–4-mal so schnell (langer Chat
+    83 → 22 ms je Schritt). Der Stil gehört zur Klasse, gilt also für alle Fenster – einmal genügt."""
+    global _resize_redraw_off
+    if _resize_redraw_off or sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        user32.GetClassLongPtrW.restype = ctypes.c_size_t
+        user32.GetClassLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        user32.SetClassLongPtrW.restype = ctypes.c_size_t
+        user32.SetClassLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_size_t]
+        user32.GetClassNameW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
+        name = ctypes.create_unicode_buffer(32)
+        for hwnd in (_frame_hwnd(win), win.winfo_id()):
+            user32.GetClassNameW(hwnd, name, 32)
+            if name.value in ("TkTopLevel", "TkChild"):  # nur Tks eigene Klassen (GCL_STYLE = -26, ~CS_H/VREDRAW)
+                user32.SetClassLongPtrW(hwnd, -26, user32.GetClassLongPtrW(hwnd, -26) & ~0x3)
+        _resize_redraw_off = True
+    except Exception:
+        pass
+
+
 def fade(win: tk.Misc, start: float, end: float, ms: int = 140, done=None):
     """Blendet ein Fenster weich ein/aus (Fenster-Transparenz, ca. 60 Schritte pro Sekunde, sanft abgebremst)."""
     steps = max(1, ms // 16)
@@ -356,6 +385,7 @@ class ThemeManager:
         win.lift()  # nötig: beim Start versteckt angelegte Fenster erscheinen unter Windows sonst gar nicht
         win.update_idletasks()      # jetzt existiert der Windows-Rahmen …
         set_titlebar(win, self.pal)  # … und die Farbe greift
+        no_resize_redraw(win)
         fade(win, 0.0, 1.0, fade_ms)
 
     # ------------------------------------------------------------ Anwenden

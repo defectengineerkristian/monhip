@@ -6,9 +6,9 @@ noch einmal gebaut oder eine getroffene Entscheidung wieder umgeworfen wird. Aus
 der Projektinhaber lokal; diese Datei ist der gemeinsame Auszug daraus. `AGENTS.md` (liest Codex von selbst) verweist
 hierher.
 
-**Stand:** 28.10.2026 · **neuestes Release:** v1.4.1 · Kontextgröße wieder frei einstellbar (ohne Automatik),
-schnellere Antworten in langen Chats, flüssigeres Ziehen am Fensterrand, PowerShell-Hinweise für die KI – auf Basis
-von v1.4 (19 neue Agenten-Werkzeuge) und v1.3 (Deutsch und Englisch für die Oberfläche).
+**Stand:** 28.10.2026 · **neuestes Release:** v1.4.2 · Ziehen am Fensterrand 3–4-mal so flüssig – auf Basis von
+v1.4.1 (Kontextgröße frei einstellbar, schnellere Antworten in langen Chats, PowerShell-Hinweise für die KI), v1.4
+(19 neue Agenten-Werkzeuge) und v1.3 (Deutsch und Englisch für die Oberfläche).
 
 ---
 
@@ -271,7 +271,7 @@ mit `py Monhip.pyw`).
 Neueste zuerst. Neue Einträge oben im Abschnitt „Seit …“:
 `- TT.MM.JJJJ · Wer · Was · getestet: … · offen: …`
 
-### Seit v1.4.1
+### v1.4.2 – 28.10.2026
 - 28.10.2026 · Projektinhaber + Claude · **Ziehen am Fensterrand 3–4-mal so flüssig:** Ursache waren Tks
   Windows-Fensterklassen mit `CS_HREDRAW|CS_VREDRAW` – bei jeder Größenänderung zeichnete Windows alle Bedienelemente
   neu (auch die verdeckte Teamwork-Ebene und die Seitenleiste). Neu: `themes.no_resize_redraw()`. Gemessen (langer

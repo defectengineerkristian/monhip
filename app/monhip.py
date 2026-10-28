@@ -38,7 +38,7 @@ from roomui import RoomMode
 from themes import THEMES, ThemeManager, label_to_key, mix_hex
 from widgets import ModeSwitch, rounded, scrolled
 
-VERSION = "1.4.1"  # auf GitHub als Release „v1.4.1“ (danach richtet sich das Update im Installer)
+VERSION = "1.4.2"  # auf GitHub als Release „v1.4.2“ (danach richtet sich das Update im Installer)
 TIME_FMT = "%Y-%m-%d %H:%M"  # „_time“ einer Nutzernachricht: ihre Uhrzeit fürs Modell (_api_message)
 APP_DIR = Path(__file__).resolve().parent.parent  # Code in app/, Daten daneben
 CONFIG_FILE = APP_DIR / "config.json"

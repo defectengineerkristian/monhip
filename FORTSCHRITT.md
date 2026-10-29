@@ -43,7 +43,7 @@ Neueste Version zuerst. Commits ohne eigenes Release kommen unter „Seit …“
 
 ### Seit v1.4.3
 - Diese Datei in drei Teile gegliedert (Zukünftige Aufgaben, Umgesetzte Aufgaben, Grundstruktur).
-- Commits heißen ab jetzt „Update - vX“; was geändert wurde, steht nur noch hier.
+- Alle Commits einheitlich „Update - v1.4.3“, auch die alten (umbenannt); was geändert wurde, steht nur noch hier.
 
 ### v1.4.3 – 29.10.2026
 - Teamwork: eigene KI hat immer alle Werkzeuge; Fenster „Erlaubnis“ mit drei Stufen (Alles erlauben, Eingeschränkt,
@@ -142,10 +142,14 @@ Neueste Version zuerst. Commits ohne eigenes Release kommen unter „Seit …“
 
 ### GitHub und Testen
 - Keine `.gitignore`: nur einzelne Dateien `git add <datei>`, vorher `git pull`; Zeilenenden je Datei beibehalten.
-- Commit-Text nur „Update - vX“ (z. B. „Update - v1.4.3“; ohne eigenes Release die aktuelle bzw. anstehende
-  Version), ohne „Co-Authored-By“. Was geändert wurde, steht nur in dieser Datei.
+- **Alle Commits heißen einheitlich „Update - vX“** mit der neuesten Version (z. B. „Update - v1.4.3“), egal welche
+  Dateien sie ändern, ohne „Co-Authored-By“. Was geändert wurde, steht nur in dieser Datei.
+- Bei jeder neuen Version werden auch alle älteren Commits auf „Update - vX“ umbenannt (Inhalt, Autor und Datum
+  bleiben; Force-Push von `main` und allen Tags). Danach in jedem Klon: `git fetch origin`, `git fetch --tags --force`,
+  `git reset --keep origin/main` – eigene, noch nicht hochgeladene Commits vorher sichern.
 - Pushen nur mit OK, Releases nur mit OK des Projektinhabers.
-- Release: `VERSION` in `app/monhip.py` erhöhen → `git tag -a vX -m "vX"` → `git push origin main vX` →
+- Release: `VERSION` in `app/monhip.py` erhöhen → alle Commits umbenennen (siehe oben) → `git tag -a vX -m "vX"` →
+  `git push origin main vX` →
   `gh release create vX --verify-tag --title "vX" --notes "<ein Satz>"`. Ohne Release kommt nichts beim Nutzer an.
 - Tests: `py -m unittest discover -s tests -v`. Tests mit Fenster oder Grafikkarte vorher ankündigen; Nutzerdaten-Pfade
   im Test auf Testordner umbiegen.

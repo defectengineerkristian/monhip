@@ -3,9 +3,25 @@
 Was in welcher Version umgesetzt wurde, neueste zuerst. Neues kommt oben unter „Seit vX“ (bis zum nächsten Release),
 immer mit festen Daten (TT.MM.JJJJ).
 
-**Stand:** 29.10.2026 · **neuestes Release:** v1.4.4
+**Stand:** 29.10.2026 · **neuestes Release:** v1.4.5
 
 ---
+
+## v1.4.5 – 29.10.2026
+- 29.10.2026: Rechtsklick-Menü (Ausschneiden, Kopieren, Einfügen, Alles markieren) in allen Eingabefeldern –
+  Chatfeld, Einstellungen, Dialoge (`widgets.EditMenu`; Einfügen nimmt wie Strg+V auch Bilder und Dateien).
+- 29.10.2026: „Stopp“ wirkt sofort – auch während das Modell noch einen langen Prompt einliest oder ein Befehl läuft:
+  die Verbindung zum Server wird getrennt (`backend._cancel_on`), Befehle samt Unterprozessen beendet (`Agent._run`),
+  andere Werkzeuge kehren sofort zurück (`agent._execute`), Rückfragen danach gelten als abgelehnt.
+- 29.10.2026: Flüssigeres Scrollen im Chat (Schritte nach der vergangenen Zeit und mit genauem Windows-Zeitgeber –
+  vorher abwechselnd 8 und 24 ms) und Ziehen am Fensterrand (breitere Kachelbilder für die runden Ecken, große
+  verdeckte Rahmen als `tk.Frame`): bei 2600 px Fensterbreite 34 → 19 ms je Schritt.
+- 29.10.2026: Neues Werkzeug „Programme bedienen“ (Einstellungen → Werkzeuge, Standard aus, nur mit Bildverständnis,
+  nie im Teamwork; neues Modul `app/steuerung.py`): `fenster_liste`/`fenster_bedienen` – ein gewähltes Fenster per
+  Tastatur, Text, Maus und Mausrad steuern (Tasten als Scancode, auch für Spiele) und danach ein Bild davon sehen.
+  Fragt je Fenster, bricht ab, sobald ein anderes Fenster vorn ist; Konsolen, Explorer, Einstellungen, Task-Manager
+  und Anmeldefenster sind gesperrt. Klickstellen relativ zum Bild (0–1000) – so trifft das Bildmodell deutlich besser
+  als mit Pixeln. Mit echtem Modell getestet (kleines Spiel gelöst, Knopf getroffen, Konsole abgelehnt).
 
 ## v1.4.4 – 29.10.2026
 - Diese Datei auf den Fortschritt je Version gekürzt (Zukünftige Aufgaben und Grundstruktur gestrichen).

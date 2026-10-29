@@ -2,7 +2,9 @@
 
 from i18n import tr
 
+import contextlib
 import ctypes
+import http.client
 import json
 import os
 import re
@@ -12,6 +14,7 @@ import subprocess
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -323,16 +326,48 @@ def _context_full(code: int, body: str) -> ContextFull | None:
     return ContextFull(n_prompt, n_ctx)
 
 
+STOP_POLL = 0.05  # so schnell trennt „Stopp“ eine laufende Anfrage (Sekunden)
+
+
+@contextlib.contextmanager
+def _cancel_on(stop: threading.Event, conn: http.client.HTTPConnection):
+    """Solange der Block läuft: wird stop gesetzt, die Verbindung sofort trennen. Sonst wirkte „Stopp“ erst mit dem
+    nächsten Stück Text – während der Server einen langen Prompt einliest (bei großen Chats und Q8 eine Minute und
+    mehr), kommt keins. Getrennt bricht llama.cpp die Anfrage selbst ab."""
+    done = threading.Event()
+
+    def watch():
+        while not done.wait(STOP_POLL):
+            if stop.is_set():
+                sock = conn.sock
+                if sock is not None:
+                    try:
+                        sock.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
+                    try:  # shutdown allein weckt unter Windows ein wartendes recv/select nicht – Schließen schon
+                        socket.close(sock.detach())
+                    except OSError:
+                        pass
+                return
+
+    threading.Thread(target=watch, daemon=True).start()
+    try:
+        yield
+    finally:
+        done.set()
+
+
 def chat_turn(base_url: str, messages: list, params: dict, tools: list | None,
               stop: threading.Event, on_event) -> tuple[str, list, str]:
     """Ein gestreamter Modell-Aufruf → (Antworttext, Tool-Aufrufe, Denkprozess).
-    on_event(art, daten): "reasoning"/"content" live, am Ende "stats" (Tokens/s)."""
+    on_event(art, daten): "reasoning"/"content" live, am Ende "stats" (Tokens/s). stop bricht sofort ab (auch
+    während der Server noch liest) – zurück kommt, was bis dahin da war."""
     payload = {"messages": _api_messages(messages), "stream": True, **params}
     if tools:
         payload["tools"] = tools
-    req = urllib.request.Request(
-        base_url + "/v1/chat/completions", data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"})
+    url = urllib.parse.urlsplit(base_url)
+    conn = http.client.HTTPConnection(url.hostname, url.port or 80, timeout=900)
 
     content, reasoning, calls = [], [], {}
     splitter = _ThinkSplitter()
@@ -341,49 +376,60 @@ def chat_turn(base_url: str, messages: list, params: dict, tools: list | None,
         (reasoning if kind == "reasoning" else content).append(text)
         on_event(kind, text)
 
+    if stop.is_set():
+        return "", [], ""
     try:
-        resp = urllib.request.urlopen(req, timeout=900)
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", "replace")
-        full = _context_full(e.code, body)
-        if full:
-            raise full from None
-        raise RuntimeError(f"HTTP {e.code}: {body[:500]}") from None
-
-    with resp:
-        for raw in resp:
-            if stop.is_set():
-                break
-            line = raw.decode("utf-8", "replace").strip()
-            if not line.startswith("data:"):
-                continue
-            data = line[5:].strip()
-            if data == "[DONE]":
-                break
-            chunk = json.loads(data)
-            timings = chunk.get("timings") or {}
-            if timings.get("predicted_per_second"):
-                on_event("stats", timings["predicted_per_second"])
-            used = _used_tokens(chunk.get("usage"), timings)
-            if used:
-                on_event("usage", used)  # so viele Tokens belegt der Verlauf samt Antwort jetzt
-            choices = chunk.get("choices") or []
-            if not choices:
-                continue
-            delta = choices[0].get("delta") or {}
-            if delta.get("reasoning_content"):
-                emit("reasoning", delta["reasoning_content"])
-            if delta.get("content"):
-                for kind, text in splitter.feed(delta["content"]):
-                    emit(kind, text)
-            for tc in delta.get("tool_calls") or []:
-                c = calls.setdefault(tc.get("index", 0), {
-                    "id": "", "type": "function", "function": {"name": "", "arguments": ""}})
-                if tc.get("id"):
-                    c["id"] = tc["id"]
-                fn = tc.get("function") or {}
-                c["function"]["name"] += fn.get("name") or ""
-                c["function"]["arguments"] += fn.get("arguments") or ""
+        conn.connect()
+        with _cancel_on(stop, conn):
+            conn.request("POST", url.path.rstrip("/") + "/v1/chat/completions", json.dumps(payload).encode("utf-8"),
+                         {"Content-Type": "application/json"})
+            resp = conn.getresponse()
+            if resp.status >= 400:
+                body = resp.read().decode("utf-8", "replace")
+                full = _context_full(resp.status, body)
+                if full:
+                    raise full
+                raise RuntimeError(f"HTTP {resp.status}: {body[:500]}")
+            for raw in resp:
+                if stop.is_set():
+                    break
+                line = raw.decode("utf-8", "replace").strip()
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                chunk = json.loads(data)
+                timings = chunk.get("timings") or {}
+                if timings.get("predicted_per_second"):
+                    on_event("stats", timings["predicted_per_second"])
+                used = _used_tokens(chunk.get("usage"), timings)
+                if used:
+                    on_event("usage", used)  # so viele Tokens belegt der Verlauf samt Antwort jetzt
+                choices = chunk.get("choices") or []
+                if not choices:
+                    continue
+                delta = choices[0].get("delta") or {}
+                if delta.get("reasoning_content"):
+                    emit("reasoning", delta["reasoning_content"])
+                if delta.get("content"):
+                    for kind, text in splitter.feed(delta["content"]):
+                        emit(kind, text)
+                for tc in delta.get("tool_calls") or []:
+                    c = calls.setdefault(tc.get("index", 0), {
+                        "id": "", "type": "function", "function": {"name": "", "arguments": ""}})
+                    if tc.get("id"):
+                        c["id"] = tc["id"]
+                    fn = tc.get("function") or {}
+                    c["function"]["name"] += fn.get("name") or ""
+                    c["function"]["arguments"] += fn.get("arguments") or ""
+    except (OSError, http.client.HTTPException) as e:
+        if not stop.is_set():  # gestoppt: Trennen war gewollt
+            if isinstance(e, OSError):
+                raise
+            raise ConnectionError(f"{type(e).__name__}: {e}") from None
+    finally:
+        conn.close()
     for kind, text in splitter.flush():
         emit(kind, text)
     return "".join(content), [calls[i] for i in sorted(calls)], "".join(reasoning)

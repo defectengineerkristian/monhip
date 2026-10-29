@@ -1,5 +1,7 @@
-"""Eigene Bedienelemente: Felder mit einfärbbarem Scrollbalken, abgerundete Rechtecke, ModeSwitch, PopupMenu."""
+"""Eigene Bedienelemente: Felder mit einfärbbarem Scrollbalken, abgerundete Rechtecke, ModeSwitch, PopupMenu,
+EditMenu."""
 
+import ctypes
 import math
 import sys
 import time
@@ -10,6 +12,27 @@ from tkinter import ttk
 from themes import FAMILY, mix_hex
 
 WATCH_MS = 150  # PopupMenu: so oft prüfen, ob das Programm noch im Vordergrund ist
+
+_precise = 0    # wie viele Animationen gerade einen genauen Zeitgeber brauchen
+
+
+def precise_timer(on: bool):
+    """Genauer Zeitgeber (1 ms) für Animationen. Windows weckt after() sonst nur im 15,6-ms-Raster: die Schritte
+    beim weichen Scrollen kamen abwechselnd nach 8 und 24 ms (ruckelt), mit genauem Zeitgeber gleichmäßig.
+    Gezählt – an, solange irgendeine Animation (Scrollen, laufende Antwort) ihn braucht; danach wieder aus (spart
+    Strom)."""
+    global _precise
+    if sys.platform != "win32":
+        return
+    before = _precise
+    _precise = max(0, _precise + (1 if on else -1))
+    try:
+        if before == 0 and _precise == 1:
+            ctypes.windll.winmm.timeBeginPeriod(1)
+        elif before == 1 and _precise == 0:
+            ctypes.windll.winmm.timeEndPeriod(1)
+    except (AttributeError, OSError):
+        pass
 
 
 def scrolled(parent, widget=tk.Text, **kw):
@@ -447,3 +470,84 @@ class PopupMenu:
             focus = None
         if focus is None or not str(focus).startswith(str(win)):
             self.close()
+
+
+class EditMenu:
+    """Rechtsklick-Menü für alle Eingabefelder (tk.Text, ttk.Entry): Ausschneiden, Kopieren, Einfügen, Alles markieren
+    – wie unter Windows üblich. Hängt an den Klassen „Text“ und „TEntry“; die Chatverläufe (Bindtag ChatReadOnly) haben
+    ein eigenes Menü. Eingefügt wird über <<Paste>>, damit eigene Behandlungen (Dateien, Bilder im Chatfeld) greifen."""
+
+    def __init__(self, root: tk.Misc, scale: float, labels: tuple[str, str, str, str], register_menu=None):
+        self.widget: tk.Widget | None = None
+        self.menu = PopupMenu(root, scale)
+        for label, command in zip(labels, (self._cut, self._copy, self._paste, self._select_all)):
+            self.menu.add_command(label=label, command=command)
+        if register_menu:
+            register_menu(self.menu)
+        for cls in ("Text", "TEntry", "Entry"):
+            root.bind_class(cls, "<Button-3>", self._popup, add="+")
+
+    def _popup(self, e):
+        w = e.widget
+        if "ChatReadOnly" in w.bindtags():
+            return None
+        text = isinstance(w, tk.Text)
+        try:
+            if text:
+                editable = str(w.cget("state")) != tk.DISABLED
+                selected = bool(w.tag_ranges("sel"))
+                hidden = False
+            else:
+                editable = not (w.instate(["disabled"]) or w.instate(["readonly"])) if hasattr(w, "instate") \
+                    else str(w.cget("state")) == tk.NORMAL
+                selected = bool(w.selection_present())
+                hidden = bool(w.cget("show"))  # Passwort/Schlüssel: nicht kopieren (wie unter Windows)
+        except tk.TclError:
+            return None
+        self.widget = w
+        if editable:
+            w.focus_set()
+        states = (editable and selected and not hidden, selected and not hidden, editable, True)
+        for i, ok in enumerate(states):
+            self.menu.entryconfigure(i, state=tk.NORMAL if ok else tk.DISABLED)
+        try:
+            self.menu.tk_popup(e.x_root, e.y_root)
+        finally:
+            self.menu.grab_release()
+        return "break"
+
+    def _target(self) -> tk.Widget | None:
+        w = self.widget
+        try:
+            return w if w is not None and w.winfo_exists() else None
+        except tk.TclError:
+            return None
+
+    def _event(self, name: str):
+        w = self._target()
+        if w is not None:
+            w.focus_set()
+            w.event_generate(name)
+            if isinstance(w, tk.Text):
+                w.see(tk.INSERT)
+
+    def _cut(self):
+        self._event("<<Cut>>")
+
+    def _copy(self):
+        self._event("<<Copy>>")
+
+    def _paste(self):
+        self._event("<<Paste>>")
+
+    def _select_all(self):
+        w = self._target()
+        if w is None:
+            return
+        w.focus_set()
+        if isinstance(w, tk.Text):
+            w.tag_add("sel", "1.0", "end-1c")
+            w.mark_set(tk.INSERT, "end-1c")
+        else:
+            w.selection_range(0, tk.END)
+            w.icursor(tk.END)

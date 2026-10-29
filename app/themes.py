@@ -185,11 +185,13 @@ def _pixels(w: int, h: int, color) -> list[bytes]:
     return [bytes(c for x in range(w) for c in color(x + 0.5, y + 0.5)) for y in range(h)]
 
 
-def _rounded_png(r: int, mid: int, fill: str, border: str, under: str, bw: float) -> str:
+def _rounded_png(r: int, mid: int, fill: str, border: str, under: str, bw: float, wide: int | None = None) -> str:
     """Rechteck mit runden, kantengeglätteten Ecken auf der Farbe under – als Vorlage für ein 9-Teile-Bildelement
     (Rand r + 1). Bewusst undurchsichtig: halbtransparente Bilder mischt Tk unter Windows bei jedem Zeichnen neu.
-    Die Mitte ist mid Pixel groß, weil ttk sie kachelt statt dehnt – bei 1 Pixel wären das zehntausende
-    Zeichenaufrufe je Feld (Chatfeld: 2,7 s statt 0,1 ms)."""
+    Die Mitte ist mid Pixel hoch und wide (sonst mid) Pixel breit, weil ttk sie kachelt statt dehnt – bei 1 Pixel
+    wären das zehntausende Zeichenaufrufe je Feld (Chatfeld: 2,7 s statt 0,1 ms); in der Breite wachsen Felder und
+    Leisten mit dem Fenster, dort spart eine breite Mitte beim Ziehen am Fensterrand weitere Kacheln."""
+    wide = wide or mid
     fill_c, border_c, under_c = _rgb(fill), _rgb(border), _rgb(under)
     k = r + 1
     half = k + 0.5  # kleines Bild: 2k + 1 Pixel, Spalte/Zeile k ist die gerade Mitte
@@ -204,9 +206,9 @@ def _rounded_png(r: int, mid: int, fill: str, border: str, under: str, bw: float
         return _mix(under_c, _mix(border_c, fill_c, inner / outer), outer)
 
     small = _pixels(2 * k + 1, 2 * k + 1, color)
-    rows = [row[:3 * k] + row[3 * k:3 * k + 3] * mid + row[3 * k + 3:] for row in small]
+    rows = [row[:3 * k] + row[3 * k:3 * k + 3] * wide + row[3 * k + 3:] for row in small]
     rows = rows[:k] + rows[k:k + 1] * mid + rows[k + 1:]
-    return _png(2 * k + mid, 2 * k + mid, rows)
+    return _png(2 * k + wide, 2 * k + mid, rows)
 
 
 def _chevron_png(w: int, h: int, x0: float, y0: float, aw: float, ah: float, color: str, under: str,
@@ -334,6 +336,7 @@ class ThemeManager:
         self._menus: list[tk.Menu] = []
         self._windows: list[tk.Misc] = [root]
         self._fields: list[ttk.Frame] = []
+        self._frames: list[tk.Frame] = []
         self._orig: dict[str, dict] = {}
         self._roles: dict[str, str] = {}
         self._root_bg = root.cget("background")
@@ -395,6 +398,13 @@ class ThemeManager:
         self._style_field(frame)
         return w
 
+    def register_frame(self, f: tk.Frame):
+        """Schlichter tk.Frame in Hintergrundfarbe – für große, verdeckte Behälter: ein ttk.Frame malt bei jeder
+        Größenänderung seine ganze Fläche über einen Zwischenpuffer neu (je Fenstergröße ~1,5 ms beim Ziehen)."""
+        self._frames.append(f)
+        f.configure(background=self.pal["bg"] if self.pal else self._root_bg)
+        return f
+
     def register_window(self, win: tk.Toplevel):
         self._windows.append(win)
         self._style_window(win)
@@ -453,7 +463,8 @@ class ThemeManager:
                       "ok": c["ok"], "error": c["error"], "warn": c["warn"]})
         for lst, fn in ((self._texts, self._style_text), (self._lists, self._style_list),
                         (self._combos, self._style_combo), (self._menus, self._style_menu),
-                        (self._windows, self._style_window), (self._fields, self._style_field)):
+                        (self._windows, self._style_window), (self._fields, self._style_field),
+                        (self._frames, lambda f: f.configure(background=p["bg"] if p else self._root_bg))):
             lst[:] = [w for w in lst if self._alive(w)]
             for w in lst:
                 fn(w)
@@ -541,7 +552,8 @@ class ThemeManager:
         looks = [(zustand, füllung, rand), …]: der erste passende Zustand gewinnt, der letzte (None) ist normal."""
         r = max(2, round(r * self.scale))
         bw = max(1, round(self.scale))
-        imgs = [(state, self._image(f"{element}:{i}", _rounded_png(r, 64, fill, border, under, bw)))
+        # 512 px breite Mitte: beim Ziehen am Fensterrand 35 → 24 ms je Schritt (Fenster 2600 px breit)
+        imgs = [(state, self._image(f"{element}:{i}", _rounded_png(r, 64, fill, border, under, bw, wide=512)))
                 for i, (state, fill, border) in enumerate(looks)]
         if element not in self._elements:
             # width/height: Mindestgröße – sonst wäre jeder Knopf so groß wie das Bild mit seiner breiten Mitte

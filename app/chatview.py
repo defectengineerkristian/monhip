@@ -23,11 +23,13 @@ from tkinter import ttk
 import icons
 from markdown_lite import ListLevels, classify, closes_fence, inline, is_separator_row, plain, split_row
 from themes import FAMILY, mix_hex
-from widgets import PopupMenu, rounded
+from widgets import PopupMenu, precise_timer, rounded
 
 MONO = "Consolas"
 MAX_COLUMN = 820          # maximale Breite der Chatspalte (Pixel bei 100 %)
 PULSE_MS = 40
+SCROLL_MS = 8             # weiches Scrollen: Abstand der Schritte (mit genauem Zeitgeber, ~120 Bilder/s)
+SCROLL_TAU = 0.045        # Abklingzeit in s: ein Raststück Mausrad ist nach ~0,15 s am Ziel
 THUMB_KEEP = 80           # so viele Vorschaubilder bleiben beim Leeren der Ansicht im Speicher
 BULLETS = ["•", "◦", "▪", "‣"]
 WIN_CURSORS = {"hand2": 32649, "xterm": 32513}  # IDC_HAND, IDC_IBEAM
@@ -112,6 +114,7 @@ class ChatView:
         self._indent_tags: set[str] = set()
         self._scroll_left = 0.0
         self._scroll_job = None
+        self._scroll_t = 0.0
         self._bubble_text = ""
         self._file_path = ""
         self.on_quote = None         # on_quote(text): „Antworten“ auf markierten Text (nur im normalen Chat)
@@ -1447,30 +1450,44 @@ class ChatView:
         if e.delta:
             self._scroll_left -= e.delta / 120 * 3 * self.f_base.metrics("linespace")
             if self._scroll_job is None:
+                precise_timer(True)
+                self._scroll_t = time.perf_counter() - SCROLL_MS / 1000  # erster Schritt sofort
                 self._scroll_step()
         return "break"
 
     def _scroll_step(self):
-        """Weiches Scrollen: pro Schritt ein Teil der Reststrecke."""
+        """Weiches Scrollen nach der vergangenen Zeit: in dt rückt die Ansicht um 1 − e^(−dt/τ) der Reststrecke vor
+        (nach ~0,15 s am Ziel). Hängt ein Schritt (Zeichnen dauert länger), holt der nächste auf, statt langsamer zu
+        werden; Pixelreste werden mitgezählt."""
         self._scroll_job = None
+        now = time.perf_counter()
+        dt, self._scroll_t = min(now - self._scroll_t, 0.05), now
         left = self._scroll_left
-        if abs(left) < 1:
-            self._scroll_left = 0.0
+        if abs(left) < 0.5:
+            self._end_scroll()
             return
-        move = int(left * 0.3) or (1 if left > 0 else -1)
+        want = left * (1 - math.exp(-dt / SCROLL_TAU))
+        move = round(want) or (1 if left > 0 else -1)
+        if abs(left) < 2:
+            move = round(left) or (1 if left > 0 else -1)
         before = self.t.yview()
         self.t.yview_scroll(move, "pixels")
         self._scroll_left -= move
         self._stick = self._at_bottom()
         if self.t.yview() == before:  # oben oder unten angekommen
-            self._scroll_left = 0.0
+            self._end_scroll()
             return
-        self._scroll_job = self.t.after(12, self._scroll_step)
+        self._scroll_job = self.t.after(SCROLL_MS, self._scroll_step)
+
+    def _end_scroll(self):
+        self._scroll_left = 0.0
+        precise_timer(False)
 
     def _stop_scroll(self):
         if self._scroll_job:
             self.t.after_cancel(self._scroll_job)
             self._scroll_job = None
+            self._end_scroll()
         self._scroll_left = 0.0
 
     def _set_cursor(self, name: str):

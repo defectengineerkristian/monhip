@@ -38,9 +38,9 @@ from backend import LlamaServer, find_mmproj, find_models, thinking_title
 from chatview import ChatView
 from roomui import RoomMode
 from themes import FAMILY, THEMES, ThemeManager, label_to_key, mix_hex
-from widgets import ModeSwitch, PopupMenu, rounded, scrolled
+from widgets import EditMenu, ModeSwitch, PopupMenu, precise_timer, rounded, scrolled
 
-VERSION = "1.4.4"  # auf GitHub als Release „v1.4.4“ (danach richtet sich das Update im Installer)
+VERSION = "1.4.5"  # auf GitHub als Release „v1.4.5“ (danach richtet sich das Update im Installer)
 TIME_FMT = "%Y-%m-%d %H:%M"  # „_time“ einer Nutzernachricht: ihre Uhrzeit fürs Modell (_api_message)
 APP_DIR = Path(__file__).resolve().parent.parent  # Code in app/, Daten daneben
 CONFIG_FILE = APP_DIR / "config.json"
@@ -75,6 +75,7 @@ DEFAULTS = {
     "memory_enabled": True,
     "reminders_enabled": True,
     "screenshots_enabled": False,
+    "control_enabled": False,       # Programme bedienen (steuerung.py) – aus, bis der Nutzer es einschaltet
     "speech_model": speech.DEFAULT_MODEL,
     "speech_language": "de",
     "last_model": "",
@@ -176,6 +177,9 @@ class App:
         root.geometry(f"{min(round(1320 * self.ui_scale), root.winfo_screenwidth() - 40)}x"
                       f"{min(round(980 * self.ui_scale), root.winfo_screenheight() - 90)}")
         dialogs.setup(root, self.theme, self.ui_scale)
+        # Rechtsklick in jedem Eingabefeld (Chatfeld, Einstellungen, Dialoge): Ausschneiden/Kopieren/Einfügen
+        self.edit_menu = EditMenu(root, self.ui_scale, (tr('Ausschneiden'), tr('Kopieren'), tr('Einfügen'),
+                                                        tr('Alles markieren')), self.theme.register_menu)
         self._chip_fonts = (tkfont.Font(font=(FAMILY, 9)), tkfont.Font(font=(FAMILY, 8)))
 
         self._build_sidebar()
@@ -275,7 +279,8 @@ class App:
 
     def _build_main(self):
         ttk.Separator(self.root, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y)
-        main = ttk.Frame(self.root)
+        # große, ganz verdeckte Behälter als tk.Frame: ein ttk.Frame malt bei jedem Zieh-Schritt seine ganze Fläche neu
+        main = self.theme.register_frame(tk.Frame(self.root, borderwidth=0, highlightthickness=0))
         main.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         # ---- Kopfzeile: Chat-Titel links, Modell rechts
@@ -341,7 +346,7 @@ class App:
         self.attach_bar = ttk.Frame(main, padding=(18, 8, 18, 0))
 
         # ---- Verlauf: normaler Chat und Gruppenchat übereinander, set_mode() holt einen nach vorn
-        box = ttk.Frame(main)
+        box = self.theme.register_frame(tk.Frame(main, borderwidth=0, highlightthickness=0))
         box.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         box.rowconfigure(0, weight=1)
         box.columnconfigure(0, weight=1)
@@ -541,14 +546,18 @@ class App:
         ttk.Checkbutton(t, text=tr(
             'Bildschirmfotos – das Modell darf deinen Bildschirm ansehen (fragt jedes Mal, nur mit Bildverständnis)'), variable=self.screen_var).grid(
             row=7, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        self.control_var = tk.BooleanVar(value=self.cfg["control_enabled"])
+        ttk.Checkbutton(t, text=tr(
+            'Programme bedienen – das Modell darf ein Fenster mit Tastatur und Maus steuern (fragt je Fenster, nur mit '
+            'Bildverständnis)'), variable=self.control_var).grid(row=8, column=0, columnspan=2, sticky="w", pady=(4, 0))
         ttk.Checkbutton(t, text=tr('Jede Aktion bestätigen (empfohlen)'), variable=self.confirm_var).grid(
-            row=8, column=0, columnspan=2, sticky="w", pady=(4, 0))
+            row=9, column=0, columnspan=2, sticky="w", pady=(4, 0))
         # Werkzeuggruppen: einzeln abschaltbar (jede kostet bei jeder Anfrage Kontext), Standard an; gesperrt, solange
         # ihre Voraussetzung (Dateien, Befehle, Internet) aus ist
-        ttk.Label(t, text=tr('Werkzeuggruppen'), style="Muted.TLabel").grid(row=9, column=0, columnspan=2, sticky="w",
+        ttk.Label(t, text=tr('Werkzeuggruppen'), style="Muted.TLabel").grid(row=10, column=0, columnspan=2, sticky="w",
                                                                             pady=(10, 2))
         gf = ttk.Frame(t)
-        gf.grid(row=10, column=0, columnspan=2, sticky="ew")
+        gf.grid(row=11, column=0, columnspan=2, sticky="ew")
         saved = self.cfg["tool_groups"] if isinstance(self.cfg.get("tool_groups"), dict) else {}
         self.group_vars = {g: tk.BooleanVar(value=bool(saved.get(g, True))) for g in TOOL_GROUPS}
         self._group_boxes = {}
@@ -566,18 +575,18 @@ class App:
         ttk.Label(t, text=tr(
             'Freigegebene Ordner – nur hier darf das Modell lesen und schreiben. ★ = Arbeitsordner (Standard für '
             'neue Dateien):'), style="Muted.TLabel",
-                  wraplength=round(600 * self.ui_scale)).grid(row=11, column=0, columnspan=2, sticky="w", pady=(10, 2))
+                  wraplength=round(600 * self.ui_scale)).grid(row=12, column=0, columnspan=2, sticky="w", pady=(10, 2))
         lf, self.folder_list = self._listbox(t, height=4)
-        lf.grid(row=12, column=0, columnspan=2, sticky="nsew")
+        lf.grid(row=13, column=0, columnspan=2, sticky="nsew")
         self.folder_list.bind("<Delete>", lambda e: self._remove_folder())
         bf = ttk.Frame(t)
-        bf.grid(row=13, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        bf.grid(row=14, column=0, columnspan=2, sticky="w", pady=(6, 0))
         ttk.Button(bf, text=tr('Ordner hinzufügen…'), command=self._add_folder).pack(side=tk.LEFT)
         ttk.Button(bf, text=tr('Als Arbeitsordner'), command=self._main_folder, **icons.opts("star")).pack(
             side=tk.LEFT, padx=(4, 0))
         ttk.Button(bf, text=tr('Entfernen'), command=self._remove_folder).pack(side=tk.LEFT, padx=(4, 0))
         t.columnconfigure(0, weight=1)
-        t.rowconfigure(12, weight=1)
+        t.rowconfigure(13, weight=1)
         self._fill_folders()
 
         # ---- Gedächtnis und Erinnerungen
@@ -1795,6 +1804,8 @@ class App:
             self.send()
 
     def _set_busy(self, busy: bool):
+        if busy != self.busy:  # gleichmäßiges „Tippen“ der Antwort: Ereignisschleife im 15-ms-Takt statt 15,6/31 ms
+            precise_timer(busy)
         self.busy = busy
         if self.mode == "chat":  # im Raum-Modus bleibt der Knopf „Senden“ (die eigene KI stoppt man links)
             self._send_label(busy)
@@ -1899,16 +1910,17 @@ class App:
         files, commands, web_access = self.agent_var.get(), self.cmd_var.get(), self.web_var.get()
         mem, rem = self.memory_var.get(), self.reminder_var.get()
         shots = self.screen_var.get() and self.server.vision
+        control = self.control_var.get() and self.server.vision  # ohne Bild sähe es nicht, was es tut
         expert = (self.chat_data or {}).get("experte")
         library = experte.Library(Path(expert["quelle"])) if expert else None  # Experten-Chat: Dokumente durchsuchen
-        if not (files or commands or web_access or mem or rem or shots or library):
+        if not (files or commands or web_access or mem or rem or shots or control or library):
             return None
         return Agent(self._confirm_from_worker, files=files, commands=commands, workspace=self.ws_var.get(),
                      folders=self.extra_folders, confirm_actions=self.confirm_var.get(),
                      web_access=web_access, brave_key=self.brave_var.get(), memory=mem, reminders=rem,
                      vision=self.server.vision, screenshot=self._screenshot_from_worker if shots else None,
                      expert=library, expert_start=self._expert_from_worker, git=self.git_var.get(),
-                     groups={g: v.get() for g, v in self.group_vars.items()})
+                     groups={g: v.get() for g, v in self.group_vars.items()}, control=control)
 
     def _system_prompt(self, agent: Agent | None) -> str:
         system = self.sys_text.get("1.0", tk.END).strip()
@@ -2476,7 +2488,8 @@ class App:
         try:
             q = self.stream_q
             backlog = sum(len(d) for k, d in q if k == "content")
-            budget = max(3, -(-backlog // 6))
+            # nach „Stopp“ den Rest sofort zeigen statt weiter zu „tippen“
+            budget = backlog if self.stop_event.is_set() else max(3, -(-backlog // 6))
             text, reasoning = [], []
 
             def flush():
@@ -2782,6 +2795,7 @@ class App:
             "memory_enabled": self.memory_var.get(),
             "reminders_enabled": self.reminder_var.get(),
             "screenshots_enabled": self.screen_var.get(),
+            "control_enabled": self.control_var.get(),
             "speech_model": self._speech_settings()[0],
             "speech_language": self._speech_settings()[1],
             "theme": self.theme.key,

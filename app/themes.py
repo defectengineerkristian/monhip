@@ -146,6 +146,25 @@ def _draw_checkbox(img: tk.PhotoImage, size: int, bg: str, border: str, fill: st
     img.put(" ".join(rows), to=(0, 0))
 
 
+def _draw_radio(img: tk.PhotoImage, size: int, bg: str, border: str, fill: str, dot: str | None):
+    """Zeichnet einen runden Auswahlknopf (und ggf. den Punkt darin) kantengeglättet in ein PhotoImage."""
+    bg_c, border_c, fill_c = _rgb(bg), _rgb(border), _rgb(fill)
+    dot_c = _rgb(dot) if dot else None
+    c, r, bw, rd = size / 2, size / 2 - 0.5, max(1.0, size / 14), size * 0.2
+    rows = []
+    for y in range(size):
+        row = []
+        for x in range(size):
+            d = ((x + 0.5 - c) ** 2 + (y + 0.5 - c) ** 2) ** 0.5
+            col = _mix(bg_c, border_c, max(0.0, min(1.0, r - d + 0.5)))
+            col = _mix(col, fill_c, max(0.0, min(1.0, r - bw - d + 0.5)))
+            if dot_c:
+                col = _mix(col, dot_c, max(0.0, min(1.0, rd - d + 0.5)))
+            row.append("#%02x%02x%02x" % col)
+        rows.append("{" + " ".join(row) + "}")
+    img.put(" ".join(rows), to=(0, 0))
+
+
 def _png(w: int, h: int, rows: list[bytes]) -> str:
     """PNG (RGB, base64) aus fertigen Bildzeilen."""
     def chunk(kind: bytes, data: bytes) -> bytes:
@@ -320,6 +339,8 @@ class ThemeManager:
         self._check_size = max(13, round(10.5 * float(root.tk.call("tk", "scaling"))))
         self._img_off = tk.PhotoImage(master=root, width=self._check_size, height=self._check_size)
         self._img_on = tk.PhotoImage(master=root, width=self._check_size, height=self._check_size)
+        self._radio_off = tk.PhotoImage(master=root, width=self._check_size, height=self._check_size)
+        self._radio_on = tk.PhotoImage(master=root, width=self._check_size, height=self._check_size)
         self._check_element = False
         # Abgerundete Bildelemente (Knöpfe, Felder, Kärtchen): Bilder werden beim Designwechsel neu gemalt
         self.scale = max(1.0, float(root.tk.call("tk", "scaling")) / 1.333)
@@ -591,16 +612,21 @@ class ThemeManager:
         off_border = "#%02x%02x%02x" % _mix(_rgb(p["bg"]), _rgb(p["muted"]), 0.6)
         _draw_checkbox(self._img_off, n, p["bg"], off_border, p["surface"], None)
         _draw_checkbox(self._img_on, n, p["bg"], p["accent"], p["accent"], p["accent_fg"])
+        _draw_radio(self._radio_off, n, p["bg"], off_border, p["surface"], None)
+        _draw_radio(self._radio_on, n, p["bg"], p["accent"], p["accent"], p["accent_fg"])
         if not self._check_element:
             s.element_create("MS.Checkbutton.indicator", "image", self._img_off,
                              ("selected", self._img_on), width=n + 7, sticky="w")
+            s.element_create("MS.Radiobutton.indicator", "image", self._radio_off,
+                             ("selected", self._radio_on), width=n + 7, sticky="w")
             self._check_element = True
-        s.layout("TCheckbutton", [("Checkbutton.padding", {"sticky": "nswe", "children": [
-            ("MS.Checkbutton.indicator", {"side": "left", "sticky": ""}),
-            ("Checkbutton.focus", {"side": "left", "sticky": "w", "children": [
-                ("Checkbutton.label", {"sticky": "nswe"})]})]})])
-        s.configure("TCheckbutton", background=p["bg"], foreground=p["fg"], focuscolor=p["bg"], padding=2)
-        s.map("TCheckbutton", background=[("active", p["bg"])], foreground=[("disabled", p["muted"])])
+        for kind in ("Checkbutton", "Radiobutton"):
+            s.layout(f"T{kind}", [(f"{kind}.padding", {"sticky": "nswe", "children": [
+                (f"MS.{kind}.indicator", {"side": "left", "sticky": ""}),
+                (f"{kind}.focus", {"side": "left", "sticky": "w", "children": [
+                    (f"{kind}.label", {"sticky": "nswe"})]})]})])
+            s.configure(f"T{kind}", background=p["bg"], foreground=p["fg"], focuscolor=p["bg"], padding=2)
+            s.map(f"T{kind}", background=[("active", p["bg"])], foreground=[("disabled", p["muted"])])
 
         # Rahmen, Reiter, Trenner
         s.configure("TLabelframe", background=p["bg"], bordercolor=p["border"], lightcolor=p["bg"],

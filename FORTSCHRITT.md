@@ -5,7 +5,8 @@ Gemini, lokale Modelle …). Sie soll verhindern, dass zwei gleichzeitig an ders
 noch einmal gebaut oder eine getroffene Entscheidung wieder umgeworfen wird. Ausführliche Entwicklernotizen führt
 der Projektinhaber lokal; diese Datei ist der gemeinsame Auszug daraus.
 
-**Stand:** 28.10.2026 · **neuestes Release:** v1.4.2 · Ziehen am Fensterrand 3–4-mal so flüssig – auf Basis von
+**Stand:** 29.10.2026 · **neuestes Release:** v1.4.3 · Teamwork: Erlaubnis der eigenen KI in drei Stufen und
+Projektordner als Knopf; Kontextmenüs im Design – auf Basis von v1.4.2 (Ziehen am Fensterrand 3–4-mal so flüssig),
 v1.4.1 (Kontextgröße frei einstellbar, schnellere Antworten in langen Chats, PowerShell-Hinweise für die KI), v1.4
 (19 neue Agenten-Werkzeuge) und v1.3 (Deutsch und Englisch für die Oberfläche).
 
@@ -113,6 +114,13 @@ Vom Projektinhaber so festgelegt – nicht ohne Rücksprache ändern und nicht w
   stoppen“.
 - Den Hauptauftrag (`@main`) legen nur Menschen fest; Änderungen erscheinen **nicht** im Verlauf. KIs lesen ihn nur.
 - Spricht eine KI andere KIs mit @Name an, wartet sie auf deren Antworten und macht danach von selbst weiter.
+- Die eigene KI im Raum hat **immer alle Werkzeuge** (Internet, Dateien, Befehle) – keine Häkchen je Werkzeug mehr.
+  Wann sie fragt, legt die **Erlaubnis** fest: „Alles erlauben“ = **gar keine** Rückfrage, auch nicht beim Teilen oder
+  Hochladen von Dateien (ausdrücklicher Wunsch des Projektinhabers; das Fenster sagt dazu, dass auch andere im Raum die
+  KI ansprechen können), „Eingeschränkt“ (Standard) = Rückfrage vor Änderungen, Befehlen und Dateien nach außen,
+  „Strikt“ = Rückfrage vor jeder Aktion, auch Lesen und Websuche.
+- Die Teamwork-Seitenleiste zeigt nur Knöpfe (Einladung, Hauptauftrag, Aufgaben, Erlaubnis, Projektordner),
+  Einzelheiten erst beim Anklicken.
 
 **Modelle und Leistung**
 - **Den Kontext stellt jeder selbst ein** (Einstellungen → Laden, Standard 16 384 Tokens) – keine Automatik und keine
@@ -177,7 +185,9 @@ Die wichtigsten Stolpersteine – fast jede Regel hier steht da, weil ihr Bruch 
 - **Agent-Sicherheit:** Dateizugriffe nur über `Agent._path()` (freigegebene Ordner), schreibende Aktionen über
   `_ok()` bestätigen, Löschen nur in den Papierkorb, `open_path` startet keine Programme oder Skripte.
   Bildschirmfotos, Hochladen und Teilen fragen immer – auch nach „Alle erlauben“; ebenso Push, Pull Request und
-  `speicher_analysieren` außerhalb der Freigaben. Vor jeder Datei-Änderung sichert `_sichern` den alten Stand für den
+  `speicher_analysieren` außerhalb der Freigaben (Ausnahme: Teamwork-Erlaubnis „Alles erlauben“, `always_ask=False`).
+  Teamwork „Strikt“ (`ask_every=True`) fragt vor jedem Werkzeug außer `QUIET_TOOLS`; Werkzeuge in `CONFIRMS_ITSELF`
+  behalten ihre eigene Rückfrage – dort nur eintragen, was vor der Rückfrage höchstens Pfade prüft, nichts liest. Vor jeder Datei-Änderung sichert `_sichern` den alten Stand für den
   Checkpoint der Antwort (auch neu angelegte Ordner darüber).
 - **Teamwork-Sicherheit:** Anfragen sind HMAC-signiert, der Schlüssel geht nie übers Netz; Werkzeugaktionen der
   eigenen KI im Raum immer mit Bestätigung; an andere gehen nur Werkzeug-Kopfzeilen, nie Ergebnisse; nach außen nie
@@ -282,7 +292,18 @@ mit `py Monhip.pyw`).
 Neueste zuerst. Neue Einträge oben im Abschnitt „Seit …“:
 `- TT.MM.JJJJ · Wer · Was · getestet: … · offen: …`
 
-### Seit v1.4.2
+### Seit v1.4.3
+
+### v1.4.3 – 29.10.2026
+- 28.10.2026 · Projektinhaber + Claude · **Teamwork: „Erlaubnis“ und „Projektordner“ als Knöpfe:** Die Abschnitte
+  „Projektordner“ und „Meine KI im Raum darf“ (Häkchen) in der Seitenleiste sind weg; die eigene KI hat immer alle
+  Werkzeuge, das Fenster „Erlaubnis“ bietet drei Stufen (siehe „Entscheidungen → Teamwork“, gespeichert als
+  `room_mode`, ein altes `room_tools` wird beim Laden verworfen). „Projektordner“: Gastgeber gibt frei bzw. öffnet/
+  beendet die Freigabe, Gäste sehen Name und Rechte. Dazu eingefärbte Auswahlknöpfe (`TRadiobutton`) in Dunkel/Hell.
+  Getestet: am Agenten 16 Prüfungen (bei „Strikt“ + Nein fragt jedes Werkzeug der KI im Raum genau einmal und tut
+  nichts, „Alles erlauben“ fragt nie, „Eingeschränkt“ wie bisher, normaler Chat unverändert), im Fenster 20 Prüfungen
+  mit Bildschirmfotos (Dunkel, Hell, Windows-Standard), alle Unit-Tests grün; mit echtem Modell und zwischen zwei
+  Rechnern noch nicht.
 - 28.10.2026 · Projektinhaber + Claude · **Kontextmenüs ohne weißen Rahmen:** Das Menü „Umbenennen…/Löschen“ (und
   die Menüs im Chatverlauf, an Sprechblasen und Datei-Kärtchen) hatte im dunklen Design einen hellen Rahmen – den
   zeichnet Windows bei nativen Menüs immer in Systemfarben. Jetzt `widgets.PopupMenu`: eigenes randloses Fenster im
@@ -445,4 +466,4 @@ Neueste zuerst. Neue Einträge oben im Abschnitt „Seit …“:
   Teamwork-Projektordner; Sicherungen liegen in `checkpoints/` (30 Stück, Dateien über 50 MB nur vermerkt).
   `arbeitstage` kennt keine Feiertage. PDF: Lesezeichen und Formularfelder gehen verloren, verschlüsselte PDFs nicht.
   Bilder: kein HEIC/WebP, bei animierten GIFs nur das erste Bild. Höchstens 5 Hintergrund-Prozesse. Im Teamwork
-  bekommen KIs mit „Dateien“/„Befehle“ die neuen Werkzeuge mit (alle Aktionen werden dort ohnehin bestätigt), Git nicht.
+  bekommt die eigene KI die neuen Werkzeuge mit (seit v1.4.3 immer; Rückfragen je nach Erlaubnis), Git nicht.

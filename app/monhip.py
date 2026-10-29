@@ -38,7 +38,7 @@ from roomui import RoomMode
 from themes import THEMES, ThemeManager, label_to_key, mix_hex
 from widgets import ModeSwitch, PopupMenu, rounded, scrolled
 
-VERSION = "1.4.2"  # auf GitHub als Release „v1.4.2“ (danach richtet sich das Update im Installer)
+VERSION = "1.4.3"  # auf GitHub als Release „v1.4.3“ (danach richtet sich das Update im Installer)
 TIME_FMT = "%Y-%m-%d %H:%M"  # „_time“ einer Nutzernachricht: ihre Uhrzeit fürs Modell (_api_message)
 APP_DIR = Path(__file__).resolve().parent.parent  # Code in app/, Daten daneben
 CONFIG_FILE = APP_DIR / "config.json"
@@ -80,7 +80,7 @@ DEFAULTS = {
     "mode": "chat",
     "room_name": "",
     "room_ai": "",
-    "room_tools": {"web": True, "files": False, "commands": False},
+    "room_mode": "limited",        # Erlaubnis der eigenen KI im Teamwork: all | limited | strict (roomui.ROOM_MODES)
     "client_id": "",               # Kennung dieser Installation (Wiederbeitritt nach Neustart)
 }
 
@@ -98,6 +98,9 @@ def load_config() -> dict:
     cfg["folders"] = [f for f in cfg["folders"] if ".lmstudio" not in f.lower() and not same_path(f, MODEL_DIR)]
     cfg["extra_models"] = [f for f in cfg["extra_models"] if ".lmstudio" not in f.lower()]
     cfg.pop("show_thinking", None)
+    cfg.pop("room_tools", None)  # bis 28.10.2026: Häkchen je Werkzeug – die KI im Raum hat jetzt immer alle (room_mode)
+    if cfg.get("room_mode") not in ("all", "limited", "strict"):
+        cfg["room_mode"] = DEFAULTS["room_mode"]
     try:  # „auto“ (bis 27.10.2026 Standard) gibt es nicht mehr → Standardwert
         cfg["ctx"] = int(cfg["ctx"])
     except (TypeError, ValueError):

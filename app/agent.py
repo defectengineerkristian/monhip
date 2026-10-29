@@ -361,6 +361,19 @@ ORGANIZE_TOOLS = [  # mit Dateizugriff: aufräumen, Speicher, PDFs, Bilder
           drehen={"type": "integer", "description": "90, 180 oder 270 (im Uhrzeigersinn)"}),
 ]
 
+# Teamwork-Erlaubnis „Strikt“ (Agent(ask_every=True)): vor jedem Werkzeug fragen – außer bei reiner Koordination im
+# Raum und Rechnen (berühren weder den Rechner noch das Internet) und bei Werkzeugen, die selbst in jedem Fall fragen,
+# bevor sie etwas lesen, ändern, ausführen oder verschicken (dort bleibt ihre genauere Vorschau). In CONFIRMS_ITSELF nur
+# eintragen, was vorher höchstens Pfade prüft – nicht edit_file/pdf_bearbeiten (lesen den Inhalt vor der Rückfrage) und
+# nicht projekt_download (fragt vorher den Gastgeber nach der Dateiliste).
+QUIET_TOOLS = frozenset({"rechnen", "plan_setzen", "arbeitsstand_speichern", "aufgabe_anlegen", "aufgabe_uebernehmen",
+                         "aufgabe_erledigt", "aufgaben_liste", "status_setzen", "ki_fragen"})
+CONFIRMS_ITSELF = frozenset({
+    "write_file", "move_path", "copy_path", "delete_path", "open_path", "create_project", "create_word_document",
+    "create_excel_workbook", "create_presentation", "run_command", "run_python", "projekt_write", "projekt_edit",
+    "projekt_delete", "projekt_upload", "datei_teilen", "dateien_ordnen", "bilder_bearbeiten", "checkpoint_zurueck",
+    "prozess_starten"})
+
 LABELS = {
     "list_directory": tr('Ordner ansehen'), "read_file": tr('Datei lesen'), "write_file": tr('Datei schreiben'),
     "edit_file": tr('Datei bearbeiten'), "create_directory": tr('Ordner anlegen'), "move_path": tr('Verschieben'),
@@ -725,8 +738,12 @@ class Agent:
                  cmd_timeout: int = 120, memory: bool = False, reminders: bool = False, vision: bool = False,
                  screenshot=None, team=None, team_write: bool = False, team_info: dict | None = None,
                  share_files: bool = False, expert=None, expert_start=None, notes=None, room=None,
-                 git: bool = False):
+                 git: bool = False, always_ask: bool = True, ask_every: bool = False):
         self.confirm = confirm              # confirm(titel, text) -> "yes" | "no" | "all", blockiert bis Antwort
+        # Teamwork-Erlaubnis: always_ask=False („Alles erlauben“) – auch _ask_always fragt nicht mehr;
+        # ask_every=True („Strikt“) – vor jeder Aktion fragen, auch vor Lesen und Websuche (_ask_every)
+        self.always_ask, self.ask_every = always_ask, ask_every
+        self._granted = False               # diese Aktion ist schon über _ask_every erlaubt
         # Teamwork: gemeinsamer Projektordner beim Gastgeber – team(aktion, **argumente) -> dict (RoomClient.project),
         # team_info: {"name", "host", "local" (Pfad nur beim Gastgeber selbst, sonst None)}
         self.team, self.team_info = team, team_info or {}
@@ -865,9 +882,20 @@ class Agent:
             self._sichern(top)
 
     def _ok(self, title: str, text: str) -> bool:
-        if not self.confirm_actions or self.allow_all:
+        if not self.confirm_actions or self.allow_all or self._granted:
             return True
         answer = self.confirm(title, text)
+        if answer == "all":
+            self.allow_all = True
+        return answer in ("yes", "all")
+
+    def _ask_every(self, name: str, raw_args: str) -> bool | None:
+        """Erlaubnis „Strikt“: vor jeder Aktion fragen (siehe QUIET_TOOLS/CONFIRMS_ITSELF). None = nicht gefragt."""
+        if (not self.ask_every or self.allow_all or name in QUIET_TOOLS
+                or (name in CONFIRMS_ITSELF and self.confirm_actions and self.always_ask)):
+            return None
+        _icon, label, _detail = describe_call(name, raw_args)
+        answer = self.confirm(tr('{0} erlauben?', label), format_args(raw_args))
         if answer == "all":
             self.allow_all = True
         return answer in ("yes", "all")
@@ -879,7 +907,14 @@ class Agent:
             args = json.loads(raw_args) if raw_args.strip() else {}
             if not isinstance(args, dict):
                 raise ValueError("Argumente müssen ein JSON-Objekt sein.")
-            out = str(getattr(self, f"tool_{name}")(**args))
+            asked = self._ask_every(name, raw_args)
+            if asked is False:
+                return "Vom Nutzer abgelehnt."
+            self._granted = bool(asked)  # gerade gefragt: die Rückfragen des Werkzeugs selbst entfallen
+            try:
+                out = str(getattr(self, f"tool_{name}")(**args))
+            finally:
+                self._granted = False
         except MODEL_ERRORS as e:
             out = f"Fehler: {e}"
         except TypeError as e:
@@ -1165,13 +1200,6 @@ class Agent:
         if not self._ok(tr('Im Projektordner löschen?'), str(path)):
             return "Vom Nutzer abgelehnt."
         return self.team("delete", path=path)["text"]
-
-    def _ask_always(self, title: str, text: str) -> bool:
-        """Auch nach „Alle erlauben“ fragen – hier verlässt eine Datei diesen Rechner."""
-        answer = self.confirm(title, text)
-        if answer == "all":
-            self.allow_all = True
-        return answer in ("yes", "all")
 
     def _local_file(self, raw) -> tuple[Path, int]:
         p = self._path(raw)
@@ -1505,8 +1533,12 @@ class Agent:
         return rel
 
     def _ask_always(self, title: str, text: str) -> bool:
-        """Push und Pull Request wirken nach außen: immer fragen – auch ohne „Jede Aktion bestätigen“ und nach
-        „Alle erlauben“; „Alle“ gilt hier nur für diese eine Aktion."""
+        """Wirkt nach außen (Datei verlässt den Rechner, Push, Pull Request) oder über die Freigaben hinaus: immer
+        fragen – auch ohne „Jede Aktion bestätigen“ und nach „Alle erlauben“; „Alle“ gilt hier nur für diese eine
+        Aktion. Ausnahmen: Teamwork-Erlaubnis „Alles erlauben“ (always_ask=False) und „Strikt“, wenn _ask_every
+        schon gefragt hat."""
+        if not self.always_ask or self._granted:
+            return True
         return self.confirm(title, text) in ("yes", "all")
 
     def tool_git_status(self, path="."):

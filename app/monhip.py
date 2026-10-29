@@ -32,14 +32,15 @@ import prozesse
 import reminders
 import room as room_net
 import speech
-from agent import Agent, date_line, describe_call, format_args, result_ok, run_conversation, time_label, tool_budget
+from agent import (TOOL_GROUPS, Agent, date_line, describe_call, format_args, result_ok, run_conversation, time_label,
+                   tool_budget)
 from backend import LlamaServer, find_mmproj, find_models, thinking_title
 from chatview import ChatView
 from roomui import RoomMode
 from themes import FAMILY, THEMES, ThemeManager, label_to_key, mix_hex
 from widgets import ModeSwitch, PopupMenu, rounded, scrolled
 
-VERSION = "1.4.3"  # auf GitHub als Release „v1.4.3“ (danach richtet sich das Update im Installer)
+VERSION = "1.4.4"  # auf GitHub als Release „v1.4.4“ (danach richtet sich das Update im Installer)
 TIME_FMT = "%Y-%m-%d %H:%M"  # „_time“ einer Nutzernachricht: ihre Uhrzeit fürs Modell (_api_message)
 APP_DIR = Path(__file__).resolve().parent.parent  # Code in app/, Daten daneben
 CONFIG_FILE = APP_DIR / "config.json"
@@ -65,6 +66,7 @@ DEFAULTS = {
     "agent_enabled": False,        # Dateien & Ordner
     "agent_commands": True,        # PowerShell & Python
     "git_enabled": False,          # Git & GitHub (nur zusammen mit Dateien & Ordner)
+    "tool_groups": {},             # Werkzeuggruppen (agent.TOOL_GROUPS): Name → an/aus, fehlend = an
     "agent_workspace": str(Path.home() / "Desktop" / "Agent-Arbeitsordner"),
     "agent_folders": [],
     "agent_confirm": True,
@@ -541,20 +543,41 @@ class App:
             row=7, column=0, columnspan=2, sticky="w", pady=(4, 0))
         ttk.Checkbutton(t, text=tr('Jede Aktion bestätigen (empfohlen)'), variable=self.confirm_var).grid(
             row=8, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        # Werkzeuggruppen: einzeln abschaltbar (jede kostet bei jeder Anfrage Kontext), Standard an; gesperrt, solange
+        # ihre Voraussetzung (Dateien, Befehle, Internet) aus ist
+        ttk.Label(t, text=tr('Werkzeuggruppen'), style="Muted.TLabel").grid(row=9, column=0, columnspan=2, sticky="w",
+                                                                            pady=(10, 2))
+        gf = ttk.Frame(t)
+        gf.grid(row=10, column=0, columnspan=2, sticky="ew")
+        saved = self.cfg["tool_groups"] if isinstance(self.cfg.get("tool_groups"), dict) else {}
+        self.group_vars = {g: tk.BooleanVar(value=bool(saved.get(g, True))) for g in TOOL_GROUPS}
+        self._group_boxes = {}
+        for i, (g, label) in enumerate((
+                ("calc", tr('Rechnen')), ("checkpoints", tr('Rückgängig (Checkpoints)')), ("plan", tr('Arbeitsplan')),
+                ("office", tr('Word, Excel, PowerPoint, PDF')), ("organize", tr('Dateien ordnen & Speicher')),
+                ("media", tr('PDFs & Bilder bearbeiten')), ("processes", tr('Hintergrund-Prozesse')),
+                ("download", tr('Dateien herunterladen')), ("clipboard", tr('Zwischenablage')))):
+            box = ttk.Checkbutton(gf, text=label, variable=self.group_vars[g])
+            box.grid(row=i // 3, column=i % 3, sticky="w", padx=(0, 18), pady=(2, 0))
+            self._group_boxes[g] = box
+        for var in (self.agent_var, self.cmd_var, self.web_var):
+            var.trace_add("write", lambda *a: self._update_group_boxes())
+        self._update_group_boxes()
         ttk.Label(t, text=tr(
             'Freigegebene Ordner – nur hier darf das Modell lesen und schreiben. ★ = Arbeitsordner (Standard für '
             'neue Dateien):'), style="Muted.TLabel",
-                  wraplength=round(600 * self.ui_scale)).grid(row=9, column=0, columnspan=2, sticky="w", pady=(10, 2))
-        lf, self.folder_list = self._listbox(t, height=5)
-        lf.grid(row=10, column=0, columnspan=2, sticky="nsew")
+                  wraplength=round(600 * self.ui_scale)).grid(row=11, column=0, columnspan=2, sticky="w", pady=(10, 2))
+        lf, self.folder_list = self._listbox(t, height=4)
+        lf.grid(row=12, column=0, columnspan=2, sticky="nsew")
         self.folder_list.bind("<Delete>", lambda e: self._remove_folder())
         bf = ttk.Frame(t)
-        bf.grid(row=11, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        bf.grid(row=13, column=0, columnspan=2, sticky="w", pady=(6, 0))
         ttk.Button(bf, text=tr('Ordner hinzufügen…'), command=self._add_folder).pack(side=tk.LEFT)
-        ttk.Button(bf, text=tr('Als Arbeitsordner'), command=self._main_folder, **icons.opts("star")).pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Button(bf, text=tr('Als Arbeitsordner'), command=self._main_folder, **icons.opts("star")).pack(
+            side=tk.LEFT, padx=(4, 0))
         ttk.Button(bf, text=tr('Entfernen'), command=self._remove_folder).pack(side=tk.LEFT, padx=(4, 0))
         t.columnconfigure(0, weight=1)
-        t.rowconfigure(10, weight=1)
+        t.rowconfigure(12, weight=1)
         self._fill_folders()
 
         # ---- Gedächtnis und Erinnerungen
@@ -1322,6 +1345,14 @@ class App:
 
     # ---------------------------------------------------------------- Freigegebene Ordner
 
+    def _update_group_boxes(self):
+        """Werkzeuggruppen ohne ihre Voraussetzung (Dateien, Befehle, Internet) gesperrt zeigen."""
+        files, cmd, web_access = self.agent_var.get(), self.cmd_var.get(), self.web_var.get()
+        needs = {"checkpoints": files, "office": files, "organize": files, "media": files, "processes": cmd,
+                 "plan": files or cmd, "download": files and web_access}
+        for g, box in self._group_boxes.items():
+            box.state(["!disabled"] if needs.get(g, True) else ["disabled"])
+
     def _fill_folders(self):
         lst = self.folder_list
         lst.delete(0, tk.END)
@@ -1876,7 +1907,8 @@ class App:
                      folders=self.extra_folders, confirm_actions=self.confirm_var.get(),
                      web_access=web_access, brave_key=self.brave_var.get(), memory=mem, reminders=rem,
                      vision=self.server.vision, screenshot=self._screenshot_from_worker if shots else None,
-                     expert=library, expert_start=self._expert_from_worker, git=self.git_var.get())
+                     expert=library, expert_start=self._expert_from_worker, git=self.git_var.get(),
+                     groups={g: v.get() for g, v in self.group_vars.items()})
 
     def _system_prompt(self, agent: Agent | None) -> str:
         system = self.sys_text.get("1.0", tk.END).strip()
@@ -2741,6 +2773,7 @@ class App:
             "agent_enabled": self.agent_var.get(),
             "agent_commands": self.cmd_var.get(),
             "git_enabled": self.git_var.get(),
+            "tool_groups": {g: v.get() for g, v in self.group_vars.items()},
             "agent_workspace": self.ws_var.get(),
             "agent_folders": list(self.extra_folders),
             "agent_confirm": self.confirm_var.get(),

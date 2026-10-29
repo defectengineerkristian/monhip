@@ -17,6 +17,7 @@ from pathlib import Path
 
 import documents
 import images
+from web import mark_from_internet  # roomui holt sie von hier
 from agent import EXEC_SUFFIXES, SKIP_DIRS, ToolError, _numbered, _read_text_file, list_directory, match_edit, \
     search_files
 
@@ -50,16 +51,6 @@ class Missing(ProjectError):
 class Conflict(ProjectError):
     """Die Datei hat sich seit dem letzten Lesen geändert."""
     code = 409
-
-
-def mark_from_internet(path: Path):
-    """Windows-Markierung „aus dem Internet“ (Zone.Identifier): SmartScreen und Office warnen dann beim Öffnen –
-    wie bei Downloads aus dem Browser. Auf FAT/exFAT-Laufwerken nicht möglich (dann ohne)."""
-    try:
-        with open(f"{path}:Zone.Identifier", "wb") as f:
-            f.write(b"[ZoneTransfer]\r\nZoneId=3\r\n")
-    except OSError:
-        pass
 
 
 def file_kind(path: Path) -> str:

@@ -3,6 +3,7 @@
 import gzip
 import ipaddress
 import json
+import os
 import re
 import socket
 import threading
@@ -10,6 +11,7 @@ import time
 import urllib.parse
 import urllib.request
 from html.parser import HTMLParser
+from pathlib import Path
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/130.0 Safari/537.36")
@@ -198,3 +200,72 @@ def fetch(url: str, max_chars: int = 8000, start: int = 0) -> str:
         return head + text
     more = f" – weiter mit start={end}" if end < total else " – Ende der Seite"
     return head + text[start:end].rstrip() + f"\n…(Zeichen {start}–{end} von {total}{more})"
+
+
+# ---------------------------------------------------------------- Dateien herunterladen (Agent-Werkzeug download_file)
+
+_BAD_NAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_DEVICES = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
+
+
+def file_name(raw: str) -> str:
+    """Dateiname aus einer URL bzw. Content-Disposition: ohne Pfad, ohne verbotene Zeichen und Gerätenamen."""
+    name = _BAD_NAME.sub("_", urllib.parse.unquote(raw or "").replace("\\", "/").rsplit("/", 1)[-1]).strip(" .")
+    if not name or name.split(".")[0].upper() in _DEVICES:
+        name = "download" + (f"_{name}" if name else "")
+    return name[:150]
+
+
+def download_info(url: str) -> dict:
+    """Vorab (ohne Inhalt): Dateiname und Größe. Manche Server kennen HEAD nicht – dann Name aus der URL."""
+    _check_public(url)
+    info = {"url": url, "name": file_name(urllib.parse.urlparse(url).path), "size": None, "type": ""}
+    try:
+        req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": UA})
+        with _opener.open(req, timeout=15) as r:
+            info["url"] = r.geturl()
+            info["name"] = file_name(r.headers.get_filename() or urllib.parse.urlparse(r.geturl()).path)
+            length = r.headers.get("Content-Length")
+            info["size"] = int(length) if length and length.isdigit() else None
+            info["type"] = r.headers.get_content_type()
+    except (OSError, ValueError):
+        pass
+    return info
+
+
+def download(url: str, target, max_bytes: int) -> tuple[int, str, str]:
+    """Lädt url nach target – erst nach <target>.part, fertig umbenannt. Gibt (Bytes, Inhaltsart, Endadresse)."""
+    _check_public(url)
+    target = Path(target)
+    part = target.with_name(target.name + ".part")
+    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept-Language": "de-DE,de;q=0.9,en;q=0.8"})
+    try:
+        with _opener.open(req, timeout=30) as r:
+            length = r.headers.get("Content-Length")
+            if length and length.isdigit() and int(length) > max_bytes:
+                raise ValueError(f"Die Datei ist zu groß ({int(length) // 1048576} MB, höchstens "
+                                 f"{max_bytes // 1048576} MB).")
+            n = 0
+            with open(part, "wb") as f:
+                while chunk := r.read(1 << 16):
+                    n += len(chunk)
+                    if n > max_bytes:
+                        raise ValueError(f"Die Datei ist größer als {max_bytes // 1048576} MB – abgebrochen.")
+                    f.write(chunk)
+            ctype, final = r.headers.get_content_type(), r.geturl()
+        os.replace(part, target)
+    finally:
+        part.unlink(missing_ok=True)
+    mark_from_internet(target, final)
+    return n, ctype, final
+
+
+def mark_from_internet(path, url: str = ""):
+    """Windows-Markierung „aus dem Internet“ (Zone.Identifier): SmartScreen und Office warnen dann beim Öffnen –
+    wie bei Downloads aus dem Browser. Auf FAT/exFAT-Laufwerken nicht möglich (dann ohne)."""
+    try:
+        with open(f"{path}:Zone.Identifier", "wb") as f:
+            host = f"HostUrl={url}\r\n".encode("utf-8", "replace") if url else b""
+            f.write(b"[ZoneTransfer]\r\nZoneId=3\r\n" + host)
+    except OSError:
+        pass

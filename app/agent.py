@@ -23,11 +23,13 @@ import arbeitsplan
 import bildwerk
 import checkpoints
 import documents
+import filedrop
 import gitwork
 import images
 import memory
 import office
 import ordnen
+import pdfsatz
 import pdfwerk
 import projects
 import prozesse
@@ -92,6 +94,9 @@ FILE_TOOLS = [
           name={"type": "string", "description": "Projektname (wird auch Ordnername)"},
           language={"type": "string", "description": "Sprache, z. B. python, java, cpp, rust, csharp, node, web"},
           path={"type": "string", "description": "Übergeordneter Ordner (Standard: Arbeitsordner)"}),
+]
+
+OFFICE_TOOLS = [  # mit Dateizugriff, Gruppe „office“
     _tool("create_word_document", "Erstellt ein Word-Dokument (.docx) aus Markdown: # Überschriften, Absätze, "
           "**fett**, *kursiv*, Listen (- oder 1.), Tabellen (| a | b |), Zitate (>), Code-Blöcke (```), "
           "Links und Seitenumbruch (Zeile mit \\newpage).", optional=("title",),
@@ -117,6 +122,24 @@ FILE_TOOLS = [
                       "required": ["title", "bullets"]}},
           title={"type": "string", "description": "Titel der Titelfolie"},
           subtitle={"type": "string", "description": "Untertitel der Titelfolie"}),
+    _tool("create_pdf", "Erstellt ein PDF (A4) aus Markdown – wie create_word_document: # Überschriften, Absätze, "
+          "**fett**, *kursiv*, Listen, Tabellen, Zitate, Code-Blöcke, Links, Seitenumbruch (\\newpage).",
+          optional=("title",), path=PATH, markdown={"type": "string", "description": "Inhalt als Markdown"},
+          title={"type": "string", "description": "Optionaler Dokumenttitel (groß über dem Text)"}),
+]
+
+DOWNLOAD_TOOLS = [  # mit Dateizugriff und Internet, Gruppe „download“
+    _tool("download_file", "Lädt eine Datei aus dem Internet in einen freigegebenen Ordner (PDF, Bild, Archiv, "
+          "Programm …). Für den Text einer Webseite stattdessen fetch_url.", optional=("path",),
+          url={"type": "string", "description": "Vollständige http(s)-URL der Datei"},
+          path={"type": "string", "description": "Zieldatei oder -ordner (Standard: Arbeitsordner, Name aus der URL)"}),
+]
+
+CLIPBOARD_TOOLS = [  # Gruppe „clipboard“ – nicht im Teamwork (Zwischenablage des eigenen Rechners)
+    _tool("clipboard_read", "Liest die Zwischenablage des Nutzers: Text, kopierte Dateien (Pfade) oder ein Bild "
+          "(wird dir gezeigt, wenn du Bilder verstehst). Das Programm fragt den Nutzer vorher."),
+    _tool("clipboard_write", "Legt Text in die Zwischenablage, damit der Nutzer ihn einfügen kann (Strg+V).",
+          text=STR),
 ]
 
 CMD_TOOLS = [
@@ -328,7 +351,7 @@ PROCESS_TOOLS = [  # mit Befehlen: Programme, die weiterlaufen sollen
           warten={"type": "integer", "description": "Sekunden auf neue Ausgabe warten (0–30)"}),
     _tool("prozess_stoppen", "Beendet einen Hintergrund-Prozess samt allen Unterprozessen.", nr={"type": "integer"}),
 ]
-ORGANIZE_TOOLS = [  # mit Dateizugriff: aufräumen, Speicher, PDFs, Bilder
+ORGANIZE_TOOLS = [  # mit Dateizugriff, Gruppe „organize“: aufräumen, Speicher
     # Beschreibung bewusst ungekürzt: knapper legte das Modell jeden Zielordner erst einzeln an (6 von 6 Läufen)
     _tool("dateien_ordnen", "Verschiebt bzw. benennt viele Dateien und Ordner auf einmal um: Der Nutzer bestätigt "
           "den ganzen Plan in einem Dialog, rückgängig mit checkpoint_zurueck. Fehlende Zielordner legt es selbst an. "
@@ -342,6 +365,8 @@ ORGANIZE_TOOLS = [  # mit Dateizugriff: aufräumen, Speicher, PDFs, Bilder
           "doppelte Dateien. Löscht nichts.", optional=("ordner", "doppelte"),
           ordner={"type": "string", "description": "Ordner oder Laufwerk (Standard: Arbeitsordner)"},
           doppelte={"type": "boolean", "description": "Auch doppelte Dateien suchen (langsamer)"}),
+]
+MEDIA_TOOLS = [  # mit Dateizugriff, Gruppe „media“: PDFs und Bilder bearbeiten
     _tool("pdf_bearbeiten", "PDFs bearbeiten, Ergebnis immer in neuen Dateien. zusammenfuegen: dateien → ziel; "
           "seiten: Auswahl → ziel; aufteilen: je Seite eine PDF im Ordner ziel; drehen: Seiten gedreht → ziel.",
           optional=("seiten", "grad"),
@@ -370,9 +395,13 @@ QUIET_TOOLS = frozenset({"rechnen", "plan_setzen", "arbeitsstand_speichern", "au
                          "aufgabe_erledigt", "aufgaben_liste", "status_setzen", "ki_fragen"})
 CONFIRMS_ITSELF = frozenset({
     "write_file", "move_path", "copy_path", "delete_path", "open_path", "create_project", "create_word_document",
-    "create_excel_workbook", "create_presentation", "run_command", "run_python", "projekt_write", "projekt_edit",
-    "projekt_delete", "projekt_upload", "datei_teilen", "dateien_ordnen", "bilder_bearbeiten", "checkpoint_zurueck",
-    "prozess_starten"})
+    "create_excel_workbook", "create_presentation", "create_pdf", "run_command", "run_python", "projekt_write",
+    "projekt_edit", "projekt_delete", "projekt_upload", "datei_teilen", "dateien_ordnen", "bilder_bearbeiten",
+    "checkpoint_zurueck", "prozess_starten", "download_file", "clipboard_read", "clipboard_write"})
+
+# Werkzeuggruppen, die man in den Einstellungen abschalten kann (jede kostet bei jeder Anfrage Kontext) – nur zusammen
+# mit ihrer Voraussetzung (Dateien, Befehle, Internet) aktiv; Agent(groups={name: False}) schaltet ab, Standard an
+TOOL_GROUPS = ("calc", "checkpoints", "plan", "office", "organize", "media", "processes", "download", "clipboard")
 
 LABELS = {
     "list_directory": tr('Ordner ansehen'), "read_file": tr('Datei lesen'), "write_file": tr('Datei schreiben'),
@@ -399,7 +428,9 @@ LABELS = {
     "prozess_starten": tr('Im Hintergrund starten'), "prozess_ausgabe": tr('Prozess-Ausgabe'),
     "prozess_stoppen": tr('Prozess stoppen'), "dateien_ordnen": tr('Dateien ordnen'),
     "speicher_analysieren": tr('Speicher analysieren'), "pdf_bearbeiten": tr('PDF bearbeiten'),
-    "bilder_bearbeiten": tr('Bilder bearbeiten'), "rechnen": tr('Rechnen'),
+    "bilder_bearbeiten": tr('Bilder bearbeiten'), "rechnen": tr('Rechnen'), "create_pdf": tr('PDF-Dokument'),
+    "download_file": tr('Datei herunterladen'), "clipboard_read": tr('Zwischenablage lesen'),
+    "clipboard_write": tr('In die Zwischenablage'),
 }
 ICONS = {"web_search": "🌐", "fetch_url": "🌐", "search_files": "⌕", "write_file": "✎", "edit_file": "✎",
          "run_command": "❯", "run_python": "❯", "view_image": "▣", "take_screenshot": "▣", "remember": "✦",
@@ -409,7 +440,8 @@ ICONS = {"web_search": "🌐", "fetch_url": "🌐", "search_files": "⌕", "writ
          "experte_suchen": "⌕", "git_branch": "⎇", "git_pull": "⬇", "git_push": "⬆", "git_clone": "⬇",
          "github_pull_request": "⬆", "plan_setzen": "☰", "checkpoint_zurueck": "↶", "prozess_starten": "❯",
          "prozess_ausgabe": "❯", "prozess_stoppen": "❯", "dateien_ordnen": "📁", "speicher_analysieren": "⌕",
-         "pdf_bearbeiten": "✎", "bilder_bearbeiten": "▣", "rechnen": "="}  # Experten-Modus sonst ohne Bildzeichen
+         "pdf_bearbeiten": "✎", "bilder_bearbeiten": "▣", "rechnen": "=", "download_file": "⬇",
+         "clipboard_read": "📋", "clipboard_write": "📋"}  # Experten-Modus sonst ohne Bildzeichen
 
 FILE_PROMPT = (
     "Du arbeitest auf dem Windows-PC des Nutzers.\n"
@@ -419,9 +451,12 @@ FILE_PROMPT = (
     "und größere Ergebnisse in einem eigenen Unterordner an.")
 
 OFFICE_PROMPT = (
-    "Word-, Excel- und PowerPoint-Dateien erstellst du mit create_word_document, create_excel_workbook bzw. "
-    "create_presentation (nicht mit write_file). Neue Programmierprojekte beginnst du mit create_project und "
-    "baust sie dann mit write_file/edit_file aus. Wenn der Nutzer das Ergebnis sehen möchte, öffne es mit open_path.")
+    "Word-, Excel-, PowerPoint- und PDF-Dateien erstellst du mit create_word_document, create_excel_workbook, "
+    "create_presentation bzw. create_pdf (nicht mit write_file).")
+
+PROJECT_PROMPT = (
+    "Neue Programmierprojekte beginnst du mit create_project und baust sie dann mit write_file/edit_file aus. Wenn der "
+    "Nutzer das Ergebnis sehen möchte, öffne es mit open_path.")
 
 CMD_PROMPT = (
     "Befehle laufen in Windows PowerShell 5.1 (Standard-Verzeichnis: Arbeitsordner). {hints} Starte keine "
@@ -453,8 +488,9 @@ CHECKPOINT_PROMPT = (
 ORGANIZE_PROMPT = (
     "Aufräumen: Viele Dateien verschiebst bzw. benennst du mit einem einzigen dateien_ordnen-Aufruf um, nicht "
     "einzeln mit move_path. Bei Platzproblemen hilft speicher_analysieren – lösche nur, was der Nutzer ausdrücklich "
-    "freigibt. PDFs bearbeitest du mit pdf_bearbeiten, viele Bilder mit bilder_bearbeiten (beide legen neue Dateien "
-    "an).")
+    "freigibt.")
+
+MEDIA_PROMPT = "PDFs bearbeitest du mit pdf_bearbeiten, viele Bilder mit bilder_bearbeiten (beide legen neue Dateien an)."
 
 PROCESS_PROMPT = (
     "Programme, die weiterlaufen sollen, startest du mit prozess_starten statt run_command und sagst dem Nutzer, "
@@ -738,8 +774,10 @@ class Agent:
                  cmd_timeout: int = 120, memory: bool = False, reminders: bool = False, vision: bool = False,
                  screenshot=None, team=None, team_write: bool = False, team_info: dict | None = None,
                  share_files: bool = False, expert=None, expert_start=None, notes=None, room=None,
-                 git: bool = False, always_ask: bool = True, ask_every: bool = False):
+                 git: bool = False, always_ask: bool = True, ask_every: bool = False, groups: dict | None = None):
         self.confirm = confirm              # confirm(titel, text) -> "yes" | "no" | "all", blockiert bis Antwort
+        # Werkzeuggruppen (TOOL_GROUPS) – abgeschaltete stehen weder in den Werkzeugen noch im System-Prompt
+        self.groups = {g: bool((groups or {}).get(g, True)) for g in TOOL_GROUPS}
         # Teamwork-Erlaubnis: always_ask=False („Alles erlauben“) – auch _ask_always fragt nicht mehr;
         # ask_every=True („Strikt“) – vor jeder Aktion fragen, auch vor Lesen und Websuche (_ask_every)
         self.always_ask, self.ask_every = always_ask, ask_every
@@ -782,11 +820,20 @@ class Agent:
         self.allow_all = False
         self.brave_key = brave_key.strip()
         self.cmd_timeout = cmd_timeout
-        self.tools = (CALC_TOOLS
-                      + (FILE_TOOLS + CHECKPOINT_TOOLS + ORGANIZE_TOOLS + (VIEW_TOOLS if vision else []) if files else [])
-                      + (CMD_TOOLS + PROCESS_TOOLS if commands else []) + (PLAN_TOOLS if files or commands else [])
+        g = self.groups
+        self.tools = ((CALC_TOOLS if g["calc"] else [])
+                      + (FILE_TOOLS + (VIEW_TOOLS if vision else []) if files else [])
+                      + (CHECKPOINT_TOOLS if files and g["checkpoints"] else [])
+                      + (OFFICE_TOOLS if files and g["office"] else [])
+                      + (ORGANIZE_TOOLS if files and g["organize"] else [])
+                      + (MEDIA_TOOLS if files and g["media"] else [])
+                      + (CMD_TOOLS if commands else []) + (PROCESS_TOOLS if commands and g["processes"] else [])
+                      + (PLAN_TOOLS if (files or commands) and g["plan"] else [])
                       + (GIT_TOOLS if self.git else [])
-                      + (WEB_TOOLS if web_access else []) + (SCREEN_TOOLS if self.screenshot else [])
+                      + (WEB_TOOLS if web_access else [])
+                      + (DOWNLOAD_TOOLS if files and web_access and g["download"] else [])
+                      + (CLIPBOARD_TOOLS if g["clipboard"] else [])
+                      + (SCREEN_TOOLS if self.screenshot else [])
                       + (MEMORY_TOOLS if memory else []) + (REMINDER_TOOLS if reminders else [])
                       + (TEAM_TOOLS + (TEAM_WRITE_TOOLS if team_write else []) if team else [])
                       # Dateien vom/auf den eigenen Rechner: nur mit Dateizugriff (freigegebene Ordner)
@@ -799,18 +846,21 @@ class Agent:
         self._allowed = {t["function"]["name"] for t in self.tools}
 
     def system_prompt(self) -> str:
-        parts = [CALC_PROMPT]
+        on = self._allowed
+        parts = [CALC_PROMPT] if "rechnen" in on else []
         if self.files or self.commands:
             folders = "\n".join(f"- {r}" for r in self.roots)
             parts.append(FILE_PROMPT.format(ws=self.ws, folders=folders))
-            parts.append(PLAN_PROMPT)
+            if "plan_setzen" in on:
+                parts.append(PLAN_PROMPT)
         if self.files:
-            parts.append(OFFICE_PROMPT)
-            parts.append(CHECKPOINT_PROMPT)
-            parts.append(ORGANIZE_PROMPT)
+            parts += [p for p, tool in ((OFFICE_PROMPT, "create_pdf"), (PROJECT_PROMPT, "create_project"),
+                                        (CHECKPOINT_PROMPT, "checkpoint_zurueck"), (ORGANIZE_PROMPT, "dateien_ordnen"),
+                                        (MEDIA_PROMPT, "pdf_bearbeiten")) if tool in on]
         if self.commands:
             parts.append(CMD_PROMPT.format(tools=installed_toolchains(), hints=shell_hints()))
-            parts.append(PROCESS_PROMPT)
+            if "prozess_starten" in on:
+                parts.append(PROCESS_PROMPT)
             running = prozesse.prompt_block()
             if running:
                 parts.append(running)
@@ -1062,7 +1112,7 @@ class Agent:
         if p.suffix.lower() == suffix:
             return p
         replaceable = {"", ".doc", ".docx", ".rtf", ".odt", ".txt", ".md", ".xls", ".xlsx", ".csv", ".ods",
-                       ".ppt", ".pptx", ".odp"}
+                       ".ppt", ".pptx", ".odp", ".pdf"}
         return p.with_suffix(suffix) if p.suffix.lower() in replaceable else p.with_name(p.name + suffix)
 
     def tool_create_word_document(self, path, markdown, title=""):
@@ -1097,6 +1147,63 @@ class Agent:
         office.write_pptx(p, slides, title, subtitle)
         count = len(slides or []) + (1 if title else 0)
         return f"Präsentation mit {count} Folien gespeichert: {p} ({_size(p.stat().st_size)})"
+
+    def tool_create_pdf(self, path, markdown, title=""):
+        p = self._office_target(path, ".pdf")
+        if not self._ok(tr('PDF erstellen?'), f"{p}\n\n{_preview((title + chr(10) * 2 if title else '') + markdown)}"):
+            return "Vom Nutzer abgelehnt."
+        self._sichern(p)
+        pages = pdfsatz.write_pdf(p, markdown, title)
+        return f"PDF mit {pages} Seite{'' if pages == 1 else 'n'} gespeichert: {p} ({_size(p.stat().st_size)})"
+
+    # ------------------------------------------------------------ Herunterladen, Zwischenablage
+
+    def tool_download_file(self, url, path=""):
+        info = web.download_info(str(url).strip())
+        target = self._path(path or ".")
+        if not path or target.is_dir() or str(path).rstrip().endswith(("/", "\\")):
+            target = self._path(str(target / info["name"]))
+        if target.is_dir():
+            raise IsADirectoryError(f"{target} ist ein Ordner.")
+        if info["size"] and info["size"] > DOWNLOAD_MAX:
+            raise ToolError(f"Die Datei ist zu groß ({_size(info['size'])}, höchstens {_size(DOWNLOAD_MAX)}).")
+        size = f"\n{_size(info['size'])}" if info["size"] else ""
+        verb = tr('überschreiben') if target.exists() else tr('speichern')
+        if not self._ok(tr('Datei herunterladen und {0}?', verb), f"{info['url']}\n→ {target}{size}"):
+            return "Vom Nutzer abgelehnt."
+        self._sichern(target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        n, ctype, final = web.download(info["url"], target, DOWNLOAD_MAX)
+        hint = (" – als Programm/Skript ist sie als „aus dem Internet“ markiert"
+                if target.suffix.lower() in EXEC_SUFFIXES else "")
+        return f"Heruntergeladen: {target} ({_size(n)}, {ctype}){hint}. Quelle: {final}"
+
+    def tool_clipboard_read(self):
+        files = filedrop.clipboard_files()
+        text = None if files else filedrop.clipboard_text()
+        image = not files and not text and filedrop.clipboard_has_image()
+        if not (files or text or image):
+            return "Die Zwischenablage ist leer (oder enthält nichts, was ich lesen kann)."
+        shown = ("\n".join(files) if files else _preview(text, 800) if text else tr('ein Bild'))
+        if not self._ask_always(tr('Zwischenablage lesen?'), shown):  # kann Passwörter u. Ä. enthalten
+            return "Vom Nutzer abgelehnt."
+        if files:
+            return "Kopierte Dateien:\n" + "\n".join(f"- {f}" for f in files)
+        if text:
+            return f"Text aus der Zwischenablage ({len(text)} Zeichen):\n{text}"
+        if not self.vision:
+            return "Die Zwischenablage enthält ein Bild – ohne Bildverständnis kann ich es nicht ansehen."
+        img = images.save_clipboard()
+        if not img:
+            raise ToolError("Das Bild in der Zwischenablage ließ sich nicht lesen.")
+        self._images.append(img)
+        return "Bild aus der Zwischenablage – du siehst es mit diesem Ergebnis."
+
+    def tool_clipboard_write(self, text):
+        if not self._ok(tr('In die Zwischenablage kopieren?'), _preview(str(text))):
+            return "Vom Nutzer abgelehnt."
+        filedrop.set_clipboard_text(str(text))
+        return f"{len(str(text))} Zeichen liegen in der Zwischenablage – der Nutzer kann sie mit Strg+V einfügen."
 
     # ------------------------------------------------------------ Befehle
 

@@ -3,13 +3,14 @@
 Was in welcher Version umgesetzt wurde, neueste zuerst. Neues kommt oben unter „Seit vX“ (bis zum nächsten Release),
 immer mit festen Daten (TT.MM.JJJJ).
 
-**Stand:** 29.10.2026 · **neuestes Release:** v1.4.3
+**Stand:** 29.10.2026 · **neuestes Release:** v1.4.4
 
 ---
 
-## Seit v1.4.3
+## v1.4.4 – 29.10.2026
 - Diese Datei auf den Fortschritt je Version gekürzt (Zukünftige Aufgaben und Grundstruktur gestrichen).
-- Alle Commits einheitlich „Update - v1.4.3“, auch die alten (umbenannt); was geändert wurde, steht nur noch hier.
+- Alle Commits einheitlich „Update - vX“ mit der neuesten Version, auch die alten (bei jeder Version umbenannt); was
+  geändert wurde, steht nur noch hier.
 - 29.10.2026: Einheitliche Icons aus der Windows-Icon-Schrift (Segoe Fluent Icons, unter Windows 10 Segoe MDL2
   Assets) statt gemischter Sonderzeichen und Emojis – Seitenleisten, Kopfzeile, Eingabe, Chatverlauf, Teamwork
   (neues Modul `app/icons.py`). Schrift der Oberfläche zentral in `themes.FAMILY` (bleibt „Segoe UI“). Start rund
@@ -17,6 +18,14 @@ immer mit festen Daten (TT.MM.JJJJ).
 - 29.10.2026: Umschalter „Chat | Teamwork“ mit gleicher Schrift für beide Seiten (sprang vorher zwischen fett und
   normal), „Raum beitreten“ mit Personen-Icon statt langem Pfeil; Icons der Seitenleiste auf der Höhe des Texts (saßen
   bei 10 pt 1,5 px zu hoch), Seitenleiste in „Windows-Standard“ jetzt auch 10 pt.
+- 29.10.2026: Werkzeuggruppen einzeln abschaltbar (Einstellungen → Werkzeuge, Standard an; spart Kontext): Rechnen,
+  Rückgängig, Arbeitsplan, Word/Excel/PowerPoint/PDF, Dateien ordnen & Speicher, PDFs & Bilder bearbeiten,
+  Hintergrund-Prozesse, Dateien herunterladen, Zwischenablage (`agent.TOOL_GROUPS`; im Teamwork alle außer der
+  Zwischenablage).
+- 29.10.2026: Neue Werkzeuge: `create_pdf` (PDF aus Markdown ohne Word, neues Modul `app/pdfsatz.py` – Windows-Schriften
+  als Teilmenge eingebettet), `download_file` (Datei aus dem Internet in einen freigegebenen Ordner, „aus dem
+  Internet“ markiert, lokale Adressen gesperrt), `clipboard_read`/`clipboard_write` (Zwischenablage, Lesen fragt
+  immer). Mit echtem Modell getestet.
 
 ## v1.4.3 – 29.10.2026
 - Teamwork: eigene KI hat immer alle Werkzeuge; Fenster „Erlaubnis“ mit drei Stufen (Alles erlauben, Eingeschränkt,

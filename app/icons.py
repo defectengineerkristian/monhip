@@ -31,7 +31,8 @@ GLYPHS = {
     "delete": ("\ue74d", "✕"), "dot": ("\uea3b", "●"), "download": ("\ue896", "⬇"), "edit": ("\ue70f", "✎"),
     "folder": ("\ue8b7", "📁"), "globe": ("\ue774", "🌐"), "help": ("\ue9ce", "?"), "history": ("\ue81c", "≡"),
     "info": ("\ue946", "i"), "join": ("\ue8fa", "→"), "list": ("\ue8fd", "☰"), "mic": ("\ue720", "🎤"),
-    "page": ("\ue7c3", "▤"), "person": ("\ue77b", "●"), "photo": ("\ue91b", "▣"), "pin": ("\ue718", "✦"),
+    "page": ("\ue7c3", "▤"), "paste": ("\ue77f", "📋"),
+    "person": ("\ue77b", "●"), "photo": ("\ue91b", "▣"), "pin": ("\ue718", "✦"),
     "play": ("\ue768", "▶"), "refresh": ("\ue72c", "↻"), "reply": ("\ue97a", "↳"), "robot": ("\ue99a", "✦"),
     "search": ("\ue721", "⌕"), "settings": ("\ue713", "⚙"), "shield": ("\uea18", "✓"), "star": ("\ue734", "★"),
     "stop": ("\uee95", "■"), "tasks": ("\ue9d5", "≡"), "terminal": ("\ue756", "❯"), "think": ("\uea80", "✻"),
@@ -42,7 +43,7 @@ GLYPHS = {
 # und der aufklappbaren Blöcke → Icon-Name
 SYMBOLS = {"🌐": "globe", "⌕": "search", "✎": "edit", "❯": "terminal", "▣": "photo", "✦": "pin", "⏰": "clock",
            "📁": "folder", "⬆": "upload", "⬇": "download", "📎": "attach", "⎇": "branch", "☰": "list", "↶": "undo",
-           "=": "calc", "⚙": "settings", "▤": "page", "✻": "think", "≡": "history"}
+           "=": "calc", "⚙": "settings", "📋": "paste", "▤": "page", "✻": "think", "≡": "history"}
 
 # Segoe MDL2 Assets (Windows 10) kennt einzelne Zeichen nicht oder anders
 _MDL2 = {"stop": "\ue71a"}

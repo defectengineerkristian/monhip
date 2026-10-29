@@ -1756,9 +1756,11 @@ class RoomMode:
             team_info = {"name": project["name"], "local": local,
                          "host": next((m["name"] for m in self.members.values() if m.get("host")), tr('dem Gastgeber'))}
         confirm_actions, always_ask, ask_every = ROOM_MODES[self._mode()]
+        # Werkzeuggruppen: im Raum immer alle (Erlaubnis regelt die Rückfragen) – außer der Zwischenablage des eigenen
+        # Rechners, die andere im Raum sonst auslesen lassen könnten
         return Agent(confirm, files=tools["files"], commands=tools["commands"], workspace=app.ws_var.get(),
                      folders=app.extra_folders, confirm_actions=confirm_actions, always_ask=always_ask,
-                     ask_every=ask_every, web_access=tools["web"],
+                     ask_every=ask_every, web_access=tools["web"], groups={"clipboard": False},
                      brave_key=app.brave_var.get(), team=team,
                      team_write=bool(project and (project["write"] or self.info["is_host"])), team_info=team_info,
                      share_files=True,  # datei_teilen (nur mit „Dateien“); share setzt _ai_worker

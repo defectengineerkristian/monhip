@@ -86,8 +86,9 @@ class ModeSwitch(tk.Canvas):
         self.hover: str | None = None
         self.col = {"bg": "#1f1e1d", "track": "#2b2a28", "pill": "#383733", "border": "#d97757",
                     "fg": "#ece9e1", "muted": "#9d998e"}
-        self.f_on = tkfont.Font(root=self, family=FAMILY, size=9, weight="bold")
-        self.f_off = tkfont.Font(root=self, family=FAMILY, size=9)
+        # Eine Schrift für beide Seiten (Auswahl nur über Farbe und Markierung) – wechselte sie mit der Auswahl
+        # zwischen fett und normal, sprang der Text beim Umschalten; Größe wie die Knöpfe der Seitenleiste
+        self.font = tkfont.Font(root=self, family=f"{FAMILY} Semibold", size=10)
         self._pill: tuple[float, float] | None = None   # aktuelle Position (x, Breite) der Markierung
         self._anim = None
         self._cache: dict = {}
@@ -135,7 +136,7 @@ class ModeSwitch(tk.Canvas):
         if w <= 1:
             return []
         pad = 3 * self.s
-        natural = [self.f_on.measure(label) + 20 * self.s for _, label in self.items]
+        natural = [self.font.measure(label) + 20 * self.s for _, label in self.items]
         factor = (w - 2 * pad) / sum(natural)
         out, x = [], pad
         for (key, _), n in zip(self.items, natural):
@@ -166,7 +167,7 @@ class ModeSwitch(tk.Canvas):
             label = dict(self.items)[key]
             on = key == self.value
             color = c["fg"] if on or key == self.hover else mix_hex(c["muted"], c["fg"], 0.15)
-            self.create_text(x + sw / 2, h / 2, text=label, fill=color, font=self.f_on if on else self.f_off)
+            self.create_text(x + sw / 2, h / 2, text=label, fill=color, font=self.font)
 
     # ------------------------------------------------------------ Maus
 

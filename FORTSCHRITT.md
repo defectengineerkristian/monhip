@@ -14,6 +14,9 @@ immer mit festen Daten (TT.MM.JJJJ).
   Assets) statt gemischter Sonderzeichen und Emojis – Seitenleisten, Kopfzeile, Eingabe, Chatverlauf, Teamwork
   (neues Modul `app/icons.py`). Schrift der Oberfläche zentral in `themes.FAMILY` (bleibt „Segoe UI“). Start rund
   280 ms schneller.
+- 29.10.2026: Umschalter „Chat | Teamwork“ mit gleicher Schrift für beide Seiten (sprang vorher zwischen fett und
+  normal), „Raum beitreten“ mit Personen-Icon statt langem Pfeil; Icons der Seitenleiste auf der Höhe des Texts (saßen
+  bei 10 pt 1,5 px zu hoch), Seitenleiste in „Windows-Standard“ jetzt auch 10 pt.
 
 ## v1.4.3 – 29.10.2026
 - Teamwork: eigene KI hat immer alle Werkzeuge; Fenster „Erlaubnis“ mit drei Stufen (Alles erlauben, Eingeschränkt,

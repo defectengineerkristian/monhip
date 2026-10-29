@@ -30,7 +30,7 @@ GLYPHS = {
     "chev_right": ("\ue76c", "›"), "clock": ("\ue823", "⏰"), "close": ("\ue711", "✕"), "copy": ("\ue8c8", "⧉"),
     "delete": ("\ue74d", "✕"), "dot": ("\uea3b", "●"), "download": ("\ue896", "⬇"), "edit": ("\ue70f", "✎"),
     "folder": ("\ue8b7", "📁"), "globe": ("\ue774", "🌐"), "help": ("\ue9ce", "?"), "history": ("\ue81c", "≡"),
-    "info": ("\ue946", "i"), "join": ("\ue72a", "→"), "list": ("\ue8fd", "☰"), "mic": ("\ue720", "🎤"),
+    "info": ("\ue946", "i"), "join": ("\ue8fa", "→"), "list": ("\ue8fd", "☰"), "mic": ("\ue720", "🎤"),
     "page": ("\ue7c3", "▤"), "person": ("\ue77b", "●"), "photo": ("\ue91b", "▣"), "pin": ("\ue718", "✦"),
     "play": ("\ue768", "▶"), "refresh": ("\ue72c", "↻"), "reply": ("\ue97a", "↳"), "robot": ("\ue99a", "✦"),
     "search": ("\ue721", "⌕"), "settings": ("\ue713", "⚙"), "shield": ("\uea18", "✓"), "star": ("\ue734", "★"),
@@ -52,7 +52,7 @@ _scale = 1.0
 _colors = {"fg": "#1b1b1b", "muted": "#6b6b6b", "accent": "#0b63c5", "accent_fg": "#1b1b1b",
            "ok": "#26a269", "error": "#c01c28", "warn": "#a15c00"}
 _cover: dict[tuple[str, int], bytes] = {}            # (Name, Pixel) → Deckung je Pixel
-_images: dict[tuple[str, str, int, int], tk.PhotoImage] = {}  # (Name, Farbrolle, Pixel, Einzug) → Bild
+_images: dict[tuple, tk.PhotoImage] = {}  # (Name, Farbrolle, Pixel, Einzug, Rand oben) → Bild
 
 
 def setup(root: tk.Misc, scale: float):
@@ -76,30 +76,35 @@ def symbol(char: str) -> tuple[str, bool]:
     return (_char(name), True) if name and FAMILY else (char, False)
 
 
-def image(name: str, role: str = "fg", size: int = 16, indent: int = 0) -> tk.PhotoImage | None:
+def image(name: str, role: str = "fg", size: int = 16, indent: int = 0, lower: float = 0) -> tk.PhotoImage | None:
     """Icon als Bild (size bei 100 % Skalierung) in der Farbe der Rolle (fg, muted, accent, accent_fg, ok, …).
-    indent: durchsichtiger Rand links (Pixel bei 100 %) – rückt z. B. eine Treeview-Zeile ein."""
+    indent: durchsichtiger Rand links (Pixel bei 100 %) – rückt z. B. eine Treeview-Zeile ein.
+    lower: Icon so viele Pixel (bei 100 %) tiefer, über einen durchsichtigen Rand oben. Tk zentriert Bild und
+    Textzeile gegeneinander; bei Text ab 10 pt ist die Zeile höher als das Icon, und die Buchstaben sitzen unter
+    ihrer Mitte – ohne lower stünde das Icon dann zu hoch (Seitenleiste: 1,5 px)."""
     if not FAMILY or _root is None:
         return None
     px = max(8, round(size * _scale))
-    pad = round(indent * _scale)
-    key = (name, role, px, pad)
+    pad, top = round(indent * _scale), round(2 * lower * _scale)
+    key = (name, role, px, pad, top)
     img = _images.get(key)
     if img is None:
-        img = _images[key] = tk.PhotoImage(master=_root, data=_png(name, px, _colors[role], pad), format="png")
+        img = _images[key] = tk.PhotoImage(master=_root, data=_png(name, px, _colors[role], pad, top),
+                                           format="png")
     return img
 
 
-def spec(name: str, role: str = "fg", size: int = 16, disabled: str | None = "muted", active: str | None = None):
+def spec(name: str, role: str = "fg", size: int = 16, disabled: str | None = "muted", active: str | None = None,
+         lower: float = 0):
     """Bild-Angabe für ttk (-image): normal, gesperrt und ggf. beim Darüberfahren in eigener Farbe."""
-    img = image(name, role, size)
+    img = image(name, role, size, lower=lower)
     if img is None:
         return None
     states = []
     if disabled and disabled != role:
-        states += ["disabled", image(name, disabled, size)]
+        states += ["disabled", image(name, disabled, size, lower=lower)]
     if active and active != role:
-        states += ["active", image(name, active, size)]
+        states += ["active", image(name, active, size, lower=lower)]
     return (img, *states) if states else img
 
 
@@ -118,23 +123,23 @@ def only(name: str, role: str = "fg", size: int = 16, **kw) -> dict:
 def retint(colors: dict):
     """Neue Farben je Rolle (Designwechsel): alle bisher erzeugten Bilder neu malen."""
     _colors.update(colors)
-    for (name, role, px, pad), img in _images.items():
-        img.configure(data=_png(name, px, _colors[role], pad), format="png")
+    for (name, role, px, pad, top), img in _images.items():
+        img.configure(data=_png(name, px, _colors[role], pad, top), format="png")
 
 
-def _png(name: str, px: int, color: str, pad: int = 0) -> str:
-    """PNG (RGBA, base64): Farbe überall, Deckung als Alpha; pad Pixel durchsichtig links."""
+def _png(name: str, px: int, color: str, pad: int = 0, top: int = 0) -> str:
+    """PNG (RGBA, base64): Farbe überall, Deckung als Alpha; pad Pixel links und top Pixel oben durchsichtig."""
     cover = _cover.get((name, px))
     if cover is None:
         cover = _cover[(name, px)] = _render(_char(name), px)
     r, g, b = (int(color[i:i + 2], 16) for i in (1, 3, 5))
-    rows = b"".join(b"\0" + bytes(4 * pad) + b"".join(bytes((r, g, b, a)) for a in cover[y * px:(y + 1) * px])
-                    for y in range(px))
+    rows = (b"\0" + bytes(4 * (pad + px))) * top + b"".join(
+        b"\0" + bytes(4 * pad) + b"".join(bytes((r, g, b, a)) for a in cover[y * px:(y + 1) * px]) for y in range(px))
 
     def chunk(kind: bytes, data: bytes) -> bytes:
         return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
 
-    data = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", pad + px, px, 8, 6, 0, 0, 0))
+    data = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", pad + px, top + px, 8, 6, 0, 0, 0))
             + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
     return base64.b64encode(data).decode("ascii")
 

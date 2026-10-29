@@ -224,7 +224,7 @@ class App:
 
         bottom = ttk.Frame(side, style="Sidebar.TFrame", padding=(8, 6, 8, 10))
         bottom.pack(side=tk.BOTTOM, fill=tk.X)
-        ttk.Button(bottom, text=tr('Einstellungen'), style="Sidebar.TButton", **icons.opts("settings"),
+        ttk.Button(bottom, text=tr('Einstellungen'), style="Sidebar.TButton", **icons.opts("settings", lower=1),
                    command=self.open_settings).pack(fill=tk.X)
 
         # Chatliste und Raum-Panel liegen fertig übereinander; set_mode() holt eins nach vorn (flackert nicht)
@@ -239,7 +239,8 @@ class App:
 
         top = ttk.Frame(self.chat_side, style="Sidebar.TFrame", padding=(8, 6, 8, 6))
         top.pack(side=tk.TOP, fill=tk.X)
-        ttk.Button(top, text=tr('Neuer Chat'), style="Sidebar.TButton", command=self.new_chat, **icons.opts("add")).pack(fill=tk.X)
+        ttk.Button(top, text=tr('Neuer Chat'), style="Sidebar.TButton", command=self.new_chat,
+                   **icons.opts("add", lower=1)).pack(fill=tk.X)
 
         lf = ttk.Frame(self.chat_side, style="Sidebar.TFrame", padding=(8, 0, 2, 0))
         lf.pack(side=tk.TOP, fill=tk.BOTH, expand=True)

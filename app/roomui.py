@@ -514,9 +514,9 @@ class RoomMode:
                 ttk.Label(p, text=tr('Verbinde …'), style="SidebarText.TLabel").pack(anchor="w")
                 return
             ttk.Button(p, text=tr('Raum erstellen'), style="Sidebar.TButton", command=self.dialog_create,
-                       **icons.opts("add")).pack(fill=tk.X)
+                       **icons.opts("add", lower=1)).pack(fill=tk.X)
             ttk.Button(p, text=tr('Raum beitreten'), style="Sidebar.TButton", command=self.dialog_join,
-                       **icons.opts("join")).pack(fill=tk.X)
+                       **icons.opts("join", lower=1)).pack(fill=tk.X)
             if hosted or last:  # Angebot, den letzten Raum wieder zu öffnen bzw. ihm wieder beizutreten
                 if hosted:
                     text, sub = tr('Letzten Raum wieder öffnen'), tr('„{0}“ – du warst Gastgeber', hosted['room'])
@@ -524,24 +524,25 @@ class RoomMode:
                 else:
                     text, sub = tr('Letztem Raum wieder beitreten'), f"„{last['room']}“"
                     cmd = lambda: self.join(last["invite"])
-                ttk.Button(p, text=text, style="Sidebar.TButton", command=cmd, **icons.opts("refresh")).pack(
-                    fill=tk.X, pady=(8, 0))
+                ttk.Button(p, text=text, style="Sidebar.TButton", command=cmd,
+                           **icons.opts("refresh", lower=1)).pack(fill=tk.X, pady=(8, 0))
                 indent = round(34 * self.app.ui_scale)
                 ttk.Label(p, text=sub, style="SidebarMuted.TLabel", wraplength=self._wrap() - indent).pack(
                     anchor="w", padx=(indent, 0))
                 if hosted:
-                    ttk.Button(p, text=tr('Raum löschen'), style="Sidebar.TButton", **icons.opts("delete"),
-                               command=lambda: self.delete_room(self._store_path(hosted["room"]), hosted["room"])
-                               ).pack(fill=tk.X, pady=(2, 0))
+                    ttk.Button(p, text=tr('Raum löschen'), style="Sidebar.TButton",
+                               command=lambda: self.delete_room(self._store_path(hosted["room"]), hosted["room"]),
+                               **icons.opts("delete", lower=1)).pack(fill=tk.X, pady=(2, 0))
                 else:
-                    ttk.Button(p, text=tr('Aus der Liste entfernen'), style="Sidebar.TButton", **icons.opts("close"),
-                               command=self.forget_last).pack(fill=tk.X, pady=(2, 0))
+                    ttk.Button(p, text=tr('Aus der Liste entfernen'), style="Sidebar.TButton",
+                               command=self.forget_last, **icons.opts("close", lower=1)).pack(fill=tk.X, pady=(2, 0))
             if others:  # Verläufe eigener Räume, die nicht mehr gemerkt sind (z. B. nach dem Beitritt woanders)
                 ttk.Label(p, text=tr('WEITERE GESPEICHERTE RÄUME'), style="Sidebar.TLabel").pack(anchor="w", pady=(14, 2))
                 for path in others:
                     name = self._room_title(path)
-                    ttk.Button(p, text=tr('„{0}“ löschen', name), style="Sidebar.TButton", **icons.opts("delete"),
-                               command=lambda pth=path, n=name: self.delete_room(pth, n)).pack(fill=tk.X)
+                    ttk.Button(p, text=tr('„{0}“ löschen', name), style="Sidebar.TButton",
+                               command=lambda pth=path, n=name: self.delete_room(pth, n),
+                               **icons.opts("delete", lower=1)).pack(fill=tk.X)
             return
 
         info = self.info
@@ -550,15 +551,15 @@ class RoomMode:
         self._status.pack(anchor="w", pady=(2, 6))
         # Nur die Funktionen selbst – Einzelheiten beim Anklicken (keine Kurztexte in der Seitenleiste)
         ttk.Button(p, text=tr('Einladung kopieren'), style="Sidebar.TButton", command=self.copy_invite,
-                   **icons.opts("copy")).pack(fill=tk.X)
+                   **icons.opts("copy", lower=1)).pack(fill=tk.X)
         ttk.Button(p, text=tr('Hauptauftrag'), style="Sidebar.TButton", command=self.edit_main,
-                   **icons.opts("edit")).pack(fill=tk.X)
+                   **icons.opts("edit", lower=1)).pack(fill=tk.X)
         ttk.Button(p, text=tr('Aufgaben'), style="Sidebar.TButton", command=self.open_tasks,
-                   **icons.opts("tasks")).pack(fill=tk.X)
+                   **icons.opts("tasks", lower=1)).pack(fill=tk.X)
         ttk.Button(p, text=tr('Erlaubnis'), style="Sidebar.TButton", command=self.open_permission,
-                   **icons.opts("shield")).pack(fill=tk.X)
+                   **icons.opts("shield", lower=1)).pack(fill=tk.X)
         ttk.Button(p, text=tr('Projektordner'), style="Sidebar.TButton", command=self.open_project_folder,
-                   **icons.opts("folder")).pack(fill=tk.X)
+                   **icons.opts("folder", lower=1)).pack(fill=tk.X)
 
         ttk.Label(p, text=tr("TEILNEHMER"), style="Sidebar.TLabel").pack(anchor="w", pady=(10, 2))
         tree = ttk.Treeview(p, show="tree", selectmode="browse", style="Sidebar.Treeview", height=6)
@@ -569,11 +570,10 @@ class RoomMode:
         self._fill_members()
         bottom = self._bottom
         self._stop_btn = ttk.Button(bottom, text=tr('Antwort meiner KI stoppen'), style="Sidebar.TButton",
-                                    **icons.opts("stop"),
-                                    command=self.ai_stop.set)
-        self._stop_all_btn = ttk.Button(bottom, text=tr('Alle KIs stoppen'), style="Sidebar.TButton", **icons.opts("stop"),
-                                        command=self.stop_all)
-        self._leave_btn = ttk.Button(bottom, style="Sidebar.TButton", command=self.leave, **icons.opts("close"),
+                                    command=self.ai_stop.set, **icons.opts("stop", lower=1))
+        self._stop_all_btn = ttk.Button(bottom, text=tr('Alle KIs stoppen'), style="Sidebar.TButton",
+                                        command=self.stop_all, **icons.opts("stop", lower=1))
+        self._leave_btn = ttk.Button(bottom, style="Sidebar.TButton", command=self.leave, **icons.opts("close", lower=1),
                                      text=tr('Raum schließen') if info["is_host"] else tr('Raum verlassen'))
         self._leave_btn.pack(fill=tk.X)
         self._update_panel()
@@ -588,7 +588,8 @@ class RoomMode:
         busy = self.state.startswith(tr('Lade '))  # Dateien werden hochgeladen – kein Fehler
         self._status.configure(text=status, style="SidebarOk.TLabel" if ok else
                                "SidebarMuted.TLabel" if busy else "SidebarWarn.TLabel",
-                               **icons.opts("dot", "ok" if ok else "muted" if busy else "error", 8, disabled=None))
+                               **icons.opts("dot", "ok" if ok else "muted" if busy else "error", 8, disabled=None,
+                                            lower=1))
         if self.ai_busy and not self._stop_btn.winfo_ismapped():
             self._stop_btn.pack(fill=tk.X, before=self._leave_btn)
         elif not self.ai_busy and self._stop_btn.winfo_ismapped():
@@ -916,7 +917,7 @@ class RoomMode:
             you = tr(' (du)') if m["id"] == me else ""
             rows.append((f"h:{m['id']}", ("  ●  " if plain else "  ") + f"{m['name']}{you}"
                          + (tr('  ·  Gastgeber') if m.get("host") else ""), off,
-                         icons.image("person", "fg" if m.get("online") else "muted", 14, indent=6)))
+                         icons.image("person", "fg" if m.get("online") else "muted", 14, indent=6, lower=1)))
             if not m.get("online"):
                 state = "offline"
             elif m.get("busy"):
@@ -931,10 +932,10 @@ class RoomMode:
             pct = self._ctx_percent(m, me) if ready else None
             rows.append((f"a:{m['id']}", ("      ✦ " if plain else "  ") + f"{m['ai']}  ·  "
                          + (f"{pct} %  ·  " if pct is not None else "") + state, () if ready else ("off",),
-                         icons.image("robot", "fg" if ready else "muted", 14, indent=22)))
+                         icons.image("robot", "fg" if ready else "muted", 14, indent=22, lower=1)))
             if m.get("status") and m.get("online"):  # Teamstand: woran die KI gerade arbeitet (unter ihrem Namen)
                 rows.append((f"s:{m['id']}", ("          " if plain else "  ") + m["status"], ("off",),
-                             icons.image("blank", "muted", 14, indent=22)))
+                             icons.image("blank", "muted", 14, indent=22, lower=1)))
         if list(tree.get_children()) == [r[0] for r in rows]:
             for iid, text, tags, img in rows:  # gleiche Teilnehmer: nur Texte ändern (flackert nicht)
                 tree.item(iid, text=text, tags=tags, image=img or "")

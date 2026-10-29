@@ -431,7 +431,7 @@ class ThemeManager:
             s.configure("Muted.TLabel", foreground="#555555")
             s.configure("Accent.TButton", font=(FONT[0], 9, "bold"))
             s.configure("Sidebar.Treeview", rowheight=self.row_height, font=(FONT[0], 10))
-            s.configure("Sidebar.TButton", anchor="w", padding=(10, 6))
+            s.configure("Sidebar.TButton", anchor="w", padding=(10, 6), font=(FONT[0], 10))
             s.configure("Sidebar.TLabel", foreground="#555555", font=(FONT[0], 8, "bold"))
             s.configure("Title.TLabel", font=(FONT[0], 11, "bold"))
             s.configure("Chip.TFrame", relief="solid", borderwidth=1)

@@ -23,6 +23,7 @@ import documents
 import downloads
 import experte
 import filedrop
+import icons
 import images
 import llamacpp
 import memory
@@ -35,7 +36,7 @@ from agent import Agent, date_line, describe_call, format_args, result_ok, run_c
 from backend import LlamaServer, find_mmproj, find_models, thinking_title
 from chatview import ChatView
 from roomui import RoomMode
-from themes import THEMES, ThemeManager, label_to_key, mix_hex
+from themes import FAMILY, THEMES, ThemeManager, label_to_key, mix_hex
 from widgets import ModeSwitch, PopupMenu, rounded, scrolled
 
 VERSION = "1.4.3"  # auf GitHub als Release „v1.4.3“ (danach richtet sich das Update im Installer)
@@ -173,7 +174,7 @@ class App:
         root.geometry(f"{min(round(1320 * self.ui_scale), root.winfo_screenwidth() - 40)}x"
                       f"{min(round(980 * self.ui_scale), root.winfo_screenheight() - 90)}")
         dialogs.setup(root, self.theme, self.ui_scale)
-        self._chip_fonts = (tkfont.Font(font=("Segoe UI", 9)), tkfont.Font(font=("Segoe UI", 8)))
+        self._chip_fonts = (tkfont.Font(font=(FAMILY, 9)), tkfont.Font(font=(FAMILY, 8)))
 
         self._build_sidebar()
         self._build_main()
@@ -223,7 +224,7 @@ class App:
 
         bottom = ttk.Frame(side, style="Sidebar.TFrame", padding=(8, 6, 8, 10))
         bottom.pack(side=tk.BOTTOM, fill=tk.X)
-        ttk.Button(bottom, text=tr('⚙   Einstellungen'), style="Sidebar.TButton",
+        ttk.Button(bottom, text=tr('Einstellungen'), style="Sidebar.TButton", **icons.opts("settings"),
                    command=self.open_settings).pack(fill=tk.X)
 
         # Chatliste und Raum-Panel liegen fertig übereinander; set_mode() holt eins nach vorn (flackert nicht)
@@ -238,7 +239,7 @@ class App:
 
         top = ttk.Frame(self.chat_side, style="Sidebar.TFrame", padding=(8, 6, 8, 6))
         top.pack(side=tk.TOP, fill=tk.X)
-        ttk.Button(top, text=tr('+   Neuer Chat'), style="Sidebar.TButton", command=self.new_chat).pack(fill=tk.X)
+        ttk.Button(top, text=tr('Neuer Chat'), style="Sidebar.TButton", command=self.new_chat, **icons.opts("add")).pack(fill=tk.X)
 
         lf = ttk.Frame(self.chat_side, style="Sidebar.TFrame", padding=(8, 0, 2, 0))
         lf.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
@@ -251,7 +252,7 @@ class App:
         tree.configure(yscrollcommand=sb.set)
         sb.pack(side=tk.RIGHT, fill=tk.Y)
         tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        tree.tag_configure("group", font=("Segoe UI", 8, "bold"))
+        tree.tag_configure("group", font=(FAMILY, 8, "bold"))
         tree.bind("<<TreeviewSelect>>", self._on_chat_select)
         tree.bind("<Motion>", self._on_tree_hover)
         tree.bind("<Leave>", self._on_tree_leave)
@@ -286,12 +287,13 @@ class App:
         self.model_combo.grid(row=0, column=2, sticky="e")
         self.model_combo.bind("<<ComboboxSelected>>", lambda e: self._select_model(self.model_combo.current()))
         self.theme.register_combo(self.model_combo)
-        self.load_btn = ttk.Button(top, text=tr('▶ Laden'), style="Accent.TButton", command=self.load_model)
+        self.load_btn = ttk.Button(top, text=tr('Modell laden'), style="Accent.TButton", command=self.load_model,
+                                   **icons.opts("play", "accent_fg"))
         self.load_btn.grid(row=0, column=3, padx=(6, 0))
-        ttk.Button(top, text="■", width=3, command=self.unload_model).grid(row=0, column=4, padx=(4, 0))
+        ttk.Button(top, width=3, command=self.unload_model, **icons.only("stop")).grid(row=0, column=4, padx=(4, 0))
         self.status_var = tk.StringVar(value=tr('Kein Modell geladen'))
-        ttk.Label(top, textvariable=self.status_var, style="Muted.TLabel").grid(
-            row=1, column=2, columnspan=3, sticky="e", pady=(3, 0))
+        self._status_labels = [ttk.Label(top, textvariable=self.status_var, style="Muted.TLabel")]
+        self._status_labels[0].grid(row=1, column=2, columnspan=3, sticky="e", pady=(3, 0))
         top.columnconfigure(0, weight=1)
         ttk.Separator(main).pack(side=tk.TOP, fill=tk.X)
 
@@ -303,7 +305,7 @@ class App:
                                  highlightthickness=0, borderwidth=0)
         self.ctx_bar.pack(side=tk.RIGHT, padx=(8, 0))
         self.ctx_text = tk.StringVar()
-        ttk.Label(meter, textvariable=self.ctx_text, style="Muted.TLabel", font=("Segoe UI", 8)).pack(side=tk.RIGHT)
+        ttk.Label(meter, textvariable=self.ctx_text, style="Muted.TLabel", font=(FAMILY, 8)).pack(side=tk.RIGHT)
         # Experten-Modus (nur im Chat): Häkchen, Fortschritt der Auswertung, „Pausieren · Stoppen“ bzw. „Fortsetzen“
         self.expert_bar = ttk.Frame(meter)
         self.expert_bar.pack(side=tk.LEFT)
@@ -311,7 +313,7 @@ class App:
         ttk.Checkbutton(self.expert_bar, text=tr('Experten-Modus'), variable=self.expert_var,
                         command=self._toggle_expert).pack(side=tk.LEFT)
         self.expert_status = tk.StringVar()
-        ttk.Label(self.expert_bar, textvariable=self.expert_status, style="Muted.TLabel", font=("Segoe UI", 8)).pack(
+        ttk.Label(self.expert_bar, textvariable=self.expert_status, style="Muted.TLabel", font=(FAMILY, 8)).pack(
             side=tk.LEFT, padx=(10, 0))
         self.expert_links = ttk.Frame(self.expert_bar)
         self.expert_links.pack(side=tk.LEFT)
@@ -320,13 +322,14 @@ class App:
         self._inp_frame = inp
         self.send_btn = ttk.Button(inp, text=tr('Senden'), style="Accent.TButton", width=8, command=self._send_or_stop)
         self.send_btn.pack(side=tk.RIGHT, fill=tk.Y, padx=(8, 0))
-        ttk.Button(inp, text="+", style="Attach.TButton", width=2, command=self.pick_attachments).pack(
+        ttk.Button(inp, style="Attach.TButton", width=2, command=self.pick_attachments, **icons.only("add", size=18)).pack(
             side=tk.LEFT, fill=tk.Y, padx=(0, 8))
-        self.mic_btn = ttk.Button(inp, text="🎤", style="Attach.TButton", width=2, command=self.toggle_dictation)
+        self.mic_btn = ttk.Button(inp, style="Attach.TButton", width=2, command=self.toggle_dictation,
+                                  **icons.only("mic", size=18))
         self.mic_btn.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8))
         field = ttk.Frame(inp, style="Input.TFrame")  # zeichnet Fläche und runden Rand um das Textfeld
         field.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.input = tk.Text(field, height=2, width=1, wrap=tk.WORD, font=("Segoe UI", 11), padx=8, pady=4)
+        self.input = tk.Text(field, height=2, width=1, wrap=tk.WORD, font=(FAMILY, 11), padx=8, pady=4)
         self.input.pack(fill=tk.BOTH, expand=True)
         self.input.bind("<Return>", self._on_enter)
         self.input.bind("<<Paste>>", self._on_paste)
@@ -350,7 +353,7 @@ class App:
         # (fixed_column) und färbt den Rand daneben wie den Verlauf
         frame = tk.Frame(parent, borderwidth=0, highlightthickness=0)
         # randlos auch in „Windows-Standard“ (stellt die Originalwerte wieder her) – sonst umrahmt eine Linie die Spalte
-        text = tk.Text(frame, wrap=tk.WORD, font=("Segoe UI", 11), pady=14, width=1, height=1, borderwidth=0,
+        text = tk.Text(frame, wrap=tk.WORD, font=(FAMILY, 11), pady=14, width=1, height=1, borderwidth=0,
                        highlightthickness=0, relief=tk.FLAT)
         sb = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=text.yview)
         text.configure(yscrollcommand=sb.set)
@@ -380,7 +383,7 @@ class App:
         (self.view if room else self.room_view).set_active(False)
         (self.room_side if room else self.chat_side).tkraise()
         (self.room_frame if room else self.chat_frame).tkraise()
-        self.send_btn.configure(text=tr('■ Stopp') if self.busy and not room else tr('Senden'))
+        self._send_label(self.busy and not room)
         self.update_title()
         self.input.focus_set()
 
@@ -434,7 +437,7 @@ class App:
         t = tabs["models"]
         self.models_info = tk.StringVar()
         ttk.Label(t, textvariable=self.models_info).pack(anchor="w")
-        lf, self.model_list = self._listbox(t, font=("Segoe UI", 10))
+        lf, self.model_list = self._listbox(t, font=(FAMILY, 10))
         lf.pack(fill=tk.BOTH, expand=True, pady=(6, 0))
         self.model_list.bind("<<ListboxSelect>>", self._on_model_list_select)
         self.model_list.bind("<Double-Button-1>",
@@ -450,10 +453,13 @@ class App:
             bf.columnconfigure(i, weight=1)
         lb = ttk.Frame(t)
         lb.pack(fill=tk.X, pady=(12, 0))
-        self.load_btn2 = ttk.Button(lb, text=tr('▶ Modell laden'), style="Accent.TButton", command=self.load_model)
+        self.load_btn2 = ttk.Button(lb, text=tr('Modell laden'), style="Accent.TButton", command=self.load_model,
+                                    **icons.opts("play", "accent_fg"))
         self.load_btn2.pack(side=tk.LEFT)
-        ttk.Button(lb, text=tr('■ Entladen'), command=self.unload_model).pack(side=tk.LEFT, padx=(4, 0))
-        ttk.Label(lb, textvariable=self.status_var, style="Muted.TLabel").pack(side=tk.LEFT, padx=(10, 0))
+        ttk.Button(lb, text=tr('Entladen'), command=self.unload_model, **icons.opts("stop")).pack(
+            side=tk.LEFT, padx=(4, 0))
+        self._status_labels.append(ttk.Label(lb, textvariable=self.status_var, style="Muted.TLabel"))
+        self._status_labels[-1].pack(side=tk.LEFT, padx=(10, 0))
 
         # ---- Laden
         t = tabs["load"]
@@ -544,7 +550,7 @@ class App:
         bf = ttk.Frame(t)
         bf.grid(row=11, column=0, columnspan=2, sticky="w", pady=(6, 0))
         ttk.Button(bf, text=tr('Ordner hinzufügen…'), command=self._add_folder).pack(side=tk.LEFT)
-        ttk.Button(bf, text=tr('★ Als Arbeitsordner'), command=self._main_folder).pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Button(bf, text=tr('Als Arbeitsordner'), command=self._main_folder, **icons.opts("star")).pack(side=tk.LEFT, padx=(4, 0))
         ttk.Button(bf, text=tr('Entfernen'), command=self._remove_folder).pack(side=tk.LEFT, padx=(4, 0))
         t.columnconfigure(0, weight=1)
         t.rowconfigure(10, weight=1)
@@ -609,7 +615,7 @@ class App:
         # ---- System-Prompt
         t = tabs["prompt"]
         ttk.Label(t, text=tr('Wird jeder Unterhaltung als Anweisung vorangestellt:')).pack(anchor="w", pady=(0, 6))
-        sys_frame, self.sys_text = scrolled(t, wrap=tk.WORD, font=("Segoe UI", 10), padx=8, pady=6)
+        sys_frame, self.sys_text = scrolled(t, wrap=tk.WORD, font=(FAMILY, 10), padx=8, pady=6)
         sys_frame.pack(fill=tk.BOTH, expand=True)
         self.sys_text.insert("1.0", self.cfg["system_prompt"])
         self.theme.register_text(self.sys_text)
@@ -906,7 +912,7 @@ class App:
                 self.server.model.stem,
                 what))
         else:
-            self.view.placeholder(tr('Kein Modell geladen'), tr('Oben rechts ein Modell auswählen und „▶ Laden“ klicken.'))
+            self.view.placeholder(tr('Kein Modell geladen'), tr('Oben rechts ein Modell auswählen und „Modell laden“ klicken.'))
 
     def _render_history(self):
         """Gespeicherten Chat anzeigen: Nutzer rechts, Antworten links, Denkprozess/Werkzeuge zugeklappt."""
@@ -976,7 +982,7 @@ class App:
             self.model_list.insert(tk.END, tr('  Doppelklick hier öffnet den Modellordner – Modelle einfach hineinlegen'))
             self.model_list.insert(tk.END, tr('  und „Aktualisieren“ klicken, oder über „Herunterladen…“ laden.'))
             self.model_combo.configure(values=[])
-            self.model_var.set(tr('Keine Modelle – siehe ⚙ Einstellungen'))
+            self.model_var.set(tr('Keine Modelle – siehe Einstellungen'))
 
         wanted = self.sel_model or (Path(self.cfg["last_model"]) if self.cfg["last_model"] else None)
         idx = next((i for i, p in enumerate(self.models) if wanted and same_path(p, wanted)), None)
@@ -1208,7 +1214,7 @@ class App:
             name = f"llama.cpp {plan['tag']} ({plan['kind']})"
             if plan["installed"]:
                 self._refresh_servers(str(plan["target"] / "llama-server.exe"))
-                self.srv_status.set(tr('✔ {0} ist bereits die neueste Version.', name))
+                self.srv_status.set(tr('{0} ist bereits die neueste Version.', name))
                 return None
             return (tr(
                 'llama.cpp herunterladen'), tr(
@@ -1220,7 +1226,7 @@ class App:
         def finished(plan, exe):
             self._refresh_servers(str(exe))
             self.save_config()
-            self.srv_status.set(tr('✔ llama.cpp {0} ({1}) installiert – Modelle können jetzt geladen werden.', plan['tag'], plan['kind']))
+            self.srv_status.set(tr('llama.cpp {0} ({1}) installiert – Modelle können jetzt geladen werden.', plan['tag'], plan['kind']))
 
         self._download_flow(self.srv_btn, self.srv_status, llamacpp.plan, offer, llamacpp.install, finished, confirm)
 
@@ -1267,7 +1273,7 @@ class App:
         cancel = self.load_cancel = threading.Event()
         ngl, extra = self.ngl_var.get().strip(), self.extra_var.get()
         self._set_load_buttons(tk.DISABLED)
-        self.status_var.set(tr('Lade {0} …', model.stem))
+        self._set_status(tr('Lade {0} …', model.stem))
         self.background(lambda: self.server.start(server, model, ctx, ngl, extra, cancel, mmproj=mmproj,
                                                   image_tokens=image_tokens),
                         lambda _, err: self._loaded(model, cancel, err))
@@ -1277,11 +1283,12 @@ class App:
             return
         self._set_load_buttons(tk.NORMAL)
         if err:
-            self.status_var.set(tr('Laden fehlgeschlagen – Details unter ⚙ Einstellungen → Server-Log'))
+            self._set_status(tr('Laden fehlgeschlagen – Details unter Einstellungen → Server-Log'))
             dialogs.showerror("Monhip", err)
             return
-        self.status_var.set(tr('✔ Geladen: {0}', model.stem) + (tr('  ·  versteht Bilder') if self.server.vision else "")
-                            + (tr('  ·  Kontext {0:,}', self.server.n_ctx).replace(",", ".") if self.server.n_ctx else ""))
+        self._set_status(tr('Geladen: {0}', model.stem) + (tr('  ·  versteht Bilder') if self.server.vision else "")
+                         + (tr('  ·  Kontext {0:,}', self.server.n_ctx).replace(",", ".") if self.server.n_ctx else ""),
+                         ok=True)
         if self.view.is_placeholder:
             self._show_placeholder()
         self.room.model_changed()
@@ -1294,7 +1301,7 @@ class App:
             self.expert_job.stop_event.set()
         self.server.model = None
         threading.Thread(target=self.server.stop, daemon=True).start()
-        self.status_var.set(tr('Kein Modell geladen'))
+        self._set_status(tr('Kein Modell geladen'))
         self._set_load_buttons(tk.NORMAL)
         if self.view.is_placeholder:
             self._show_placeholder()
@@ -1369,7 +1376,7 @@ class App:
 
     def _listbox(self, parent, **kw) -> tuple[ttk.Frame, tk.Listbox]:
         frame, lst = scrolled(parent, tk.Listbox, **{"activestyle": "none", "exportselection": False,
-                                                     "font": ("Segoe UI", 9), **kw})
+                                                     "font": (FAMILY, 9), **kw})
         self.theme.register_list(lst)
         return frame, lst
 
@@ -1461,7 +1468,7 @@ class App:
         return model, speech.LANGUAGES.get(self.speech_lang_var.get(), "de")
 
     def toggle_dictation(self):
-        """🎤: Aufnahme starten – beim zweiten Klick beenden, abschreiben (im Thread) und ins Eingabefeld setzen."""
+        """Mikrofon: Aufnahme starten – beim zweiten Klick beenden, abschreiben (im Thread) und ins Eingabefeld setzen."""
         if self._transcribing:
             return
         model, language = self._speech_settings()
@@ -1469,11 +1476,11 @@ class App:
             try:
                 path = self.recorder.stop()
             except RuntimeError as e:
-                self.mic_btn.configure(text="🎤", width=2)
+                self.mic_btn.configure(width=2, **icons.only("mic", size=18))
                 dialogs.showerror(tr('Spracherkennung'), tr('Die Aufnahme konnte nicht gespeichert werden: {0}', e))
                 return
             self._transcribing = True
-            self.mic_btn.configure(text="…", width=2)
+            self.mic_btn.configure(text="…", width=2, image="")
 
             def work():
                 try:
@@ -1507,12 +1514,12 @@ class App:
         secs = int(self.recorder.seconds())
         if secs >= 600:  # höchstens 10 Minuten am Stück
             return self.toggle_dictation()
-        self.mic_btn.configure(text=f"■ {secs // 60}:{secs % 60:02d}", width=7)
+        self.mic_btn.configure(text=f"{secs // 60}:{secs % 60:02d}", width=5, **icons.opts("stop", size=18))
         self.root.after(250, self._tick_recording)
 
     def _dictated(self, text: str, err: str | None):
         self._transcribing = False
-        self.mic_btn.configure(text="🎤", width=2)
+        self.mic_btn.configure(width=2, **icons.only("mic", size=18))
         if err:
             dialogs.showerror(tr('Spracherkennung'), err)
             return
@@ -1529,7 +1536,7 @@ class App:
 
         def offer(plan):
             if not plan["program"] and not plan["model"]:
-                self.speech_status.set(tr('✔ Alles aktuell: {0}', speech.describe(model)))
+                self.speech_status.set(tr('Alles aktuell: {0}', speech.describe(model)))
                 return None
             parts = []
             if plan["program"]:
@@ -1540,7 +1547,8 @@ class App:
                     + tr('\n\nZusammen {0:.0f} MB – jetzt herunterladen?', plan['size'] / 1024 ** 2), tr('Spracherkennung'))
 
         def finished(plan, _):
-            self.speech_status.set(tr('✔ Installiert: {0} – 🎤 neben dem Eingabefeld zum Diktieren.', speech.describe(model)))
+            self.speech_status.set(tr('Installiert: {0} – zum Diktieren auf das Mikrofon neben dem Eingabefeld klicken.',
+                                      speech.describe(model)))
 
         self._download_flow(self.speech_btn, self.speech_status, lambda: speech.plan(model), offer, speech.install,
                             finished, confirm)
@@ -1627,8 +1635,8 @@ class App:
         if self.quote:
             short = " ".join(self.quote.split())
             short = short if len(short) <= 90 else short[:89].rstrip() + "…"
-            self._chip(bar, tr('↳ Antwort auf'), f"„{short}“", "ChipInfo.TLabel",
-                       lambda: (setattr(self, "quote", None), self._render_attachments())
+            self._chip(bar, tr('Antwort auf'), f"„{short}“", "ChipInfo.TLabel",
+                       lambda: (setattr(self, "quote", None), self._render_attachments()), icon="reply"
                        ).pack(side=tk.TOP, anchor="w", pady=(0, 4))
         avail = max(300, self.chat.winfo_width() - round(36 * self.ui_scale))
         f_name, f_info = self._chip_fonts
@@ -1636,16 +1644,17 @@ class App:
         for att in self.attachments:
             name = att["path"].name
             name = name if len(name) <= 34 else name[:22] + "…" + name[-10:]
+            icon = None
             if att["status"] == "loading":
-                label, style = name, "ChipInfo.TLabel"
+                style = "ChipInfo.TLabel"
                 info = tr('wird abgeschrieben …') if speech.is_audio(att["path"]) else tr('wird gelesen …')
             elif att["status"] == "ok":
-                label, info, style = name, att["doc"].info, "ChipInfo.TLabel"
+                info, style = att["doc"].info, "ChipInfo.TLabel"
             else:
-                label, info, style = f"⚠  {name}", att["error"][:70], "ChipError.TLabel"
-            chip = self._chip(bar, label, info, style, lambda a=att: self.remove_attachment(a))
+                info, style, icon = att["error"][:70], "ChipError.TLabel", "warning"
+            chip = self._chip(bar, name, info, style, lambda a=att: self.remove_attachment(a), icon=icon)
             # Breite aus den Schriftmaßen – update_idletasks könnte hier andere Ereignisse auslösen
-            width = f_name.measure(label) + f_info.measure(info) + round(63 * self.ui_scale)
+            width = (f_name.measure(name) + f_info.measure(info) + round((63 + (23 if icon else 0)) * self.ui_scale))
             if row is None or used + width > avail:  # passt nicht mehr → neue Zeile
                 row = ttk.Frame(bar)
                 row.pack(side=tk.TOP, fill=tk.X, pady=(0, 4))
@@ -1655,12 +1664,15 @@ class App:
             used += width
 
     @staticmethod
-    def _chip(parent, label: str, info: str, info_style: str, on_close) -> ttk.Frame:
-        """Kärtchen „Name  Info  ✕“ (noch nicht angeordnet)."""
+    def _chip(parent, label: str, info: str, info_style: str, on_close, icon: str | None = None) -> ttk.Frame:
+        """Kärtchen „Name  Info  ✕“ (noch nicht angeordnet), ggf. mit Icon vor dem Namen (Warnung bei Fehlern rot)."""
         chip = ttk.Frame(parent, style="Chip.TFrame", padding=(10, 4, 3, 4))
-        ttk.Label(chip, text=label, style="Chip.TLabel").pack(side=tk.LEFT)
+        role = "error" if icon == "warning" else "fg"
+        ttk.Label(chip, text=label, style="Chip.TLabel",
+                  **(icons.opts(icon, role, disabled=None) if icon else {})).pack(side=tk.LEFT)
         ttk.Label(chip, text=info, style=info_style).pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(chip, text="✕", style="Chip.TButton", width=2, command=on_close).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(chip, style="Chip.TButton", width=2, command=on_close,
+                   **icons.only("close", "muted", 12, active="fg")).pack(side=tk.LEFT, padx=(6, 0))
         return chip
 
     def _on_paste(self, _e=None):
@@ -1753,7 +1765,18 @@ class App:
     def _set_busy(self, busy: bool):
         self.busy = busy
         if self.mode == "chat":  # im Raum-Modus bleibt der Knopf „Senden“ (die eigene KI stoppt man links)
-            self.send_btn.configure(text=tr('■ Stopp') if busy else tr('Senden'))
+            self._send_label(busy)
+
+    def _send_label(self, stop: bool):
+        """Senden-Knopf: „Senden“ bzw. während einer Antwort „Stopp“ mit Icon."""
+        self.send_btn.configure(text=tr('Stopp') if stop else tr('Senden'),
+                                **(icons.opts("stop", "accent_fg") if stop else {"image": ""}))
+
+    def _set_status(self, text: str, ok: bool = False):
+        """Statuszeile des Modells (Kopfzeile und Reiter Laden) – mit Haken, wenn es geladen ist."""
+        self.status_var.set(text)
+        for label in self._status_labels:
+            label.configure(**(icons.opts("check", "ok", 14, disabled=None) if ok else {"image": ""}))
 
     def send(self):
         text = self.input.get("1.0", tk.END).strip()
@@ -2140,7 +2163,7 @@ class App:
             self._expert_link(tr('Fortsetzen'), self._start_expert_job)
 
     def _expert_link(self, text: str, command):
-        link = ttk.Label(self.expert_links, text=text, style="Muted.TLabel", font=("Segoe UI", 8, "underline"),
+        link = ttk.Label(self.expert_links, text=text, style="Muted.TLabel", font=(FAMILY, 8, "underline"),
                          cursor="hand2")
         link.pack(side=tk.LEFT, padx=(8, 0))
         link.bind("<Button-1>", lambda e: command())
@@ -2279,7 +2302,7 @@ class App:
         Fassungen liegen in der Nachricht: `_variants` = Verläufe ab hier; an der Stelle `_variant` (der gerade
         gezeigten) steht None, weil diese Fassung im Verlauf selbst steht."""
         if self.busy:
-            dialogs.showinfo("Monhip", tr('Bitte warten, bis die laufende Antwort fertig ist (oder „■ Stopp“).'))
+            dialogs.showinfo("Monhip", tr('Bitte warten, bis die laufende Antwort fertig ist (oder „Stopp“).'))
             return
         m = self.history[index] if 0 <= index < len(self.history) else {}
         variants, cur = list(m.get("_variants") or []), m.get("_variant", 0)
@@ -2297,7 +2320,7 @@ class App:
         """Eigene Nachricht ändern: Die bisherige Fassung samt allem danach bleibt als Version erhalten (‹ 1/2 ›),
         das Modell antwortet auf die neue. False = nicht möglich (das Bearbeitungsfeld bleibt offen)."""
         if self.busy:
-            dialogs.showinfo("Monhip", tr('Bitte warten, bis die laufende Antwort fertig ist (oder „■ Stopp“).'))
+            dialogs.showinfo("Monhip", tr('Bitte warten, bis die laufende Antwort fertig ist (oder „Stopp“).'))
             return False
         if not (0 <= index < len(self.history)) or self.history[index].get("role") != "user":
             return False

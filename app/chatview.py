@@ -20,17 +20,17 @@ from contextlib import contextmanager
 from tkinter import font as tkfont
 from tkinter import ttk
 
+import icons
 from markdown_lite import ListLevels, classify, closes_fence, inline, is_separator_row, plain, split_row
-from themes import mix_hex
+from themes import FAMILY, mix_hex
 from widgets import PopupMenu, rounded
 
-FAMILY, MONO = "Segoe UI", "Consolas"
+MONO = "Consolas"
 MAX_COLUMN = 820          # maximale Breite der Chatspalte (Pixel bei 100 %)
 PULSE_MS = 40
 THUMB_KEEP = 80           # so viele Vorschaubilder bleiben beim Leeren der Ansicht im Speicher
 BULLETS = ["•", "◦", "▪", "‣"]
 WIN_CURSORS = {"hand2": 32649, "xterm": 32513}  # IDC_HAND, IDC_IBEAM
-CLOSED, OPENED = "▸", "▾"
 # Farbe des Typ-Abzeichens auf Datei-Kärtchen (sonst Akzentfarbe des Designs)
 BADGE_COLORS = {"PDF": "#d0473a", "DOC": "#2b5fb4", "DOCX": "#2b5fb4", "ODT": "#2b5fb4", "RTF": "#2b5fb4",
                 "XLSX": "#21804a", "XLS": "#21804a", "CSV": "#21804a", "ODS": "#21804a",
@@ -163,6 +163,9 @@ class ChatView:
         self.f_h1, self.f_h2, self.f_h3 = f(17, "bold"), f(14, "bold"), f(12, "bold")
         self.f_mono, self.f_mono_s = f(10, family=MONO), f(9, family=MONO)
         self.f_gap, self.f_hair = f(4), f(1)
+        # Icons (icons.glyph) in der Größe des Texts daneben – ohne Icon-Schrift die Ersatzzeichen in FAMILY
+        ico = icons.FAMILY or FAMILY
+        self.f_icons = {k: f(k, family=ico) for k in (9, 10, 11, 13)}
 
     def _make_tags(self):
         """Reihenfolge = Priorität: später angelegte Tags gewinnen (z. B. „b“ über „p“)."""
@@ -211,8 +214,7 @@ class ChatView:
         T("user_mid", justify="right", spacing3=s(6))                    # Kärtchen zwischen Zitat und Blase
         T("uact", font=self.f_tiny, justify="right", spacing3=s(12))    # „Kopieren · Bearbeiten“ (beim Darüberfahren)
         T("uver", font=self.f_small)                                     # „‹ 2/3 ›“ – Fassungen, immer sichtbar
-        T("uver_arrow", font=self.f_h2)                                  # größere Pfeile, leichter zu treffen
-        T("uver_off")                                                    # Pfeil ohne weitere Fassung (blass)
+        T("uver_off")                                                  # Pfeil ohne weitere Fassung (blass)
         T("who", font=self.f_small_b, spacing1=s(16), spacing3=s(4))     # Absenderzeile im Gruppenchat
         T("who_sub", font=self.f_tiny)
         T("other", spacing3=s(8))                                         # Blase/Kärtchen anderer, links
@@ -224,6 +226,23 @@ class ChatView:
         T("clickable")
         T("hover")
         T("live")
+        # Zuletzt (höchste Priorität): Schrift der Icons, etwas tiefer gesetzt – die Icon-Schrift sitzt sonst über
+        # der Mitte der Kleinbuchstaben. Farbe kommt von den übrigen Tags.
+        for k, fnt in self.f_icons.items():
+            T(f"ico{k}", font=fnt, offset=-max(1, s(1)) if icons.FAMILY else 0)
+
+    def _icon(self, name: str, size: int = 9, gap: str = " ") -> list[tuple[str, tuple]]:
+        """Teile (Text, Zusatz-Tags) für ein Icon samt Abstand – z. B. vor „Kopieren“."""
+        return [(icons.glyph(name), (f"ico{size}",)), (gap, ())]
+
+    def _symbol(self, char: str, size: int = 10) -> tuple[str, tuple]:
+        """Bildzeichen eines Werkzeugs/Blocks (agent.ICONS, auch von anderen Rechnern) als Icon, falls bekannt."""
+        text, is_icon = icons.symbol(char)
+        return text, (f"ico{size}",) if is_icon else ()
+
+    def _put(self, at: str, parts: list[tuple[str, tuple]], tags: tuple):
+        for text, extra in parts:
+            self.t.insert(at, text, tags + extra)
 
     def apply_theme(self, col: dict):
         """col = THEMES[…]["chat"]. Der Hintergrund kommt vom Textfeld selbst (auch bei „Windows-Standard“)."""
@@ -478,22 +497,23 @@ class ChatView:
     # ---------------------------------------------------------------- Kopieren / Bearbeiten eigener Nachrichten
 
     def _user_actions(self, bubble: tk.Canvas, text: str, actions: dict, hover: list, base: str = "uact"):
-        """Zeile „⧉ Kopieren   ✎ Bearbeiten“ unter der Blase – unsichtbar (Hintergrundfarbe), bis die Maus über
+        """Zeile „Kopieren   Bearbeiten“ (mit Icons) unter der Blase – unsichtbar (Hintergrundfarbe), bis die Maus über
         der Nachricht ist. base "oact": linksbündig unter der Blase eines anderen (Gruppenchat)."""
         cur, count = actions.get("versions") or (0, 1)
         n = self._new("umsg", text=text, canvas=bubble, on_edit=actions.get("on_edit"), shown=False, cur=cur,
                       on_version=actions.get("on_version"), base=base)
         tag, line = f"uact:{n}", f"uline:{n}"   # uact: ein-/ausgeblendet; uline: ganze Zeile (beim Bearbeiten weg)
-        self.t.insert(self._at, tr('⧉ Kopieren'), (base, "clickable", f"ucp:{n}", tag, line))
+        self._put(self._at, self._copy_label(), (base, "clickable", f"ucp:{n}", tag, line))
         if actions.get("on_edit"):
             self.t.insert(self._at, "      ", ("uact", tag, line))
-            self.t.insert(self._at, tr('✎ Bearbeiten'), ("uact", "clickable", f"ued:{n}", tag, line))
+            self._put(self._at, self._icon("edit") + [(tr('Bearbeiten'), ())],
+                      ("uact", "clickable", f"ued:{n}", tag, line))
         if count > 1:  # Fassungen: immer sichtbar, ganz rechts unter der Blase
             self.t.insert(self._at, "      ", ("uact", tag, line))
-            self.t.insert(self._at, "‹", ("uact", "uver", "uver_arrow", line)
+            self.t.insert(self._at, icons.glyph("chev_left"), ("uact", "uver", "ico13", line)
                           + (("clickable", f"uvp:{n}") if cur > 0 else ("uver_off",)))
             self.t.insert(self._at, f" {cur + 1}/{count} ", ("uact", "uver", line))
-            self.t.insert(self._at, "›", ("uact", "uver", "uver_arrow", line)
+            self.t.insert(self._at, icons.glyph("chev_right"), ("uact", "uver", "ico13", line)
                           + (("clickable", f"uvn:{n}") if cur < count - 1 else ("uver_off",)))
         self.t.insert(self._at, "\n", (base, tag, line))
         self.t.tag_configure(tag, foreground=self.bg)
@@ -627,8 +647,9 @@ class ChatView:
 
     # ---------------------------------------------------------------- Gruppenchat: andere Teilnehmer (links)
 
-    def sender(self, name: str, sub: str = "", color: str | None = None):
-        """Absenderzeile über einer Nachricht anderer (Mensch oder KI), z. B. „✦ Max-KI  ·  Qwen3.8-27B“."""
+    def sender(self, name: str, sub: str = "", color: str | None = None, ai: bool = False):
+        """Absenderzeile über einer Nachricht anderer (Mensch oder KI), z. B. „Max-KI  ·  Qwen3.8-27B“ – bei einer
+        KI mit Icon davor."""
         self._ensure()
         self.md_finish()
         tags = ("who",)
@@ -637,6 +658,8 @@ class ChatView:
             self.t.tag_configure(tag, foreground=color)
             tags += (tag,)
         with self._edit():
+            if ai:
+                self._put(self._at, self._icon("robot", 10, "  "), tags)
             self.t.insert(self._at, name, tags)
             if sub:
                 self.t.insert(self._at, "   " + sub, ("who", "who_sub"))
@@ -681,12 +704,15 @@ class ChatView:
         """Werkzeugaufruf einer fremden KI (nur Kopfzeile – Eingaben/Ergebnisse bleiben auf deren Rechner)."""
         self._ensure()
         self.md_finish()
-        text = f"{icon}  {label}" + (f"  ·  {detail}" if detail else "")
+        text = f"  {label}" + (f"  ·  {detail}" if detail else "")
         with self._edit():
-            self.t.insert(self._at, text, "tool_hdr")
-            if ok is not None:
-                self.t.insert(self._at, "  ✓" if ok else "  ✗", ("tool_hdr", "st_ok" if ok else "st_err"))
+            self._put(self._at, [self._symbol(icon), (text, ())] + (self._mark(ok) if ok is not None else []),
+                      ("tool_hdr",))
             self.t.insert(self._at, "\n", "tool_hdr")
+
+    def _mark(self, ok: bool) -> list[tuple[str, tuple]]:
+        """Haken bzw. Kreuz hinter einer Werkzeugzeile."""
+        return [("  ", ()), (icons.glyph("check" if ok else "cross"), ("ico10", "st_ok" if ok else "st_err"))]
 
     def _canvas(self, cursor: str) -> tk.Canvas:
         c = tk.Canvas(self.t, highlightthickness=0, borderwidth=0, background=self.bg, cursor=cursor)
@@ -764,6 +790,8 @@ class ChatView:
             name = name if len(name) <= 36 else name[:24] + "…" + name[-10:]
             info = f.get("info", "")
             text_w = max(self.f_small_b.measure(name), self.f_tiny.measure(info))
+            if f.get("action"):  # Platz für das Icon „Herunterladen“ rechts im Kärtchen
+                text_w += s(30)
             img = self._thumb(f.get("thumb"), maxw - 2 * pad)
             if img:
                 w = min(max(img.width(), text_w) + 2 * pad, maxw)
@@ -798,6 +826,9 @@ class ChatView:
             c.create_text(tx, ty, text=name, anchor="nw", fill=self.col["fg"], font=self.f_small_b, tags=(tag,))
             c.create_text(tx, ty + line1, text=info, anchor="nw", fill=self.col["muted"], font=self.f_tiny,
                           tags=(tag,))
+            if f.get("action"):
+                c.create_text(bx + bw - pad - s(4), ty + (line1 + line2) // 2, text=icons.glyph("download"),
+                              anchor="e", fill=self.col["muted"], font=self.f_icons[13], tags=(tag,))
         c.card_paths = [f.get("path", "") for f in files]
         c.card_files = files
         c.configure(cursor="hand2" if any(f.get("action") for f in files) else "arrow")
@@ -1029,7 +1060,7 @@ class ChatView:
         if gap:
             self.t.insert(self._at, "\n", "gap")
         self.t.insert(self._at, (info["lang"] or "code") + "      ", "pre_hdr")
-        self.t.insert(self._at, tr('⧉ Kopieren'), ("pre_hdr", "clickable", f"ccp:{n}"))
+        self._put(self._at, self._copy_label(), ("pre_hdr", "clickable", f"ccp:{n}"))
         self.t.insert(self._at, "\n", "pre_hdr")
         self.t.insert(self._at, "\n", "pre_pad")
 
@@ -1152,7 +1183,7 @@ class ChatView:
         self._ensure()
         self.md_finish()
         with self._edit():
-            self.t.insert(self._at, f"✻  {label}", ("think_hdr", "live", self._pend_tag))
+            self._put(self._at, self._icon("think", 10, "  ") + [(label, ())], ("think_hdr", "live", self._pend_tag))
             self.t.insert(self._at, "\n", ("think_hdr", self._pend_tag))
         self._pending = True
         self._pendings.add(self._pend_tag)
@@ -1204,18 +1235,18 @@ class ChatView:
 
     def _header_parts(self, n: int) -> list[tuple[str, tuple]]:
         b = self.blocks[n]
-        chev = OPENED if b["open"] else CLOSED
+        chev = [("   ", ()), (icons.glyph("chev_down" if b["open"] else "chev_right"), ("ico10",))]
         if b["kind"] == "think":
             if b["live"]:
                 secs = int(time.monotonic() - b["t0"])
-                return [(tr('✻  Denkt nach …  {0} s', secs) if secs else tr('✻  Denkt nach …'), ())]
+                return self._icon("think", 10, "  ") + [
+                    (tr('Denkt nach …  {0} s', secs) if secs else tr('Denkt nach …'), ())]
             secs = f"  ·  {b['secs']} s" if b.get("secs") else ""
-            return [(f"{b.get('icon', '✻')}  {b['title'] or tr('Gedankengang')}{secs}   {chev}", ())]
-        text = f"{b['icon']}  {tr(b['label'])}" + (f"  ·  {b['detail']}" if b["detail"] else "")
+            return [self._symbol(b.get("icon", "✻")), (f"  {b['title'] or tr('Gedankengang')}{secs}", ())] + chev
+        text = f"  {tr(b['label'])}" + (f"  ·  {b['detail']}" if b["detail"] else "")
         if b["live"]:
-            return [(text + "  …", ())]
-        mark = ("  ✓", ("st_ok",)) if b["ok"] else ("  ✗", ("st_err",))
-        return [(text, ()), mark, (f"   {chev}", ())]
+            return [self._symbol(b["icon"]), (text + "  …", ())]
+        return [self._symbol(b["icon"]), (text, ())] + self._mark(b["ok"]) + chev
 
     def _write_header(self, n: int, at: str):
         b = self.blocks[n]
@@ -1366,7 +1397,7 @@ class ChatView:
         self.md_finish()
         n = self._new("copy", text=raw)
         with self._edit():
-            self.t.insert(self._at, tr('⧉ Kopieren'), ("footer", "clickable", f"cpy:{n}"))
+            self._put(self._at, self._copy_label(), ("footer", "clickable", f"cpy:{n}"))
             if tps:
                 self.t.insert(self._at, tr('      {0:.1f} Tokens/s', tps).replace(".", ","), "footer")
             self.t.insert(self._at, "\n", "footer")
@@ -1481,16 +1512,16 @@ class ChatView:
                 self.toggle(n)
             elif kind == "cpy":
                 self._copy(b["text"])
-                self._flash(tag, tr('✓ Kopiert'), ("footer", "clickable"))
+                self._flash(tag, ("footer", "clickable"))
             elif kind == "ccp":
                 r = self.t.tag_ranges(f"code:{n}")
                 self._copy(self.t.get(r[0], r[-1]).rstrip("\n") if r else "")
-                self._flash(tag, tr('✓ Kopiert'), ("pre_hdr", "clickable"))
+                self._flash(tag, ("pre_hdr", "clickable"))
             elif kind == "lnk":
                 webbrowser.open(b["url"])
             elif kind == "ucp":
                 self._copy(b["text"])
-                self._flash(tag, tr('✓ Kopiert'), (b["base"], "clickable", f"uact:{n}"))
+                self._flash(tag, (b["base"], "clickable", f"uact:{n}", f"uline:{n}"))
             elif kind == "ued":
                 self._begin_edit(n)
             elif kind in ("uvp", "uvn") and b.get("on_version"):
@@ -1501,16 +1532,20 @@ class ChatView:
                 continue
             return "break"
 
-    def _flash(self, tag: str, text: str, tags: tuple):
-        """Ersetzt kurz den Text eines Knopfs (z. B. „✓ Kopiert“) und stellt ihn danach wieder her."""
+    def _copy_label(self, done: bool = False) -> list[tuple[str, tuple]]:
+        """„Kopieren“ mit Icon – bzw. kurz nach dem Klick „Kopiert“ mit Haken."""
+        return self._icon("check" if done else "copy") + [(tr('Kopiert') if done else tr('Kopieren'), ())]
+
+    def _flash(self, tag: str, tags: tuple):
+        """Zeigt an einem „Kopieren“ kurz „Kopiert“ mit Haken und stellt es danach wieder her."""
         r = self.t.tag_ranges(tag)
         if not r:
             return
-        old, gen = self.t.get(r[0], r[-1]), self.gen
-        if old == text:
+        gen, done = self.gen, "".join(text for text, _ in self._copy_label(True))
+        if self.t.get(r[0], r[-1]) == done:
             return
 
-        def put(s):
+        def put(parts):
             rr = self.t.tag_ranges(tag)
             if gen != self.gen or not rr:
                 return
@@ -1518,10 +1553,10 @@ class ChatView:
                 self.t.mark_set("flash", rr[0])
                 self.t.mark_gravity("flash", "right")
                 self.t.delete(rr[0], rr[-1])
-                self.t.insert("flash", s, tags + (tag,))
+                self._put("flash", parts, tags + (tag,))
 
-        put(text)
-        self.t.after(1500, lambda: put(old))
+        put(self._copy_label(True))
+        self.t.after(1500, lambda: put(self._copy_label()))
 
     def _copy(self, text: str):
         self.t.clipboard_clear()
@@ -1534,7 +1569,7 @@ class ChatView:
             self.t.after_idle(lambda: self._show_quote_pop(e.x, e.y))
 
     def _show_quote_pop(self, x: int, y: int):
-        """Kleines Feld „↳ Antworten  ⧉ Kopieren“ über der Stelle, an der die Markierung endet."""
+        """Kleines Feld „Antworten  Kopieren“ (mit Icons) über der Stelle, an der die Markierung endet."""
         self._hide_quote_pop()
         if not self.t.tag_ranges("sel") or not self.col:
             return
@@ -1556,9 +1591,9 @@ class ChatView:
             self._copy(text)
             self._hide_quote_pop()
 
-        for label, command in ((tr('↳ Antworten'), answer), (tr('⧉ Kopieren'), copy)):
-            btn = tk.Label(inner, text=label, font=self.f_small, background=col["code_hdr"], foreground=col["fg"],
-                           padx=s(10), pady=s(5), cursor="hand2")
+        for icon, label, command in (("reply", tr('Antworten'), answer), ("copy", tr('Kopieren'), copy)):
+            btn = tk.Label(inner, text=f" {label}", font=self.f_small, background=col["code_hdr"], foreground=col["fg"],
+                           padx=s(10), pady=s(5), cursor="hand2", **icons.opts(icon, size=14, disabled=None))
             btn.pack(side=tk.LEFT)
             btn.bind("<Button-1>", lambda e, f=command: f())
             btn.bind("<Enter>", lambda e, w=btn: w.configure(background=hover))

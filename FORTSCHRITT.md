@@ -10,6 +10,10 @@ immer mit festen Daten (TT.MM.JJJJ).
 ## Seit v1.4.3
 - Diese Datei auf den Fortschritt je Version gekürzt (Zukünftige Aufgaben und Grundstruktur gestrichen).
 - Alle Commits einheitlich „Update - v1.4.3“, auch die alten (umbenannt); was geändert wurde, steht nur noch hier.
+- 29.10.2026: Einheitliche Icons aus der Windows-Icon-Schrift (Segoe Fluent Icons, unter Windows 10 Segoe MDL2
+  Assets) statt gemischter Sonderzeichen und Emojis – Seitenleisten, Kopfzeile, Eingabe, Chatverlauf, Teamwork
+  (neues Modul `app/icons.py`). Schrift der Oberfläche zentral in `themes.FAMILY` (bleibt „Segoe UI“). Start rund
+  280 ms schneller.
 
 ## v1.4.3 – 29.10.2026
 - Teamwork: eigene KI hat immer alle Werkzeuge; Fenster „Erlaubnis“ mit drei Stufen (Alles erlauben, Eingeschränkt,

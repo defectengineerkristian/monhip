@@ -7,7 +7,7 @@ import tkinter as tk
 from tkinter import font as tkfont
 from tkinter import ttk
 
-from themes import mix_hex
+from themes import FAMILY, mix_hex
 
 WATCH_MS = 150  # PopupMenu: so oft prüfen, ob das Programm noch im Vordergrund ist
 
@@ -86,8 +86,8 @@ class ModeSwitch(tk.Canvas):
         self.hover: str | None = None
         self.col = {"bg": "#1f1e1d", "track": "#2b2a28", "pill": "#383733", "border": "#d97757",
                     "fg": "#ece9e1", "muted": "#9d998e"}
-        self.f_on = tkfont.Font(root=self, family="Segoe UI", size=9, weight="bold")
-        self.f_off = tkfont.Font(root=self, family="Segoe UI", size=9)
+        self.f_on = tkfont.Font(root=self, family=FAMILY, size=9, weight="bold")
+        self.f_off = tkfont.Font(root=self, family=FAMILY, size=9)
         self._pill: tuple[float, float] | None = None   # aktuelle Position (x, Breite) der Markierung
         self._anim = None
         self._cache: dict = {}

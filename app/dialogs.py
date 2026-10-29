@@ -9,6 +9,8 @@ from i18n import error_text, tr
 import tkinter as tk
 from tkinter import messagebox, ttk
 
+from themes import FAMILY
+
 try:
     import winsound
 except ImportError:
@@ -113,7 +115,7 @@ def _show(kind: str, title: str, message: str, parent: tk.Misc | None) -> bool:
     icon = tk.Canvas(top, width=size, height=size, highlightthickness=0, borderwidth=0,
                      background=ttk.Style().lookup("TFrame", "background") or "#ffffff")
     icon.create_oval(1, 1, size - 1, size - 1, fill=_color(color_key, fallback_color), outline="")
-    icon.create_text(size // 2, size // 2, text=symbol, fill="#ffffff", font=("Segoe UI", 12, "bold"))
+    icon.create_text(size // 2, size // 2, text=symbol, fill="#ffffff", font=(FAMILY, 12, "bold"))
     icon.pack(side=tk.LEFT, anchor="n", padx=(0, _s(14)))
     ttk.Label(top, text=message, wraplength=_s(420), justify=tk.LEFT).pack(side=tk.LEFT, anchor="w", fill=tk.X,
                                                                           pady=(_s(5), 0))

@@ -14,7 +14,11 @@ import zlib
 from tkinter import font as tkfont
 from tkinter import ttk
 
-FONT = ("Segoe UI", 9)
+import icons
+
+# Schrift der Oberfläche – eine Stelle für alle Teile (chatview, widgets, dialogs … übernehmen FAMILY)
+FAMILY = "Segoe UI"
+FONT = (FAMILY, 9)
 
 THEMES = {
     "dark": {
@@ -346,6 +350,7 @@ class ThemeManager:
         self.scale = max(1.0, float(root.tk.call("tk", "scaling")) / 1.333)
         self._images: dict[str, tk.PhotoImage] = {}
         self._elements: set[str] = set()
+        icons.setup(root, self.scale)
 
     # ------------------------------------------------------------ Registrierung
 
@@ -440,6 +445,12 @@ class ThemeManager:
             s.configure("SidebarOk.TLabel", foreground="#26a269", font=(FONT[0], 8))
             s.configure("SidebarWarn.TLabel", foreground="#c01c28", font=(FONT[0], 8))
             s.configure("Attach.TButton", font=(FONT[0], 14), padding=(6, 0))
+        # Icons: Abstand zum Text und Farben des Designs (die Icon-Bilder werden neu gemalt)
+        self.style.configure(".", space=round(7 * self.scale))
+        p, c = self.pal, THEMES[key]["chat"]
+        icons.retint({"fg": p["fg"] if p else c["fg"], "muted": p["muted"] if p else c["muted"],
+                      "accent": p["accent"] if p else c["accent"], "accent_fg": p["accent_fg"] if p else c["fg"],
+                      "ok": c["ok"], "error": c["error"], "warn": c["warn"]})
         for lst, fn in ((self._texts, self._style_text), (self._lists, self._style_list),
                         (self._combos, self._style_combo), (self._menus, self._style_menu),
                         (self._windows, self._style_window), (self._fields, self._style_field)):
@@ -672,6 +683,7 @@ class ThemeManager:
         s.map("Sidebar.Treeview", background=[("selected", p["side_sel"])], foreground=[("selected", p["fg"])])
         s.layout("Sidebar.Treeview", [("Sidebar.Treeview.treearea", {"sticky": "nswe"})])
         s.layout("Sidebar.Treeview.Item", [("Treeitem.padding", {"sticky": "nswe", "children": [
+            ("Treeitem.image", {"side": "left", "sticky": ""}),  # Icons der Teilnehmerliste (Teamwork)
             ("Treeitem.text", {"side": "left", "sticky": ""})]})])
         s.configure("Sidebar.Vertical.TScrollbar", background=sb, troughcolor=sb, bordercolor=sb,
                     lightcolor=sb, darkcolor=sb)

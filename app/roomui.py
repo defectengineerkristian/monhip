@@ -32,13 +32,14 @@ from tkinter import ttk
 import context
 import dialogs
 import documents
+import icons
 import images
 import projekt
 import room
 from agent import (Agent, ToolError, date_line, describe_call, format_args, result_ok, run_conversation, time_label,
                    tool_budget)
 from projekt import RISKY_SUFFIXES, mark_from_internet  # RISKY_SUFFIXES: vor dem Herunterladen warnen
-from themes import mix_hex
+from themes import FAMILY, mix_hex
 from widgets import scrolled
 
 TYPE_MS = 20           # Takt, in dem Antworten fremder KIs „getippt“ werden (kommen in Paketen alle ~0,3 s)
@@ -240,7 +241,7 @@ class _Mentions:
         self.sel = 0
         self.key = None        # (Position des „@“, Fragment) der gezeigten Liste
         self.closed = None     # Position des „@“, für das Esc gedrückt wurde
-        self.font = tkfont.Font(root=self.box, family="Segoe UI", size=10, weight="bold")  # Verweis halten
+        self.font = tkfont.Font(root=self.box, family=FAMILY, size=10, weight="bold")  # Verweis halten
         self.box.bindtags((self.TAG,) + self.box.bindtags())
         bind = lambda seq, fn: self.box.bind_class(self.TAG, seq, fn)
         bind("<Up>", lambda e: self._move(-1))
@@ -328,7 +329,7 @@ class _Mentions:
             row.pack(fill=tk.X)
             a = tk.Label(row, text=f"@{name}", font=bold, background=bg, foreground=col["fg"], width=width,
                          anchor="w")  # gleich breit → Beschreibungen stehen bündig
-            b = tk.Label(row, text=sub, font=("Segoe UI", 9), background=bg, foreground=col["muted"])
+            b = tk.Label(row, text=sub, font=(FAMILY, 9), background=bg, foreground=col["muted"])
             a.pack(side=tk.LEFT)
             b.pack(side=tk.LEFT, padx=(s(10), 0))
             for w in (row, a, b):
@@ -512,31 +513,34 @@ class RoomMode:
             if self.connecting:
                 ttk.Label(p, text=tr('Verbinde …'), style="SidebarText.TLabel").pack(anchor="w")
                 return
-            ttk.Button(p, text=tr('+   Raum erstellen'), style="Sidebar.TButton", command=self.dialog_create).pack(fill=tk.X)
-            ttk.Button(p, text=tr('→   Raum beitreten'), style="Sidebar.TButton", command=self.dialog_join).pack(fill=tk.X)
+            ttk.Button(p, text=tr('Raum erstellen'), style="Sidebar.TButton", command=self.dialog_create,
+                       **icons.opts("add")).pack(fill=tk.X)
+            ttk.Button(p, text=tr('Raum beitreten'), style="Sidebar.TButton", command=self.dialog_join,
+                       **icons.opts("join")).pack(fill=tk.X)
             if hosted or last:  # Angebot, den letzten Raum wieder zu öffnen bzw. ihm wieder beizutreten
                 if hosted:
-                    text, sub = tr('↻   Letzten Raum wieder öffnen'), tr('„{0}“ – du warst Gastgeber', hosted['room'])
+                    text, sub = tr('Letzten Raum wieder öffnen'), tr('„{0}“ – du warst Gastgeber', hosted['room'])
                     cmd = lambda: self.create(hosted["room"], hosted["bind"], hosted["port"], hosted["key"])
                 else:
-                    text, sub = tr('↻   Letztem Raum wieder beitreten'), f"„{last['room']}“"
+                    text, sub = tr('Letztem Raum wieder beitreten'), f"„{last['room']}“"
                     cmd = lambda: self.join(last["invite"])
-                ttk.Button(p, text=text, style="Sidebar.TButton", command=cmd).pack(fill=tk.X, pady=(8, 0))
+                ttk.Button(p, text=text, style="Sidebar.TButton", command=cmd, **icons.opts("refresh")).pack(
+                    fill=tk.X, pady=(8, 0))
                 indent = round(34 * self.app.ui_scale)
                 ttk.Label(p, text=sub, style="SidebarMuted.TLabel", wraplength=self._wrap() - indent).pack(
                     anchor="w", padx=(indent, 0))
                 if hosted:
-                    ttk.Button(p, text=tr('✕   Raum löschen'), style="Sidebar.TButton",
+                    ttk.Button(p, text=tr('Raum löschen'), style="Sidebar.TButton", **icons.opts("delete"),
                                command=lambda: self.delete_room(self._store_path(hosted["room"]), hosted["room"])
                                ).pack(fill=tk.X, pady=(2, 0))
                 else:
-                    ttk.Button(p, text=tr('✕   Aus der Liste entfernen'), style="Sidebar.TButton",
+                    ttk.Button(p, text=tr('Aus der Liste entfernen'), style="Sidebar.TButton", **icons.opts("close"),
                                command=self.forget_last).pack(fill=tk.X, pady=(2, 0))
             if others:  # Verläufe eigener Räume, die nicht mehr gemerkt sind (z. B. nach dem Beitritt woanders)
                 ttk.Label(p, text=tr('WEITERE GESPEICHERTE RÄUME'), style="Sidebar.TLabel").pack(anchor="w", pady=(14, 2))
                 for path in others:
                     name = self._room_title(path)
-                    ttk.Button(p, text=tr('✕   „{0}“ löschen', name), style="Sidebar.TButton",
+                    ttk.Button(p, text=tr('„{0}“ löschen', name), style="Sidebar.TButton", **icons.opts("delete"),
                                command=lambda pth=path, n=name: self.delete_room(pth, n)).pack(fill=tk.X)
             return
 
@@ -545,12 +549,16 @@ class RoomMode:
         self._status = ttk.Label(p, wraplength=self._wrap())
         self._status.pack(anchor="w", pady=(2, 6))
         # Nur die Funktionen selbst – Einzelheiten beim Anklicken (keine Kurztexte in der Seitenleiste)
-        ttk.Button(p, text=tr('⧉   Einladung kopieren'), style="Sidebar.TButton", command=self.copy_invite).pack(fill=tk.X)
-        ttk.Button(p, text=tr('✎   Hauptauftrag'), style="Sidebar.TButton", command=self.edit_main).pack(fill=tk.X)
-        ttk.Button(p, text=tr('≡   Aufgaben'), style="Sidebar.TButton", command=self.open_tasks).pack(fill=tk.X)
-        ttk.Button(p, text=tr('✓   Erlaubnis'), style="Sidebar.TButton", command=self.open_permission).pack(fill=tk.X)
-        ttk.Button(p, text=tr('📁   Projektordner'), style="Sidebar.TButton", command=self.open_project_folder
-                   ).pack(fill=tk.X)
+        ttk.Button(p, text=tr('Einladung kopieren'), style="Sidebar.TButton", command=self.copy_invite,
+                   **icons.opts("copy")).pack(fill=tk.X)
+        ttk.Button(p, text=tr('Hauptauftrag'), style="Sidebar.TButton", command=self.edit_main,
+                   **icons.opts("edit")).pack(fill=tk.X)
+        ttk.Button(p, text=tr('Aufgaben'), style="Sidebar.TButton", command=self.open_tasks,
+                   **icons.opts("tasks")).pack(fill=tk.X)
+        ttk.Button(p, text=tr('Erlaubnis'), style="Sidebar.TButton", command=self.open_permission,
+                   **icons.opts("shield")).pack(fill=tk.X)
+        ttk.Button(p, text=tr('Projektordner'), style="Sidebar.TButton", command=self.open_project_folder,
+                   **icons.opts("folder")).pack(fill=tk.X)
 
         ttk.Label(p, text=tr("TEILNEHMER"), style="Sidebar.TLabel").pack(anchor="w", pady=(10, 2))
         tree = ttk.Treeview(p, show="tree", selectmode="browse", style="Sidebar.Treeview", height=6)
@@ -560,12 +568,13 @@ class RoomMode:
         self.member_tree = tree
         self._fill_members()
         bottom = self._bottom
-        self._stop_btn = ttk.Button(bottom, text=tr('■   Antwort meiner KI stoppen'), style="Sidebar.TButton",
+        self._stop_btn = ttk.Button(bottom, text=tr('Antwort meiner KI stoppen'), style="Sidebar.TButton",
+                                    **icons.opts("stop"),
                                     command=self.ai_stop.set)
-        self._stop_all_btn = ttk.Button(bottom, text=tr('■   Alle KIs stoppen'), style="Sidebar.TButton",
+        self._stop_all_btn = ttk.Button(bottom, text=tr('Alle KIs stoppen'), style="Sidebar.TButton", **icons.opts("stop"),
                                         command=self.stop_all)
-        self._leave_btn = ttk.Button(bottom, style="Sidebar.TButton", command=self.leave,
-                                     text=tr('✕   Raum schließen') if info["is_host"] else tr('✕   Raum verlassen'))
+        self._leave_btn = ttk.Button(bottom, style="Sidebar.TButton", command=self.leave, **icons.opts("close"),
+                                     text=tr('Raum schließen') if info["is_host"] else tr('Raum verlassen'))
         self._leave_btn.pack(fill=tk.X)
         self._update_panel()
 
@@ -574,11 +583,12 @@ class RoomMode:
         if not self.connected or not self._status or not self._status.winfo_exists():
             return
         ok = self.state == "ok"
-        status = (tr('● verbunden') if ok else f"● {error_text(self.state) if self.state else tr('verbinde …')}") + (
+        status = (tr('verbunden') if ok else error_text(self.state) if self.state else tr('verbinde …')) + (
             tr('  ·  du bist Gastgeber') if self.info["is_host"] else "")
         busy = self.state.startswith(tr('Lade '))  # Dateien werden hochgeladen – kein Fehler
         self._status.configure(text=status, style="SidebarOk.TLabel" if ok else
-                               "SidebarMuted.TLabel" if busy else "SidebarWarn.TLabel")
+                               "SidebarMuted.TLabel" if busy else "SidebarWarn.TLabel",
+                               **icons.opts("dot", "ok" if ok else "muted" if busy else "error", 8, disabled=None))
         if self.ai_busy and not self._stop_btn.winfo_ismapped():
             self._stop_btn.pack(fill=tk.X, before=self._leave_btn)
         elif not self.ai_busy and self._stop_btn.winfo_ismapped():
@@ -635,7 +645,7 @@ class RoomMode:
             'Gilt für alle KIs im Raum und geht bei jeder ihrer Antworten mit. Ändern können ihn nur die Menschen '
             'im Raum.'), style="Muted.TLabel",
                   wraplength=round(520 * self.app.ui_scale)).pack(anchor="w", pady=(2, 8))
-        frame, box = scrolled(body, wrap=tk.WORD, width=70, height=12, font=("Segoe UI", 10), padx=8, pady=6,
+        frame, box = scrolled(body, wrap=tk.WORD, width=70, height=12, font=(FAMILY, 10), padx=8, pady=6,
                               undo=True)
         frame.pack(fill=tk.BOTH, expand=True)
         box.insert("1.0", self.main.get("text") or "")
@@ -714,7 +724,7 @@ class RoomMode:
         actions.pack(side=tk.BOTTOM, fill=tk.X, pady=(8, 0))
         add = ttk.Frame(body)
         add.pack(side=tk.BOTTOM, fill=tk.X, pady=(8, 0))
-        frame, lst = app._listbox(body, font=("Segoe UI", 10), height=12)
+        frame, lst = app._listbox(body, font=(FAMILY, 10), height=12)
         frame.pack(fill=tk.BOTH, expand=True)
         self._tasks_list = lst
 
@@ -817,7 +827,7 @@ class RoomMode:
         body = ttk.Frame(win, padding=16)
         body.pack(fill=tk.BOTH, expand=True)
         ttk.Label(body, text=tr('Projektordner'), style="Title.TLabel").pack(anchor="w")
-        ttk.Label(body, text=f"📁  {project['name']}").pack(anchor="w", pady=(8, 2))
+        ttk.Label(body, text=project['name'], **icons.opts("folder", disabled=None)).pack(anchor="w", pady=(8, 2))
         rights = (tr('Alle KIs im Raum dürfen dort lesen und schreiben.') if project["write"] else
                   tr('Die KIs der Gäste dürfen dort nur lesen.'))
         ttk.Label(body, text=rights, style="Muted.TLabel", wraplength=round(420 * app.ui_scale)).pack(anchor="w")
@@ -899,11 +909,14 @@ class RoomMode:
             return
         me = self.client.member if self.client else None
         waiting = self._waiting_for()
-        rows = []  # (iid, Text, Tags) in Anzeigereihenfolge
+        rows = []  # (iid, Text, Tags, Icon) in Anzeigereihenfolge
+        plain = not icons.FAMILY  # ohne Icon-Schrift wie früher mit Zeichen und Leerzeichen eingerückt
         for m in sorted(self.members.values(), key=lambda m: (not m.get("host"), m["name"].lower())):
             off = () if m.get("online") else ("off",)
             you = tr(' (du)') if m["id"] == me else ""
-            rows.append((f"h:{m['id']}", f"  ●  {m['name']}{you}" + (tr('  ·  Gastgeber') if m.get("host") else ""), off))
+            rows.append((f"h:{m['id']}", ("  ●  " if plain else "  ") + f"{m['name']}{you}"
+                         + (tr('  ·  Gastgeber') if m.get("host") else ""), off,
+                         icons.image("person", "fg" if m.get("online") else "muted", 14, indent=6)))
             if not m.get("online"):
                 state = "offline"
             elif m.get("busy"):
@@ -914,18 +927,21 @@ class RoomMode:
                 state = m.get("model") or tr("bereit")
             else:
                 state = tr('kein Modell geladen')
-            pct = self._ctx_percent(m, me) if m.get("online") and m.get("ai_ready") else None
-            rows.append((f"a:{m['id']}", f"      ✦ {m['ai']}  ·  " + (f"{pct} %  ·  " if pct is not None else "") + state,
-                         () if m.get("online") and m.get("ai_ready") else ("off",)))
-            if m.get("status") and m.get("online"):  # Teamstand: woran die KI gerade arbeitet
-                rows.append((f"s:{m['id']}", f"          {m['status']}", ("off",)))
+            ready = m.get("online") and m.get("ai_ready")
+            pct = self._ctx_percent(m, me) if ready else None
+            rows.append((f"a:{m['id']}", ("      ✦ " if plain else "  ") + f"{m['ai']}  ·  "
+                         + (f"{pct} %  ·  " if pct is not None else "") + state, () if ready else ("off",),
+                         icons.image("robot", "fg" if ready else "muted", 14, indent=22)))
+            if m.get("status") and m.get("online"):  # Teamstand: woran die KI gerade arbeitet (unter ihrem Namen)
+                rows.append((f"s:{m['id']}", ("          " if plain else "  ") + m["status"], ("off",),
+                             icons.image("blank", "muted", 14, indent=22)))
         if list(tree.get_children()) == [r[0] for r in rows]:
-            for iid, text, tags in rows:  # gleiche Teilnehmer: nur Texte ändern (flackert nicht)
-                tree.item(iid, text=text, tags=tags)
+            for iid, text, tags, img in rows:  # gleiche Teilnehmer: nur Texte ändern (flackert nicht)
+                tree.item(iid, text=text, tags=tags, image=img or "")
         else:
             tree.delete(*tree.get_children())
-            for iid, text, tags in rows:
-                tree.insert("", tk.END, iid=iid, text=text, tags=tags)
+            for iid, text, tags, img in rows:
+                tree.insert("", tk.END, iid=iid, text=text, tags=tags, image=img or "")
 
     def _ctx_percent(self, m: dict, me: str | None) -> int | None:
         """Füllstand des Kontexts einer KI in Prozent – die eigene aus der Kontextanzeige, die anderen so, wie ihr
@@ -1097,7 +1113,7 @@ class RoomMode:
         bf = ttk.Frame(body)
         bf.pack(fill=tk.X, pady=(12, 0))
         ttk.Button(bf, text=tr('Schließen'), command=win.destroy).pack(side=tk.RIGHT)
-        ttk.Button(bf, text=tr('⧉ Kopieren'), style="Accent.TButton",
+        ttk.Button(bf, text=tr('Kopieren'), style="Accent.TButton", **icons.opts("copy", "accent_fg"),
                    command=lambda: (self.copy_invite(), win.destroy())).pack(side=tk.RIGHT, padx=(0, 6))
         dialogs.present(win, app.root)
 
@@ -1493,7 +1509,7 @@ class RoomMode:
         self.slots[m["id"]] = sid
         sub = (tr('deine KI') if mine else tr('KI von {0}', m.get('owner', '?'))) + (f"  ·  {m['model']}" if m.get("model") else "")
         with v.slot(sid):
-            v.sender(f"✦ {m['name']}", f"{sub}  ·  {self._time(m)}", self._color(m.get("owner") or m["name"]))
+            v.sender(m['name'], f"{sub}  ·  {self._time(m)}", self._color(m.get("owner") or m["name"]), ai=True)
             for s in self.summaries:  # vor dieser Antwort hat die eigene KI Älteres zusammengefasst (nur hier sichtbar)
                 if s.get("at") == m["id"]:
                     v.think_static(s["text"], self.app._summary_title(s["count"]), icon="≡")
@@ -1511,7 +1527,7 @@ class RoomMode:
                 v.show_pending(tr('schreibt …'))
 
     def _footer(self, text: str):
-        """„⧉ Kopieren“ unter einer fertigen KI-Antwort (im aktuellen Slot)."""
+        """„Kopieren“ unter einer fertigen KI-Antwort (im aktuellen Slot)."""
         v = self.view
         v.md_finish()
         if text.strip():
@@ -1672,8 +1688,8 @@ class RoomMode:
         sid = v.slot_new()
         model = self.app.server.model.stem if self.app.server.model else ""
         with v.slot(sid):
-            v.sender(f"✦ {me['ai']}", tr('deine KI') + (f"  ·  {model}" if model else "")
-                     + datetime.now().strftime("  ·  %H:%M"), self._color(me["name"]))
+            v.sender(me['ai'], tr('deine KI') + (f"  ·  {model}" if model else "")
+                     + datetime.now().strftime("  ·  %H:%M"), self._color(me["name"]), ai=True)
             v.show_pending(tr('denkt nach …'))
         return sid
 
@@ -2207,12 +2223,12 @@ class RoomMode:
     # ================================================================ Geteilte Dateien
 
     def _cards(self, m: dict) -> list[dict]:
-        """Datei-Kärtchen einer Nachricht. Geteilte Dateien: „⬇ Herunterladen“ per Klick, Bilder mit Vorschau."""
+        """Datei-Kärtchen einer Nachricht. Geteilte Dateien: „Herunterladen“ per Klick, Bilder mit Vorschau."""
         out = []
         for f in m.get("files") or []:
             card = {"name": f["name"], "info": f.get("info", "")}
             if f.get("id"):
-                card["info"] = " · ".join(p for p in (card["info"], tr('⬇ Herunterladen')) if p)
+                card["info"] = " · ".join(p for p in (card["info"], tr('Herunterladen')) if p)
                 card["action"] = lambda f=f, owner=m.get("owner") or m.get("name", "?"): self.download(f, owner)
                 self.cards.setdefault(f["id"], []).append(card)
                 if f.get("image"):

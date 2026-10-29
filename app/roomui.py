@@ -423,6 +423,9 @@ class RoomMode:
         self._side = tk.Canvas(side_parent, highlightthickness=0, borderwidth=0, yscrollincrement=20)
         self._side_bar = ttk.Scrollbar(side_parent, orient=tk.VERTICAL, command=self._side.yview)
         self._side.configure(yscrollcommand=self._side_bar.set)
+        # Stopp-Knöpfe und „Raum schließen“ fest am unteren Rand (direkt über „Einstellungen“), nicht mitscrollend
+        self._bottom = ttk.Frame(side_parent, style="Sidebar.TFrame", padding=(10, 2, 10, 0))
+        self._bottom.pack(side=tk.BOTTOM, fill=tk.X)
         self._side.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.panel = ttk.Frame(self._side, style="Sidebar.TFrame", padding=(10, 4, 10, 6))
         self._side_item = self._side.create_window(0, 0, window=self.panel, anchor="nw")
@@ -502,7 +505,7 @@ class RoomMode:
         self._panel_key = key
         self.app.root.after_idle(self._side_wheel_tags)  # nach dem Neuaufbau: Mausrad auch über den neuen Elementen
         p = self.panel
-        for w in p.winfo_children():
+        for w in p.winfo_children() + self._bottom.winfo_children():
             w.destroy()
         self.member_tree = self._status = self._stop_btn = self._leave_btn = self._stop_all_btn = None
         if not self.connected:
@@ -556,11 +559,13 @@ class RoomMode:
         tree.bind("<<TreeviewSelect>>", self._on_member_click)
         self.member_tree = tree
         self._fill_members()
-        self._stop_btn = ttk.Button(p, text=tr('■   Antwort meiner KI stoppen'), style="Sidebar.TButton",
+        bottom = self._bottom
+        self._stop_btn = ttk.Button(bottom, text=tr('■   Antwort meiner KI stoppen'), style="Sidebar.TButton",
                                     command=self.ai_stop.set)
-        self._stop_all_btn = ttk.Button(p, text=tr('■   Alle KIs stoppen'), style="Sidebar.TButton", command=self.stop_all)
-        self._leave_btn = ttk.Button(p, text=tr('✕   Raum schließen') if info["is_host"] else tr('✕   Raum verlassen'),
-                                     style="Sidebar.TButton", command=self.leave)
+        self._stop_all_btn = ttk.Button(bottom, text=tr('■   Alle KIs stoppen'), style="Sidebar.TButton",
+                                        command=self.stop_all)
+        self._leave_btn = ttk.Button(bottom, style="Sidebar.TButton", command=self.leave,
+                                     text=tr('✕   Raum schließen') if info["is_host"] else tr('✕   Raum verlassen'))
         self._leave_btn.pack(fill=tk.X)
         self._update_panel()
 

@@ -295,6 +295,11 @@ Neueste zuerst. Neue Einträge oben im Abschnitt „Seit …“:
 ### Seit v1.4.3
 
 ### v1.4.3 – 29.10.2026
+- 29.10.2026 · Projektinhaber + Claude · **„Raum schließen“ unten über „Einstellungen“:** Der Knopf (bei Gästen „Raum
+  verlassen“) und die beiden Stopp-Knöpfe, die nur bei arbeitender KI erscheinen, liegen jetzt in einer festen Leiste
+  am unteren Rand der Teamwork-Seitenleiste (`RoomMode._bottom`), statt direkt unter der Teilnehmerliste mitzuscrollen.
+  Getestet im Fenster: 9 Prüfungen (Abstand zu „Einstellungen“, Stopp-Knöpfe, sehr langer Inhalt scrollt und der Knopf
+  bleibt sichtbar, nach dem Schließen leer), Bildschirmfotos Dunkel/Hell/Windows-Standard.
 - 28.10.2026 · Projektinhaber + Claude · **Teamwork: „Erlaubnis“ und „Projektordner“ als Knöpfe:** Die Abschnitte
   „Projektordner“ und „Meine KI im Raum darf“ (Häkchen) in der Seitenleiste sind weg; die eigene KI hat immer alle
   Werkzeuge, das Fenster „Erlaubnis“ bietet drei Stufen (siehe „Entscheidungen → Teamwork“, gespeichert als

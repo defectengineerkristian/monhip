@@ -29,6 +29,7 @@ def gui_worker(language):
         import office
         import reminders
         import roomui
+        import speech
         import tkinter as tk
 
         monhip.APP_DIR = data
@@ -100,12 +101,20 @@ def gui_worker(language):
                 assert "Unveränderter Dokumenttext" in doc.text
                 assert ("characters" if language == "en" else "Zeichen") in doc.info
 
+                # Spracherkennung nur Deutsch oder Englisch (ohne „Automatisch erkennen“)
+                assert app.speech_lang_var.get() in ("Deutsch", "German")
+                assert list(speech.LANGUAGES.values()) == ["de", "en"]
+
                 # Nur die Oberflächensprache ändern: nicht Prompt, Spracherkennung oder die laufende Sitzung.
+                # Danach startet Monhip neu – der Hinweis kommt schon in der neuen Sprache.
                 next_language = "de" if language == "en" else "en"
                 app.ui_language_var.set("Deutsch" if next_language == "de" else "English")
-                with mock.patch.object(dialogs, "showinfo") as notice:
+                with mock.patch.object(dialogs, "showinfo") as notice, \
+                        mock.patch.object(app, "restart") as restart:
                     app._change_ui_language()
                     assert notice.call_count == 1
+                    assert ("restart" if next_language == "en" else "startet") in notice.call_args.args[1]
+                    assert restart.call_count == 1
                 stored = json.loads(config_file.read_text(encoding="utf-8"))
                 assert stored["ui_language"] == next_language
                 assert stored["speech_language"] == "de"

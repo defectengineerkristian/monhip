@@ -1,11 +1,13 @@
 """Monhip: lokale GGUF-Modelle laden, chatten und als Agent arbeiten lassen (Aufbau: siehe CLAUDE.md)."""
 
-from i18n import LANGUAGES as UI_LANGUAGES, error_text, get_language, initialize, resolve_language, tr
+from i18n import LANGUAGES as UI_LANGUAGES, error_text, get_language, initialize, resolve_language, tr, tr_in
 
 import json
 import os
 import queue
 import secrets
+import subprocess
+import sys
 import threading
 import tkinter as tk
 from collections import deque
@@ -691,14 +693,42 @@ class App:
         self.theme.register_text(self.log)
 
     def _change_ui_language(self, _event=None):
+        """Neue Oberflächensprache speichern und Monhip damit neu starten (die Texte stehen beim Start fest). Der
+        Hinweis kommt schon in der neuen Sprache; läuft gerade etwas, das der Neustart abbräche, wird gefragt."""
         language = UI_LANGUAGES.get(self.ui_language_var.get())
         if not language or language == self.cfg["ui_language"]:
             return
         self.cfg["ui_language"] = language
         self.save_config()
-        dialogs.showinfo(tr("Oberflächensprache"),
-                         tr("Die neue Oberflächensprache wird beim nächsten Start von Monhip verwendet."),
-                         parent=self.settings_win)
+        title = tr_in(language, 'Oberflächensprache')
+        running = (self.busy or self.room.ai_busy or self.expert_job or self._downloads or self.room.client
+                   or self.room.server)
+        if running:
+            if not dialogs.askyesno(title, tr_in(
+                    language, 'Monhip startet neu, um die Oberflächensprache zu wechseln. Laufende Antworten, Downloads '
+                              'und Auswertungen werden dabei abgebrochen, ein Teamwork-Raum wird verlassen.\n\nJetzt neu '
+                              'starten?'), parent=self.settings_win):
+                dialogs.showinfo(title, tr_in(language, 'Die neue Oberflächensprache wird beim nächsten Start von '
+                                                        'Monhip verwendet.'), parent=self.settings_win)
+                return
+        else:
+            dialogs.showinfo(title, tr_in(language, 'Monhip startet jetzt neu, um die Oberflächensprache zu wechseln.'),
+                             parent=self.settings_win)
+        self.restart()
+
+    def restart(self):
+        """Monhip beenden (wie über das Fenster-X: speichern, Server beenden …) und über Monhip.pyw neu starten – ohne
+        Konsolenfenster (pythonw). Der neue Prozess startet erst danach, liest also die gespeicherte Konfiguration
+        und findet den Grafikspeicher frei."""
+        self.on_close()
+        exe = Path(sys.executable)
+        exe = exe.with_name("pythonw.exe") if exe.with_name("pythonw.exe").exists() else exe
+        cmd = [str(exe), str(APP_DIR / "Monhip.pyw")]
+        flags = 0x00000008 | 0x00000200 if os.name == "nt" else 0  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+        try:  # eigenes Job-Objekt des Startprogramms (falls vorhanden) verlassen, sonst endete der neue Prozess mit
+            subprocess.Popen(cmd, cwd=APP_DIR, creationflags=flags | 0x01000000, close_fds=True)  # BREAKAWAY_FROM_JOB
+        except OSError:
+            subprocess.Popen(cmd, cwd=APP_DIR, creationflags=flags, close_fds=True)
 
     def open_settings(self, tab: str | None = None):
         win = self.settings_win

@@ -3,9 +3,16 @@
 Was in welcher Version umgesetzt wurde, neueste zuerst. Neues kommt oben unter „Seit vX“ (bis zum nächsten Release),
 immer mit festen Daten (TT.MM.JJJJ).
 
-**Stand:** 29.10.2026 · **neuestes Release:** v1.4.5
+**Stand:** 30.10.2026 · **neuestes Release:** v1.4.5
 
 ---
+
+## Seit v1.4.5
+- 29.10.2026: Spracherkennung nur noch Deutsch oder Englisch – „Automatisch erkennen“ entfernt (ein gespeichertes
+  „auto“ wird zu Deutsch).
+- 29.10.2026: Wechsel der Oberflächensprache startet Monhip nach kurzem Hinweis (schon in der neuen Sprache) gleich in
+  der neuen Sprache neu (`App.restart`, `i18n.tr_in`); läuft gerade eine Antwort, ein Download, eine Auswertung oder
+  ein Teamwork-Raum, wird vorher gefragt – „Nein“ = gilt beim nächsten Start.
 
 ## v1.4.5 – 29.10.2026
 - 29.10.2026: Rechtsklick-Menü (Ausschneiden, Kopieren, Einfügen, Alles markieren) in allen Eingabefeldern –

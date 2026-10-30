@@ -29,7 +29,7 @@ MODELS = {  # Dateiname → Beschreibung in den Einstellungen
     "ggml-small.bin": tr('Schnell – small (465 MB, für langsame PCs)'),
 }
 DEFAULT_MODEL = "ggml-large-v3-turbo-q8_0.bin"
-LANGUAGES = {tr('Deutsch'): "de", tr('Englisch'): "en", tr('Automatisch erkennen'): "auto"}
+LANGUAGES = {tr('Deutsch'): "de", tr('Englisch'): "en"}  # bewusst ohne „Automatisch erkennen“
 AUDIO_SUFFIXES = {".wav", ".mp3", ".flac", ".ogg"}  # liest whisper-cli selbst (ohne ffmpeg)
 _FOLDER_RE = re.compile(r"whisper-b(\d+)-(.+)$")
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)

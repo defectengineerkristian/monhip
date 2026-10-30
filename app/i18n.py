@@ -64,6 +64,12 @@ def tr(text: str, *args, **kwargs) -> str:
     return translated.format(*args, **kwargs) if args or kwargs else translated
 
 
+def tr_in(language: str, text: str, *args) -> str:
+    """Wie tr, aber in einer bestimmten Sprache – z. B. der Hinweis beim Wechsel in der gerade gewählten Sprache."""
+    translated = ENGLISH.get(text, text) if language == "en" else text
+    return translated.format(*args) if args else translated
+
+
 _error_patterns = None
 
 

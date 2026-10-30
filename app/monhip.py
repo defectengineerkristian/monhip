@@ -968,12 +968,7 @@ class App:
                                       'Stellen und nennt Datei und Seite.\n\nDie Auswertung steht unten im Fenster; '
                                       'Fragen gehen schon, während sie läuft.'))
         elif self.server.model:
-            what = tr('Dokumente und Bilder') if self.server.vision else tr('Dokumente')
-            self.view.placeholder(tr(
-                'Womit kann ich helfen?'), tr(
-                'Geladen: {0}\n\n{1} anhängen: „+“ klicken, Dateien ins Fenster ziehen oder mit Strg+V einfügen',
-                self.server.model.stem,
-                what))
+            self.view.placeholder(tr('Womit kann ich helfen?'), tr('Geladen: {0}', self.server.model.stem))
         else:
             self.view.placeholder(tr('Kein Modell geladen'), tr('Oben rechts ein Modell auswählen und „Modell laden“ klicken.'))
 

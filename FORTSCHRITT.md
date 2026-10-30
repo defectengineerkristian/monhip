@@ -7,6 +7,9 @@ immer mit festen Daten (TT.MM.JJJJ).
 
 ---
 
+## Seit v1.4.6
+- 30.10.2026: Leerer Chat ohne Anhang-Hinweis – unter „Womit kann ich helfen?“ steht nur noch das geladene Modell.
+
 ## v1.4.6 – 30.10.2026
 - 30.10.2026: Bildschirmfotos und „Programme bedienen“: Sind sie ausgeschaltet oder fehlt das Bildverständnis, sagt
   das Modell jetzt, wo man sie einschaltet (Einstellungen → Werkzeuge bzw. Modell mit Bildverständnis), statt nur „geht

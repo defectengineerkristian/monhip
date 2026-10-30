@@ -3,11 +3,15 @@
 Was in welcher Version umgesetzt wurde, neueste zuerst. Neues kommt oben unter „Seit vX“ (bis zum nächsten Release),
 immer mit festen Daten (TT.MM.JJJJ).
 
-**Stand:** 30.10.2026 · **neuestes Release:** v1.4.5
+**Stand:** 30.10.2026 · **neuestes Release:** v1.4.6
 
 ---
 
-## Seit v1.4.5
+## v1.4.6 – 30.10.2026
+- 30.10.2026: Bildschirmfotos und „Programme bedienen“: Sind sie ausgeschaltet oder fehlt das Bildverständnis, sagt
+  das Modell jetzt, wo man sie einschaltet (Einstellungen → Werkzeuge bzw. Modell mit Bildverständnis), statt nur „geht
+  nicht“ (`agent.off_hint`, am Ende des System-Prompts); im Teamwork sagt es, dass es beides nur im normalen Chat gibt.
+  Ganzer Ablauf durch die Oberfläche und mit echtem Modell geprüft (Bildschirmfoto gelesen, Fenster bedient).
 - 29.10.2026: Spracherkennung nur noch Deutsch oder Englisch – „Automatisch erkennen“ entfernt (ein gespeichertes
   „auto“ wird zu Deutsch).
 - 29.10.2026: Wechsel der Oberflächensprache startet Monhip nach kurzem Hinweis (schon in der neuen Sprache) gleich in

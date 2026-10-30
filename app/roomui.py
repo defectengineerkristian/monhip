@@ -36,8 +36,8 @@ import icons
 import images
 import projekt
 import room
-from agent import (Agent, ToolError, date_line, describe_call, format_args, result_ok, run_conversation, time_label,
-                   tool_budget)
+from agent import (ROOM_SCREEN_PROMPT, Agent, ToolError, date_line, describe_call, format_args, result_ok,
+                   run_conversation, time_label, tool_budget)
 from projekt import RISKY_SUFFIXES, mark_from_internet  # RISKY_SUFFIXES: vor dem Herunterladen warnen
 from themes import FAMILY, mix_hex
 from widgets import scrolled
@@ -1790,7 +1790,7 @@ class RoomMode:
         text += ("\n\n" + own if own else "") + "\n\n" + date_line()  # ohne Uhrzeit – die steht an jeder Nachricht
         if agent:
             text += "\n\n" + agent.system_prompt()
-        return text
+        return text + "\n\n" + ROOM_SCREEN_PROMPT
 
     def _context(self, trigger_id: str | None, auto: bool) -> list[dict]:
         """Gruppenchat → Nachrichten für das eigene Modell: eigene KI = assistant, alle anderen = user; „_ids“ =

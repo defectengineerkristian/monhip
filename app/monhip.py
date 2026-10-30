@@ -34,15 +34,15 @@ import prozesse
 import reminders
 import room as room_net
 import speech
-from agent import (TOOL_GROUPS, Agent, date_line, describe_call, format_args, result_ok, run_conversation, time_label,
-                   tool_budget)
+from agent import (TOOL_GROUPS, Agent, date_line, describe_call, format_args, off_hint, result_ok, run_conversation,
+                   time_label, tool_budget)
 from backend import LlamaServer, find_mmproj, find_models, thinking_title
 from chatview import ChatView
 from roomui import RoomMode
 from themes import FAMILY, THEMES, ThemeManager, label_to_key, mix_hex
 from widgets import EditMenu, ModeSwitch, PopupMenu, precise_timer, rounded, scrolled
 
-VERSION = "1.4.5"  # auf GitHub als Release „v1.4.5“ (danach richtet sich das Update im Installer)
+VERSION = "1.4.6"  # auf GitHub als Release „v1.4.6“ (danach richtet sich das Update im Installer)
 TIME_FMT = "%Y-%m-%d %H:%M"  # „_time“ einer Nutzernachricht: ihre Uhrzeit fürs Modell (_api_message)
 APP_DIR = Path(__file__).resolve().parent.parent  # Code in app/, Daten daneben
 CONFIG_FILE = APP_DIR / "config.json"
@@ -1955,7 +1955,9 @@ class App:
     def _system_prompt(self, agent: Agent | None) -> str:
         system = self.sys_text.get("1.0", tk.END).strip()
         system += "\n\n" + date_line("die Uhrzeit steht am Ende jeder Nachricht")  # ohne Uhrzeit, siehe date_line
-        return (system + "\n\n" + agent.system_prompt()).strip() if agent else system.strip()
+        system = (system + "\n\n" + agent.system_prompt()).strip() if agent else system.strip()
+        hint = off_hint(self.screen_var.get(), self.control_var.get(), self.server.vision)
+        return system + "\n\n" + hint if hint else system
 
     def _image_tokens(self) -> int:
         """Höchstens so viele Tokens kostet ein Bild im Verlauf (0 ohne Bildverständnis)."""

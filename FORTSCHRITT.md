@@ -8,6 +8,12 @@ immer mit festen Daten (TT.MM.JJJJ).
 ---
 
 ## Seit v1.4.6
+- 02.11.2026: GitHub Action `.github/workflows/linux-deb.yml`: bei jedem veröffentlichten Release (oder von Hand für
+  einen Tag) Tag gegen `VERSION` prüfen, Tests, `.deb` bauen, auf Ubuntu 24.04 installieren und starten, dann
+  `.deb` und `.sha256` an das Release hängen. Den Windows-Installer (`Monhip-Setup.exe`, C#) zerlegt und in
+  `installer/windows/README.md` beschrieben: lädt das Quell-ZIP des Releases und übernimmt alles außer geschützten
+  Namen – `app/plattform.py` kommt also von selbst mit, angehängte Dateien stören nicht. Gefunden: `checkpoints`
+  steht nicht auf seiner Schutzliste, jedes Update löscht die Rückgängig-Punkte.
 - 02.11.2026: Linux-Paket – `installer/linux/build-deb.sh` baut `dist/monhip_<Version>_all.deb` (nur python3 und
   dpkg-deb): Programm nach `/opt/monhip`, Starter `/usr/bin/monhip`, Menüeintrag, Symbol (PNG aus `monhip.ico`),
   Abhängigkeiten und Empfehlungen wie in der README; `postinst` übersetzt `app/` vor, `prerm` räumt die Caches weg.

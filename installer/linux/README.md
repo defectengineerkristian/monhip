@@ -44,6 +44,17 @@ Declared in [`debian/control`](debian/control):
 whisper.cpp has no package in Debian/Ubuntu yet; for speech recognition, users install `whisper-cli`
 themselves (see the main README).
 
+## Releases
+
+[`.github/workflows/linux-deb.yml`](../../.github/workflows/linux-deb.yml) runs for every published
+release: it checks that the tag is `v` + `VERSION` from `app/monhip.py`, runs the tests, builds the
+package, installs and starts it on Ubuntu 24.04 and attaches `monhip_<version>_all.deb` and its
+`.sha256` to the release. The maintainer field comes from the repository variable
+`MONHIP_MAINTAINER` (Settings → Secrets and variables → Actions → Variables), otherwise from the
+owner's GitHub noreply address. For a release that already exists: Actions → “Linux-Paket (.deb)” →
+Run workflow → enter the tag. Releases before this workflow existed contain no
+`installer/linux/` and are rejected with a clear message.
+
 ## Checked so far
 
 On Ubuntu 24.04 (container, virtual display): build, `apt install` with all recommended packages,
@@ -58,5 +69,3 @@ matches `StartupWMClass`), reinstall/upgrade, remove and purge (nothing left in 
 - **Further formats:** an RPM (Fedora/openSUSE) and an AppImage or Flatpak for other distributions can
   reuse `monhip.sh`, `monhip.desktop` and the icon. An AppStream file (`metainfo.xml`) would make
   Monhip show up nicely in software centers.
-- **Releases:** a GitHub Actions job could run `build-deb.sh` for every release tag and attach the
-  `.deb`.

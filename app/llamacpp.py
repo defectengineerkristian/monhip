@@ -12,7 +12,7 @@ from pathlib import Path
 import downloads
 import plattform
 
-SERVER_DIR = Path(__file__).resolve().parent.parent / "server"
+SERVER_DIR = plattform.DATA_DIR / "server"
 RELEASES_URL = "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=10"
 # Ordnername = Name der Zip- bzw. tar.gz-Datei (Linux-CPU ohne Art im Namen: dort „cpu“ ergänzt, siehe _folder)
 _FOLDER_RE = re.compile(r"llama-b(\d+)-bin-(?:win|ubuntu)-(.+)-(?:x64|arm64)$")

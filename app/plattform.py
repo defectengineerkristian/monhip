@@ -33,6 +33,27 @@ SHELL_LABEL = "PowerShell" if WINDOWS else "Bash"
 CAN_CONTROL = WINDOWS   # Programme bedienen (steuerung.py): Fenster und Eingaben gibt es nur über die Windows-API
 WAYLAND = bool(os.environ.get("WAYLAND_DISPLAY")) or os.environ.get("XDG_SESSION_TYPE") == "wayland"
 DEVNULL = subprocess.DEVNULL
+CODE_DIR = Path(__file__).resolve().parent.parent  # Monhip.pyw und app/
+
+
+def data_home() -> Path:
+    """Basis für Programmdaten nach XDG (~/.local/share)."""
+    return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+
+
+def _data_dir() -> Path:
+    """Wo Monhip seine Daten ablegt (config.json, modelle/, server/, chats/ …): wie bisher neben dem Programm –
+    außer MONHIP_DATA nennt einen Ordner (setzt das Linux-Paket: ~/.local/share/monhip) oder der Programmordner ist
+    unter Linux schreibgeschützt (installiert, z. B. /opt/monhip): dann ebenfalls ~/.local/share/monhip."""
+    env = os.environ.get("MONHIP_DATA", "").strip()
+    if env:
+        return Path(env).expanduser().resolve()
+    if not WINDOWS and not os.access(CODE_DIR, os.W_OK):
+        return data_home() / "monhip"
+    return CODE_DIR
+
+
+DATA_DIR = _data_dir()
 
 
 def exe(name: str) -> str:
@@ -238,7 +259,7 @@ def trash_home(p: Path, base: Path | None = None):
     p = Path(os.path.abspath(p))
     if not os.path.lexists(p):
         raise FileNotFoundError(f"{p} gibt es nicht.")
-    base = base or Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "Trash"
+    base = base or data_home() / "Trash"
     files, info = base / "files", base / "info"
     files.mkdir(parents=True, exist_ok=True)
     info.mkdir(parents=True, exist_ok=True)

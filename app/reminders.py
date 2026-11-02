@@ -13,7 +13,7 @@ from xml.sax.saxutils import escape
 import plattform
 from images import powershell
 
-FILE = Path(__file__).resolve().parent.parent / "erinnerungen.json"
+FILE = plattform.DATA_DIR / "erinnerungen.json"
 _lock = threading.Lock()
 _FORMATS = ("%d.%m.%Y %H:%M", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M", "%d.%m. %H:%M", "%H:%M")
 # AppID von Windows PowerShell: damit dürfen Benachrichtigungen ohne eigene App-Registrierung erscheinen

@@ -12,9 +12,10 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+import plattform
 from i18n import tr
 
-DIR =Path(__file__).resolve().parent.parent / "checkpoints"  # erst beim Aufruf gelesen – Tests biegen ihn um
+DIR = plattform.DATA_DIR / "checkpoints"  # erst beim Aufruf gelesen – Tests biegen ihn um
 KEEP = 30                       # so viele Checkpoints bleiben, ältere werden gelöscht
 MAX_SIZE = 50 * 1024 * 1024     # größere Dateien bzw. Ordner werden nicht gesichert (steht im Checkpoint)
 _lock = threading.Lock()

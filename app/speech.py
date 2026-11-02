@@ -26,7 +26,7 @@ from backend import _end_with_app
 from images import TEMP_DIR
 
 WHISPER_DIR = llamacpp.SERVER_DIR
-MODEL_DIR = Path(__file__).resolve().parent.parent / "modelle" / "whisper"
+MODEL_DIR = plattform.DATA_DIR / "modelle" / "whisper"
 RELEASES_URL = "https://api.github.com/repos/ggml-org/whisper.cpp/releases?per_page=10"
 MODEL_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/"
 MODELS = {  # Dateiname → Beschreibung in den Einstellungen

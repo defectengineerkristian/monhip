@@ -17,6 +17,7 @@ from pathlib import Path
 
 import documents
 import images
+import plattform
 from web import mark_from_internet  # roomui holt sie von hier
 from agent import EXEC_SUFFIXES, SKIP_DIRS, ToolError, _numbered, _read_text_file, list_directory, match_edit, \
     search_files
@@ -30,7 +31,7 @@ KEEP_VERSIONS = 300                 # so viele alte Fassungen bleiben im Version
 WRITE_OPS = {"write", "edit", "mkdir", "delete", "put"}
 ARCHIVES = {".zip", ".7z", ".rar", ".tar", ".gz"}
 RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(10)), *(f"LPT{i}" for i in range(10))}
-MONHIP_DIR = Path(__file__).resolve().parent.parent
+MONHIP_DIR = plattform.CODE_DIR  # dazu der Datenordner (roomui: app_dir)
 # Programme/Skripte (und Office mit Makros): beim Herunterladen warnen, von Gästen geschrieben markieren
 RISKY_SUFFIXES = EXEC_SUFFIXES | {".msi", ".dll", ".sys", ".psm1", ".appx", ".msix", ".docm", ".xlsm", ".pptm"}
 

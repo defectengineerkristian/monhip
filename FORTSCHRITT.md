@@ -8,6 +8,14 @@ immer mit festen Daten (TT.MM.JJJJ).
 ---
 
 ## Seit v1.4.6
+- 02.11.2026: Linux-Paket – `installer/linux/build-deb.sh` baut `dist/monhip_<Version>_all.deb` (nur python3 und
+  dpkg-deb): Programm nach `/opt/monhip`, Starter `/usr/bin/monhip`, Menüeintrag, Symbol (PNG aus `monhip.ico`),
+  Abhängigkeiten und Empfehlungen wie in der README; `postinst` übersetzt `app/` vor, `prerm` räumt die Caches weg.
+  Daten dafür nicht mehr fest neben dem Programm: `plattform.DATA_DIR` – wie bisher neben `Monhip.pyw`, außer
+  `MONHIP_DATA` ist gesetzt (das Paket: `~/.local/share/monhip`) oder der Programmordner unter Linux schreibgeschützt;
+  unter Windows ohne `MONHIP_DATA` unverändert. Fensterklasse unter Linux „Monhip“ (passt zu `StartupWMClass`).
+  `installer/windows/` für die Quellen des Windows-Installers (README: was sich für ihn ändert). Unter Ubuntu 24.04
+  gebaut, mit apt installiert, gestartet, neu installiert und entfernt; neuer Test `tests/test_installer.py`.
 - 02.11.2026: Monhip läuft unter Linux – derselbe Code, alles Systemabhängige in `app/plattform.py` (öffnen,
   Papierkorb, Prozesse, Shell, Schriften) und Linux-Zweigen der Module. llama.cpp lädt die `ubuntu`-Builds (tar.gz,
   CPU/Vulkan/CUDA, GPU über lspci bzw. /sys), llama-server und Befehle enden mit Monhip (PR_SET_PDEATHSIG aus einem

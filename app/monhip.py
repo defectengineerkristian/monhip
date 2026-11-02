@@ -14,7 +14,10 @@ from pathlib import Path
 from tkinter import filedialog, ttk
 from tkinter import font as tkfont
 
-initialize(Path(__file__).resolve().parent.parent / "config.json")
+import plattform  # noqa: E402 – vor initialize: dort steht, wo config.json liegt
+
+plattform.DATA_DIR.mkdir(parents=True, exist_ok=True)
+initialize(plattform.DATA_DIR / "config.json")
 
 import chats
 import context
@@ -27,7 +30,6 @@ import icons
 import images
 import llamacpp
 import memory
-import plattform
 import projekt
 import prozesse
 import reminders
@@ -43,7 +45,7 @@ from widgets import EditMenu, ModeSwitch, PopupMenu, precise_timer, rounded, scr
 
 VERSION = "1.4.6"  # auf GitHub als Release „v1.4.6“ (danach richtet sich das Update im Installer)
 TIME_FMT = "%Y-%m-%d %H:%M"  # „_time“ einer Nutzernachricht: ihre Uhrzeit fürs Modell (_api_message)
-APP_DIR = Path(__file__).resolve().parent.parent  # Code in app/, Daten daneben
+APP_DIR = plattform.DATA_DIR  # Daten: neben dem Programm (Code in app/), installiert unter Linux im Benutzerordner
 CONFIG_FILE = APP_DIR / "config.json"
 MODEL_DIR = APP_DIR / "modelle"  # wird immer durchsucht, Ziel für Downloads
 ICON_FILE = Path(__file__).resolve().with_name("monhip.ico")
@@ -753,7 +755,7 @@ class App:
         self.on_close()
         exe = Path(sys.executable)
         exe = exe.with_name("pythonw.exe") if exe.with_name("pythonw.exe").exists() else exe
-        plattform.start_detached([str(exe), str(APP_DIR / "Monhip.pyw")], APP_DIR)
+        plattform.start_detached([str(exe), str(plattform.CODE_DIR / "Monhip.pyw")], plattform.CODE_DIR)
 
     def open_settings(self, tab: str | None = None):
         win = self.settings_win
@@ -2889,6 +2891,7 @@ if __name__ == "__main__":
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Monhip")  # Taskleiste: eigenes Symbol statt Python
     except Exception:
         pass
-    root = tk.Tk()
+    # Linux: Fensterklasse „Monhip“ (WM_CLASS) – Docks ordnen das Fenster so dem Desktop-Eintrag zu (StartupWMClass)
+    root = tk.Tk() if plattform.WINDOWS else tk.Tk(className="Monhip")
     App(root)
     root.mainloop()

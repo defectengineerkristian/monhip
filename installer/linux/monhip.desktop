@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Monhip
+GenericName=Local AI assistant
+GenericName[de]=Lokaler KI-Assistent
+Comment=Chat with local AI models, analyze documents and work together in teams
+Comment[de]=Mit lokalen KI-Modellen chatten, Dokumente auswerten und im Team arbeiten
+Exec=monhip
+Icon=monhip
+Terminal=false
+Categories=Utility;Office;
+Keywords=AI;KI;LLM;chat;llama;GGUF;
+StartupWMClass=Monhip

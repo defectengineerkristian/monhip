@@ -126,8 +126,15 @@ access; Teamwork mode transfers shared content to the participating computers.
 ## Linux
 
 Monhip uses the same code on both systems; everything that differs is collected in `app/plattform.py`
-and in Linux branches of the affected modules. On Linux, Monhip relies on common system programs.
-On Debian and Ubuntu, this installs all of them:
+and in Linux branches of the affected modules.
+
+On Debian and Ubuntu (24.04 or newer), the easiest way is the package built by
+`installer/linux/build-deb.sh` (see [installer/linux](installer/linux/README.md)): it installs Monhip to
+`/opt/monhip`, adds a menu entry and pulls in everything listed below. Its data lives in
+`~/.local/share/monhip`.
+
+To run from source instead, Monhip relies on common system programs. On Debian and Ubuntu, this
+installs all of them:
 
 ```sh
 sudo apt install python3 python3-tk python3-pil xdg-utils poppler-utils libnotify-bin \
@@ -177,16 +184,20 @@ or changed when you switch languages.
 
 ## Local data and project structure
 
-Monhip stores settings and usage data alongside the startup program:
+Monhip stores settings and usage data alongside the startup program – or in the folder named by the
+environment variable `MONHIP_DATA` (the Linux package uses `~/.local/share/monhip`):
 
 | Path | Contents |
 | --- | --- |
 | `Monhip.pyw` | Entry point for starting the application |
 | `app/` | Interface, model integration, agent tools, and other Python modules |
+| `installer/` | Linux package and (later) the Windows installer – see [installer](installer/README.md) |
+| `tests/` | Automated tests (`python -m unittest discover -s tests`) |
 | `config.json` | Application settings |
 | `modelle/` | Local GGUF models and speech recognition models |
 | `server/` | Downloaded llama.cpp and whisper.cpp programs |
 | `chats/` | Saved conversations, attached images, and expert analyses |
+| `checkpoints/`, `raeume/` | Undo points for file changes, Teamwork rooms |
 | `gedaechtnis.json` | The AI's notes across chats |
 | `erinnerungen.json` | Saved reminders |
 

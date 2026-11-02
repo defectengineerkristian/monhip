@@ -54,6 +54,19 @@ class PlatformBasics(unittest.TestCase):
             r = subprocess.run(argv, capture_output=True, text=True, timeout=10)
             self.assertEqual(r.stdout.strip(), "hallo")
 
+    def test_data_dir(self):
+        """Daten wie bisher neben dem Programm; MONHIP_DATA (Linux-Paket) bzw. ein schreibgeschützter Programmordner
+        unter Linux lenken sie in den Benutzerordner."""
+        with mock.patch.dict(os.environ, {"MONHIP_DATA": ""}):
+            with mock.patch.object(plattform.os, "access", return_value=True):
+                self.assertEqual(plattform._data_dir(), plattform.CODE_DIR)
+            with mock.patch.object(plattform.os, "access", return_value=False), \
+                    mock.patch.dict(os.environ, {"XDG_DATA_HOME": "/tmp/xdg"}):
+                self.assertEqual(plattform._data_dir(), plattform.CODE_DIR if plattform.WINDOWS
+                                 else Path("/tmp/xdg/monhip"))
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"MONHIP_DATA": d}):
+            self.assertEqual(plattform._data_dir(), Path(d).resolve())
+
     def test_need_names_package(self):
         with mock.patch.object(plattform.shutil, "which", return_value=None):
             with self.assertRaisesRegex(OSError, r"pdftoppm fehlt – bitte installieren \(Paket poppler-utils\)"):

@@ -1,4 +1,5 @@
-"""Speichert Chats als JSON-Dateien im Ordner chats/ neben Monhip.pyw."""
+"""Speichert Chats als JSON-Dateien im Ordner chats/ des Datenordners (plattform.DATA_DIR, meist neben
+Monhip.pyw)."""
 
 from i18n import tr
 
@@ -9,7 +10,9 @@ import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
 
-CHAT_DIR = Path(__file__).resolve().parent.parent / "chats"
+import plattform
+
+CHAT_DIR = plattform.DATA_DIR / "chats"
 IMAGE_DIR = CHAT_DIR / "bilder"  # angehängte Bilder: bilder/<chat-id>/<datei> (+ <datei>.vorschau.png)
 
 

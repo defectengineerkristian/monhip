@@ -5,15 +5,15 @@ Monhip has one code base for Windows and Linux; only the installers differ.
 | Folder | Builds | Status |
 | --- | --- | --- |
 | [`linux/`](linux/) | Debian/Ubuntu package `monhip_<version>_all.deb` | ready; built for every release |
-| [`windows/`](windows/) | `Monhip-Setup.exe` (C#/.NET) | sources not in the repository yet (see its README) |
+| [`windows/`](windows/) | `Monhip-Setup.exe` (C#, .NET Framework 4.8) | ready; built for every release |
 
 ## Shared contract
 
 Both installers rely on the same few facts:
 
-- **What to ship:** `Monhip.pyw`, every `app/*.py` and `app/monhip.ico` – nothing from `tests/`, no
-  `__pycache__`, and never user data (`config.json`, `modelle/`, `server/`, `chats/`, `checkpoints/`,
-  `raeume/`, `gedaechtnis.json`, `erinnerungen.json`).
+- **What to ship:** `Monhip.pyw`, every `app/*.py` and `app/monhip.ico` – never user data. The Linux
+  package contains exactly that; the Windows installer downloads the release's source ZIP at install time
+  and takes its top-level entries (so `tests/` and `installer/` come along, which does no harm).
 - **Version:** `VERSION` in `app/monhip.py`; GitHub releases are tagged `v<VERSION>`.
 - **Data that an update must keep:** `config.json`, `chats/`, `modelle/`, `server/`, `raeume/`,
   `checkpoints/`, `gedaechtnis.json`, `erinnerungen.json` (plus the installer's own files).

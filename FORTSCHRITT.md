@@ -8,12 +8,20 @@ immer mit festen Daten (TT.MM.JJJJ).
 ---
 
 ## Seit v1.4.6
+- 02.11.2026: Quelltext des Windows-Installers zurückgewonnen (ILSpy aus der bisherigen `Monhip-Setup.exe`) –
+  `installer/windows/` (C#, .NET Framework 4.8, `Monhip-Setup.csproj`, Original-Manifest, Symbol aus
+  `app/monhip.ico`); baut mit dem .NET SDK auch unter Linux und gleicht dem Original (dieselben Methoden, alle 621
+  Texte gleich). Geändert: `checkpoints` steht auf der Schutzliste und lässt sich beim Deinstallieren mit entfernen
+  (vorher blieb er – und damit der Installationsordner – nach einer vollständigen Deinstallation stehen; Updates
+  ließen ihn schon immer in Ruhe), Versionsangaben der Datei kommen vom Release. GitHub Action
+  `.github/workflows/windows-setup.yml` baut bei jedem Release `Monhip-Setup.exe` und hängt sie samt `.sha256` an
+  (fester Name: `releases/latest/download/Monhip-Setup.exe`). Neuer Test: Jeder Datenname aus `app/` steht auf der
+  Schutzliste, in der Deinstallation und in `.gitignore`.
 - 02.11.2026: GitHub Action `.github/workflows/linux-deb.yml`: bei jedem veröffentlichten Release (oder von Hand für
   einen Tag) Tag gegen `VERSION` prüfen, Tests, `.deb` bauen, auf Ubuntu 24.04 installieren und starten, dann
   `.deb` und `.sha256` an das Release hängen. Den Windows-Installer (`Monhip-Setup.exe`, C#) zerlegt und in
-  `installer/windows/README.md` beschrieben: lädt das Quell-ZIP des Releases und übernimmt alles außer geschützten
-  Namen – `app/plattform.py` kommt also von selbst mit, angehängte Dateien stören nicht. Gefunden: `checkpoints`
-  steht nicht auf seiner Schutzliste, jedes Update löscht die Rückgängig-Punkte.
+  `installer/windows/README.md` beschrieben: lädt das Quell-ZIP des Releases und tauscht die Einträge der vorigen
+  Version aus – `app/plattform.py` kommt also von selbst mit, angehängte Dateien stören nicht.
 - 02.11.2026: Linux-Paket – `installer/linux/build-deb.sh` baut `dist/monhip_<Version>_all.deb` (nur python3 und
   dpkg-deb): Programm nach `/opt/monhip`, Starter `/usr/bin/monhip`, Menüeintrag, Symbol (PNG aus `monhip.ico`),
   Abhängigkeiten und Empfehlungen wie in der README; `postinst` übersetzt `app/` vor, `prerm` räumt die Caches weg.

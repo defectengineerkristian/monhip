@@ -1,5 +1,5 @@
-"""Baut das Linux-Paket (installer/linux/build-deb.sh) und prüft Inhalt und Steuerdaten – nur, wo dpkg-deb da ist:
-python -m unittest tests.test_installer"""
+"""Baut das Linux-Paket (installer/linux/build-deb.sh) und prüft Inhalt und Steuerdaten – nur, wo dpkg-deb da ist –,
+und ob der Windows-Installer alle Daten von Monhip kennt: python -m unittest tests.test_installer"""
 
 import os
 import re
@@ -56,6 +56,40 @@ class DebPackage(unittest.TestCase):
         starter = (REPO / "installer" / "linux" / "monhip.sh").read_text(encoding="utf-8")
         self.assertIn("MONHIP_DATA", starter)
         self.assertIn("/opt/monhip/Monhip.pyw", starter)
+
+
+def app_data_names() -> set[str]:
+    """Was Monhip in seinem Datenordner anlegt – aus dem Code gelesen (DATA_DIR / "x", APP_DIR / "x", app_dir / "x")."""
+    names = set()
+    for path in (REPO / "app").glob("*.py"):
+        names |= set(re.findall(r'(?:DATA_DIR|APP_DIR|app_dir)\s*/\s*"([^"]+)"', path.read_text(encoding="utf-8")))
+    return names
+
+
+class WindowsInstallerData(unittest.TestCase):
+    """Neue Datenordner von Monhip muss auch der Windows-Installer kennen: sonst ersetzt ein Update sie womöglich
+    (Schutzliste) oder die Deinstallation lässt sie stehen (Bereiche)."""
+
+    def setUp(self):
+        src = REPO / "installer" / "windows" / "src"
+        const = (src / "Const.cs").read_text(encoding="utf-8")
+        self.protected = set(re.findall(r'"([^"]+)"', re.search(r"Protected = new string\[\]\s*\{(.*?)\}", const,
+                                                                re.S).group(1)))
+        uninstall = (src / "Uninstall.cs").read_text(encoding="utf-8")
+        self.parts = set(re.findall(r'"([^"]+)"', " ".join(re.findall(r"Data\((.*?)\)\);", uninstall))))
+
+    def test_names_found_in_app(self):
+        self.assertTrue({"config.json", "chats", "checkpoints", "modelle", "server"} <= app_data_names())
+
+    def test_every_data_name_is_protected(self):
+        self.assertEqual(app_data_names() - self.protected, set())
+
+    def test_every_data_name_can_be_uninstalled(self):
+        self.assertEqual(app_data_names() - self.parts, set())
+
+    def test_every_data_name_is_ignored_by_git(self):
+        ignored = (REPO / ".gitignore").read_text(encoding="utf-8").split()
+        self.assertEqual({n for n in app_data_names() if f"/{n}" not in ignored and f"/{n}/" not in ignored}, set())
 
 
 if __name__ == "__main__":

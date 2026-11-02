@@ -1,6 +1,8 @@
 __pycache__/
 *.pyc
 /dist/
+installer/windows/bin/
+installer/windows/obj/
 
 # Nutzungsdaten (siehe README) – nie mit hochladen
 /config.json

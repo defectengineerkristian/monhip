@@ -191,7 +191,7 @@ environment variable `MONHIP_DATA` (the Linux package uses `~/.local/share/monhi
 | --- | --- |
 | `Monhip.pyw` | Entry point for starting the application |
 | `app/` | Interface, model integration, agent tools, and other Python modules |
-| `installer/` | Linux package and (later) the Windows installer – see [installer](installer/README.md) |
+| `installer/` | Linux package and Windows installer (`Monhip-Setup.exe`) – see [installer](installer/README.md) |
 | `tests/` | Automated tests (`python -m unittest discover -s tests`) |
 | `config.json` | Application settings |
 | `modelle/` | Local GGUF models and speech recognition models |

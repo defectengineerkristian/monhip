@@ -19,6 +19,7 @@ import urllib.request
 from pathlib import Path
 
 import images
+import plattform
 
 
 # ---------------------------------------------------------------- Modelle
@@ -52,10 +53,11 @@ _job = None  # Windows-Job-Objekt: alle llama-server-Prozesse enden mit Monhip
 
 def _end_with_app(proc: subprocess.Popen) -> bool:
     """proc an ein Job-Objekt mit KILL_ON_JOB_CLOSE hängen: Endet das Programm (auch durch Absturz), beendet
-    Windows den llama-server mit – sonst bliebe er mit vielen GB im Speicher."""
+    Windows den llama-server mit – sonst bliebe er mit vielen GB im Speicher. Unter Linux erledigt das schon der
+    Start mit plattform.popen(bound=True); hier nur, ob das geklappt hat."""
     global _job
     if os.name != "nt":
-        return False
+        return bool(getattr(proc, "monhip_bound", False))
     from ctypes import wintypes
 
     class BasicLimits(ctypes.Structure):
@@ -148,7 +150,7 @@ class LlamaServer:
             port = _free_port()
             args = [server["exe"], "-m", str(model), "--host", "127.0.0.1", "--port", str(port), "--jinja",
                     "--no-webui", "-c", str(ctx)]
-            if Path(server["exe"]).with_name("llama-fit-params.exe").is_file():  # neuere llama.cpp (kennen -fitt)
+            if Path(server["exe"]).with_name(plattform.exe("llama-fit-params")).is_file():  # neuere (kennen -fitt)
                 # nur die Verteilung der Schichten auf die Grafikkarte: Reserve inkl. Bildverständnis – ein
                 # angegebenes -c ändert llama.cpp dabei nie
                 args += ["-fitt", str(fit_margin(mmproj))]
@@ -159,16 +161,18 @@ class LlamaServer:
                 if image_tokens and "--image-max-tokens" not in extra:
                     args += ["--image-max-tokens", str(image_tokens)]
             if extra.strip():
-                args += shlex.split(extra, posix=False)
+                args += shlex.split(extra, posix=not plattform.WINDOWS)
 
             env = os.environ.copy()
             exe_dir = str(Path(server["exe"]).parent)
             env["PATH"] = os.pathsep.join([exe_dir, env.get("PATH", "")])
+            if not plattform.WINDOWS:  # die .so-Dateien liegen neben llama-server (Windows sucht DLLs dort selbst)
+                env["LD_LIBRARY_PATH"] = os.pathsep.join(p for p in (exe_dir, env.get("LD_LIBRARY_PATH")) if p)
 
-            self.log_cb("> " + subprocess.list2cmdline(args) + "\n")
-            proc = subprocess.Popen(
-                args, env=env, cwd=exe_dir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            self.log_cb("> " + (subprocess.list2cmdline(args) if plattform.WINDOWS else shlex.join(args)) + "\n")
+            proc = plattform.popen(
+                args, bound=True, env=env, cwd=exe_dir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL)
             with self._lock:
                 self.proc, self.port = proc, port
         if not _end_with_app(proc):

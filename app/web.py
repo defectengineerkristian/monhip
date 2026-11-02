@@ -262,7 +262,16 @@ def download(url: str, target, max_bytes: int) -> tuple[int, str, str]:
 
 def mark_from_internet(path, url: str = ""):
     """Windows-Markierung „aus dem Internet“ (Zone.Identifier): SmartScreen und Office warnen dann beim Öffnen –
-    wie bei Downloads aus dem Browser. Auf FAT/exFAT-Laufwerken nicht möglich (dann ohne)."""
+    wie bei Downloads aus dem Browser. Auf FAT/exFAT-Laufwerken nicht möglich (dann ohne). Unter Linux gibt es
+    das nicht (dort entstünde nur eine Datei „…:Zone.Identifier“); die Herkunft steht wie bei Browsern im
+    erweiterten Attribut user.xdg.origin.url."""
+    if os.name != "nt":
+        try:
+            if url:
+                os.setxattr(path, "user.xdg.origin.url", url.encode("utf-8", "replace"))
+        except (OSError, AttributeError):
+            pass
+        return
     try:
         with open(f"{path}:Zone.Identifier", "wb") as f:
             host = f"HostUrl={url}\r\n".encode("utf-8", "replace") if url else b""

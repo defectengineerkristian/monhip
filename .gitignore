@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+
+# Nutzungsdaten (siehe README) – nie mit hochladen
+/config.json
+/modelle/
+/server/
+/chats/
+/gedaechtnis.json
+/erinnerungen.json

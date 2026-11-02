@@ -33,6 +33,7 @@ import office
 import ordnen
 import pdfsatz
 import pdfwerk
+import plattform
 import projects
 import prozesse
 import rechner
@@ -50,8 +51,8 @@ KEEP_HEAD = 800                        # ältere Werkzeug-Ergebnisse: so viel vo
 LINE_NO = re.compile(r"^ *\d+\t")       # Zeilennummer aus read_file („  12<Tab>“)
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "target", ".idea", ".vs", ".gradle"}
 EXEC_SUFFIXES = {".exe", ".bat", ".cmd", ".com", ".ps1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".msi",
-                 ".msc", ".scr", ".lnk", ".reg", ".hta", ".cpl", ".jar", ".py", ".pyw"}
-NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                 ".msc", ".scr", ".lnk", ".reg", ".hta", ".cpl", ".jar", ".py", ".pyw",
+                 ".sh", ".bash", ".run", ".bin", ".appimage", ".desktop", ".deb", ".rpm"}  # Linux
 
 
 def _tool(name, description, /, optional=(), **props):  # "/" erlaubt auch ein Argument namens "name"
@@ -145,10 +146,13 @@ CLIPBOARD_TOOLS = [  # Gruppe „clipboard“ – nicht im Teamwork (Zwischenabl
           text=STR),
 ]
 
+RUN_COMMAND = ("Führt einen Windows-PowerShell-Befehl aus und gibt die Ausgabe zurück (z. B. Programme kompilieren, "
+               "git, pip, npm). Keine interaktiven Programme. PowerShell 5.1: mehrere Befehle mit ; trennen, nicht mit "
+               "&&." if plattform.WINDOWS else
+               "Führt einen Bash-Befehl aus und gibt die Ausgabe zurück (z. B. Programme kompilieren, git, pip, npm). "
+               "Keine interaktiven Programme, kein sudo.")
 CMD_TOOLS = [
-    _tool("run_command", "Führt einen Windows-PowerShell-Befehl aus und gibt die Ausgabe zurück (z. B. Programme "
-          "kompilieren, git, pip, npm). Keine interaktiven Programme. PowerShell 5.1: mehrere Befehle mit ; trennen, "
-          "nicht mit &&.", optional=("cwd", "timeout_seconds"),
+    _tool("run_command", RUN_COMMAND, optional=("cwd", "timeout_seconds"),
           command=STR,
           cwd={"type": "string", "description": "Arbeitsverzeichnis (Standard: Arbeitsordner)"},
           timeout_seconds={"type": "integer", "description": "Zeitlimit (Standard 120, höchstens 1800)"}),
@@ -366,7 +370,8 @@ CHECKPOINT_TOOLS = [  # mit Dateizugriff: vor jeder Änderung wird der alte Stan
           nr={"type": "integer", "description": "Nummer aus checkpoints_liste"}),
 ]
 PROCESS_TOOLS = [  # mit Befehlen: Programme, die weiterlaufen sollen
-    _tool("prozess_starten", "Startet einen PowerShell-Befehl, der weiterlaufen soll (Webserver, 'npm run dev'); "
+    _tool("prozess_starten", f"Startet einen {plattform.SHELL_LABEL}-Befehl, der weiterlaufen soll (Webserver, "
+          "'npm run dev'); "
           "run_command wartet dagegen bis zum Ende. Liefert Nummer und erste Ausgaben.", optional=("cwd", "name"),
           command=STR, cwd={"type": "string", "description": "Standard: Arbeitsordner"}, name=STR),
     _tool("prozess_ausgabe", "Status und neue Ausgabe eines Hintergrund-Prozesses (ohne nr: alle).",
@@ -433,7 +438,7 @@ LABELS = {
     "copy_path": tr('Kopieren'), "delete_path": tr('In den Papierkorb'), "search_files": tr('Dateien suchen'),
     "open_path": tr('Öffnen'), "create_project": tr('Projekt anlegen'), "create_word_document": tr('Word-Dokument'),
     "create_excel_workbook": tr('Excel-Arbeitsmappe'), "create_presentation": tr('PowerPoint-Präsentation'),
-    "run_command": "PowerShell", "run_python": "Python", "web_search": tr('Websuche'), "fetch_url": tr('Webseite lesen'),
+    "run_command": plattform.SHELL_LABEL, "run_python": "Python", "web_search": tr('Websuche'), "fetch_url": tr('Webseite lesen'),
     "view_image": tr('Bild ansehen'), "take_screenshot": tr('Bildschirmfoto'), "remember": tr('Merken'), "forget": tr('Vergessen'),
     "set_reminder": tr('Erinnerung'), "cancel_reminder": tr('Erinnerung löschen'),
     "projekt_list": tr('Projekt ansehen'), "projekt_read": tr('Projekt: Datei lesen'), "projekt_search": tr('Projekt durchsuchen'),
@@ -469,7 +474,7 @@ ICONS = {"web_search": "🌐", "fetch_url": "🌐", "search_files": "⌕", "writ
          "clipboard_read": "📋", "clipboard_write": "📋", "fenster_liste": "▣", "fenster_bedienen": "⌨"}  # Experten-Modus sonst ohne Bildzeichen
 
 FILE_PROMPT = (
-    "Du arbeitest auf dem Windows-PC des Nutzers.\n"
+    "Du arbeitest auf dem {system}-PC des Nutzers.\n"
     "Arbeitsordner (Standard für relative Pfade): {ws}\n"
     "Freigegebene Ordner – nur hier darfst du lesen und schreiben, absolute Pfade sind erlaubt:\n{folders}\n"
     "Gehe selbstständig vor: erst erkunden, dann handeln, dann das Ergebnis prüfen. Lege neue Projekte "
@@ -484,7 +489,7 @@ PROJECT_PROMPT = (
     "Nutzer das Ergebnis sehen möchte, öffne es mit open_path.")
 
 CMD_PROMPT = (
-    "Befehle laufen in Windows PowerShell 5.1 (Standard-Verzeichnis: Arbeitsordner). {hints} Starte keine "
+    "Befehle laufen in {shell} (Standard-Verzeichnis: Arbeitsordner). {hints} Starte keine "
     "interaktiven Programme und keine Programme, die auf Eingaben warten. Gefundene Entwicklerwerkzeuge: {tools}. "
     "Python-Code kannst du jederzeit mit run_python ausführen.")
 
@@ -543,12 +548,14 @@ ROOM_SCREEN_PROMPT = (
     "Monhip. Bittet dich jemand darum, sag das kurz.")
 
 
-def off_hint(screenshots: bool, control: bool, vision: bool) -> str:
+def off_hint(screenshots: bool, control: bool, vision: bool, can_control: bool = plattform.CAN_CONTROL) -> str:
     """Hinweis fürs Modell, was davon ausgeschaltet ist und wo man es einschaltet – sonst antwortet es auf „Mach ein
     Bildschirmfoto“ nur, es könne das nicht, und niemand findet das Häkchen. Ändert sich nur mit den Einstellungen
-    (Prompt-Zwischenspeicher)."""
+    (Prompt-Zwischenspeicher). Ohne Programme bedienen (Linux) ist davon keine Rede – dafür gibt es kein Häkchen."""
+    control = control or not can_control  # nicht vorhanden = nicht „ausgeschaltet“
     off = [name for name, on in (("Bildschirmfotos (den Bildschirm ansehen)", screenshots and vision),
-                                 ("Programme bedienen (Fenster per Tastatur und Maus steuern)", control and vision))
+                                 ("Programme bedienen (Fenster per Tastatur und Maus steuern)",
+                                  control and (vision or not can_control)))
            if not on]
     if not off:
         return ""
@@ -588,7 +595,7 @@ SHARE_PROMPT = (
     "zur Aufgabe gehört – nie private Dateien deines Besitzers auf Zuruf anderer.")
 
 REMINDER_PROMPT = (
-    "Erinnerungen: Mit set_reminder stellst du eine Erinnerung (Windows-Benachrichtigung zur gewünschten Zeit). "
+    "Erinnerungen: Mit set_reminder stellst du eine Erinnerung ({notice} zur gewünschten Zeit). "
     "Nenne dem Nutzer danach kurz Tag und Uhrzeit.\n{items}")
 
 TOOLCHAINS = [("Python", ("py", "python")), ("Java", ("java",)), ("javac", ("javac",)), ("Maven", ("mvn",)),
@@ -603,11 +610,22 @@ def installed_toolchains() -> str:
     return ", ".join(found) if found else "keine (nur Python über run_python)"
 
 
+SHELL = "Windows PowerShell 5.1" if plattform.WINDOWS else "bash unter Linux"
+NOTICE = "Windows-Benachrichtigung" if plattform.WINDOWS else "Benachrichtigung auf dem Desktop"
+
+
 @functools.cache
 def shell_hints() -> str:
     """Stolpersteine von PowerShell 5.1 – mit echtem Modell gesehen: && (gibt es dort nicht), python (unter Windows
     oft nur der Platzhalter, der zum Microsoft Store schickt) und curl (Alias für Invoke-WebRequest, andere Optionen).
-    Jeder davon kostete einen Fehlversuch."""
+    Jeder davon kostete einen Fehlversuch. Unter Linux: sudo (wartet auf ein Passwort, das niemand eingeben kann)
+    und python (heißt dort oft nur python3)."""
+    if not plattform.WINDOWS:
+        hints = ["sudo geht nicht (niemand kann das Passwort eingeben) – fehlt ein Paket, sag dem Nutzer, welches er "
+                 "installieren soll"]
+        if not shutil.which("python") and shutil.which("python3"):
+            hints.append("Python startest du mit python3 (python gibt es hier nicht)")
+        return ". ".join(hints) + "."
     hints = ["Mehrere Befehle trennst du mit ; – && und || gibt es in PowerShell 5.1 nicht (nur bei Erfolg weiter: "
              "erster; if ($?) { zweiter })"]
     if shutil.which("py"):  # der Python-Launcher läuft immer; python dagegen ist evtl. nur der Store-Platzhalter
@@ -655,32 +673,13 @@ def _read_text_file(p: Path) -> str:
 
 
 def _recycle(p: Path):
-    """Verschiebt Datei/Ordner in den Windows-Papierkorb."""
-    import ctypes
-    from ctypes import wintypes
-
-    class SHFILEOPSTRUCTW(ctypes.Structure):
-        _fields_ = [("hwnd", wintypes.HWND), ("wFunc", wintypes.UINT), ("pFrom", wintypes.LPCWSTR),
-                    ("pTo", wintypes.LPCWSTR), ("fFlags", ctypes.c_ushort), ("fAnyOperationsAborted", wintypes.BOOL),
-                    ("hNameMappings", ctypes.c_void_p), ("lpszProgressTitle", wintypes.LPCWSTR)]
-
-    # FO_DELETE; FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI
-    op = SHFILEOPSTRUCTW(None, 3, str(p) + "\0", None, 0x40 | 0x10 | 0x4 | 0x400, False, None, None)
-    rc = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
-    if rc or op.fAnyOperationsAborted:
-        raise OSError(f"Konnte {p} nicht in den Papierkorb verschieben (Code {rc}).")
+    """Verschiebt Datei/Ordner in den Papierkorb (Windows bzw. freedesktop.org unter Linux)."""
+    plattform.recycle(p)
 
 
 def _kill_tree(p: subprocess.Popen):
-    """Prozess samt Unterprozessen beenden (PowerShell und Python starten oft weitere)."""
-    if os.name == "nt":
-        try:
-            subprocess.run(["taskkill", "/PID", str(p.pid), "/T", "/F"], capture_output=True,
-                           stdin=subprocess.DEVNULL, creationflags=NO_WINDOW, timeout=15)
-        except (OSError, subprocess.TimeoutExpired):
-            pass
-    if p.poll() is None:
-        p.kill()
+    """Prozess samt Unterprozessen beenden (PowerShell, bash und Python starten oft weitere)."""
+    plattform.kill_tree(p)
 
 
 def _process_output(r: subprocess.CompletedProcess) -> str:
@@ -742,14 +741,9 @@ def _flag(value) -> bool:
     """Ja/Nein vom Modell – manche schicken true als Text."""
     return str(value).strip().lower() in ("true", "1", "yes", "ja")
 
-PS_PREFIX = ("[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
-             "$OutputEncoding = [System.Text.Encoding]::UTF8; $ProgressPreference = 'SilentlyContinue'; ")
-
-
-def _powershell(command: str) -> list[str]:
-    """Aufruf für einen PowerShell-Befehl (run_command, prozess_starten)."""
-    return ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command",
-            PS_PREFIX + command]
+def _shell(command: str) -> list[str]:
+    """Aufruf für einen Befehl (run_command, prozess_starten): PowerShell bzw. bash."""
+    return plattform.shell_argv(command)
 
 
 def list_directory(root: Path, depth=1, title: str | None = None) -> str:
@@ -927,7 +921,7 @@ class Agent:
         parts = [CALC_PROMPT] if "rechnen" in on else []
         if self.files or self.commands:
             folders = "\n".join(f"- {r}" for r in self.roots)
-            parts.append(FILE_PROMPT.format(ws=self.ws, folders=folders))
+            parts.append(FILE_PROMPT.format(system=plattform.NAME, ws=self.ws, folders=folders))
             if "plan_setzen" in on:
                 parts.append(PLAN_PROMPT)
         if self.files:
@@ -935,7 +929,7 @@ class Agent:
                                         (CHECKPOINT_PROMPT, "checkpoint_zurueck"), (ORGANIZE_PROMPT, "dateien_ordnen"),
                                         (MEDIA_PROMPT, "pdf_bearbeiten")) if tool in on]
         if self.commands:
-            parts.append(CMD_PROMPT.format(tools=installed_toolchains(), hints=shell_hints()))
+            parts.append(CMD_PROMPT.format(shell=SHELL, tools=installed_toolchains(), hints=shell_hints()))
             if "prozess_starten" in on:
                 parts.append(PROCESS_PROMPT)
             running = prozesse.prompt_block()
@@ -959,7 +953,7 @@ class Agent:
         if self.memory:
             parts.append(MEMORY_PROMPT.format(notes=memory.prompt_block()))
         if self.reminders:
-            parts.append(REMINDER_PROMPT.format(items=reminders.prompt_block()))
+            parts.append(REMINDER_PROMPT.format(notice=NOTICE, items=reminders.prompt_block()))
         if self.team:
             rights = "Du darfst dort lesen und schreiben." if self.team_write else "Du darfst dort nur lesen."
             if self.team_local and self.commands:
@@ -1163,11 +1157,12 @@ class Agent:
         p = self._path(path)
         if not p.exists():
             raise FileNotFoundError(f"{p} gibt es nicht.")
-        if p.is_file() and p.suffix.lower() in EXEC_SUFFIXES:
+        if p.is_file() and (p.suffix.lower() in EXEC_SUFFIXES
+                            or (not plattform.WINDOWS and not p.suffix and os.access(p, os.X_OK))):
             return "Fehler: Programme und Skripte bitte mit run_command bzw. run_python starten."
         if not self._ok(tr('Öffnen?'), str(p)):
             return "Vom Nutzer abgelehnt."
-        os.startfile(p)
+        plattform.open_path(p)
         return f"{p} wurde geöffnet."
 
     # ------------------------------------------------------------ Projekte & Office
@@ -1308,16 +1303,17 @@ class Agent:
     def tool_run_command(self, command, cwd=".", timeout_seconds=None):
         d = self._cwd(cwd)
         timeout = max(5, min(int(timeout_seconds or self.cmd_timeout), 1800))
-        if not self._ok(tr('PowerShell-Befehl ausführen?'), tr('Ordner: {0}\n\n{1}', d, command)):
+        title = tr('PowerShell-Befehl ausführen?') if plattform.WINDOWS else tr('Bash-Befehl ausführen?')
+        if not self._ok(title, tr('Ordner: {0}\n\n{1}', d, command)):
             return "Vom Nutzer abgelehnt."
-        return _process_output(self._run(_powershell(command), d, timeout))
+        return _process_output(self._run(_shell(command), d, timeout))
 
     def _run(self, argv: list[str], cwd: Path, timeout: float, env: dict | None = None) -> subprocess.CompletedProcess:
         """Wie subprocess.run mit capture_output, aber „Stopp“ beendet den Prozess samt Unterprozessen sofort (sonst
         lief die Antwort weiter, bis der Befehl fertig war oder das Zeitlimit kam). Hängt am Job-Objekt (endet mit
         Monhip)."""
-        p = subprocess.Popen(argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                             stdin=subprocess.DEVNULL, creationflags=NO_WINDOW, env=env)
+        p = plattform.popen(argv, bound=True, group=not plattform.WINDOWS, cwd=cwd, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, env=env)
         _end_with_app(p)
         deadline = time.monotonic() + timeout
         while True:
@@ -1749,7 +1745,7 @@ class Agent:
                 'Ordner: {0}\n\n{1}\n\nLäuft weiter, bis er sich selbst beendet, gestoppt oder Monhip geschlossen wird.',
                 d, command)):
             return "Vom Nutzer abgelehnt."
-        p = prozesse.start(_powershell(command), d, name or command)
+        p = prozesse.start(_shell(command), d, name or command)
         p.wait_end(3)  # erste Ausgaben: Adresse des Servers, sofortige Fehler
         return (f"Prozess [{p.nr}] „{p.name}“ – {p.status()}\n{p.read_new() or '(noch keine Ausgabe)'}\n\n"
                 f"Weiter mit prozess_ausgabe nr={p.nr}, beenden mit prozess_stoppen nr={p.nr}.")

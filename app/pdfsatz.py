@@ -1,6 +1,7 @@
 """PDF aus Markdown erzeugen (Werkzeug create_pdf) – in reinem Python, ohne Word.
 
-Schriften von Windows (Segoe UI, Consolas; fehlende Zeichen aus Segoe UI Symbol) werden eingebettet, aber nur mit
+Schriften von Windows (Segoe UI, Consolas; fehlende Zeichen aus Segoe UI Symbol), unter Linux Noto Sans, Liberation
+oder DejaVu (fehlende Zeichen aus DejaVu Sans), werden eingebettet, aber nur mit
 den benutzten Zeichen (Teilmenge): volle Unicode-Unterstützung bei kleinen Dateien. Ablauf: TrueType lesen (_Font)
 → Markdown in Blöcke (wie office.write_docx) → Zeilen nach echten Zeichenbreiten umbrechen (_Doc) → Seiten →
 PDF-Objekte (Type0/CIDFontType2 mit Identity-H, ToUnicode – Text lässt sich kopieren und durchsuchen).
@@ -8,7 +9,6 @@ PDF-Objekte (Type0/CIDFontType2 mit Identity-H, ToUnicode – Text lässt sich k
 
 import hashlib
 import math
-import os
 import re
 import struct
 import urllib.parse
@@ -16,13 +16,21 @@ import zlib
 from datetime import datetime
 from pathlib import Path
 
+import plattform
 from markdown_lite import ListLevels, alignment, classify, closes_fence, inline, is_separator_row, plain, split_row
 
-FONTS_DIR = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
-FACES = {  # Schnitt → Dateien (erste vorhandene gewinnt)
+FACES = {  # Schnitt → Dateien (erste vorhandene gewinnt; plattform.font_file sucht sie)
     "regular": ("segoeui.ttf", "arial.ttf"), "bold": ("segoeuib.ttf", "arialbd.ttf"),
     "italic": ("segoeuii.ttf", "ariali.ttf"), "bolditalic": ("segoeuiz.ttf", "arialbi.ttf"),
     "mono": ("consola.ttf", "cour.ttf"), "symbol": ("seguisym.ttf",),
+} if plattform.WINDOWS else {  # Linux: nur TrueType (glyf) – Noto, Liberation, DejaVu, FreeFont
+    "regular": ("NotoSans-Regular.ttf", "LiberationSans-Regular.ttf", "DejaVuSans.ttf", "FreeSans.ttf"),
+    "bold": ("NotoSans-Bold.ttf", "LiberationSans-Bold.ttf", "DejaVuSans-Bold.ttf", "FreeSansBold.ttf"),
+    "italic": ("NotoSans-Italic.ttf", "LiberationSans-Italic.ttf", "DejaVuSans-Oblique.ttf", "FreeSansOblique.ttf"),
+    "bolditalic": ("NotoSans-BoldItalic.ttf", "LiberationSans-BoldItalic.ttf", "DejaVuSans-BoldOblique.ttf",
+                   "FreeSansBoldOblique.ttf"),
+    "mono": ("NotoSansMono-Regular.ttf", "LiberationMono-Regular.ttf", "DejaVuSansMono.ttf", "FreeMono.ttf"),
+    "symbol": ("DejaVuSans.ttf", "NotoSansSymbols2-Regular.ttf", "FreeSerif.ttf"),
 }
 PAGE_W, PAGE_H = 595.28, 841.89          # A4 in Punkt
 LEFT, RIGHT, TOP, BOTTOM = 62.4, 62.4, 62.4, 68.0
@@ -204,13 +212,15 @@ class _Doc:
         if face not in self.fonts:
             self.fonts[face] = None
             for name in FACES[face]:
-                if (FONTS_DIR / name).is_file():
-                    self.fonts[face] = _Font(FONTS_DIR / name)
+                path = plattform.font_file(name)
+                if path:
+                    self.fonts[face] = _Font(path)
                     break
             if self.fonts[face] is None and face != "symbol" and face != "regular":
                 self.fonts[face] = self.font("regular")
             if self.fonts[face] is None and face == "regular":
-                raise PdfError("Keine passende Schrift gefunden (Segoe UI oder Arial).")
+                raise PdfError("Keine passende Schrift gefunden (Segoe UI oder Arial)." if plattform.WINDOWS else
+                               "Keine passende Schrift gefunden (Noto Sans, Liberation Sans oder DejaVu Sans).")
         return self.fonts[face]
 
     def shape(self, text: str, face: str) -> list[tuple[_Font, list[int], int]]:

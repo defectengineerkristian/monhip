@@ -15,9 +15,11 @@ from tkinter import font as tkfont
 from tkinter import ttk
 
 import icons
+import plattform
 
-# Schrift der Oberfläche – eine Stelle für alle Teile (chatview, widgets, dialogs … übernehmen FAMILY)
-FAMILY = "Segoe UI"
+# Schrift der Oberfläche – eine Stelle für alle Teile (chatview, widgets, dialogs … übernehmen FAMILY);
+# unter Linux die Schrift des Desktops
+FAMILY = plattform.UI_FONT
 FONT = (FAMILY, 9)
 
 THEMES = {

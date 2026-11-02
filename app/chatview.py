@@ -21,11 +21,12 @@ from tkinter import font as tkfont
 from tkinter import ttk
 
 import icons
+import plattform
 from markdown_lite import ListLevels, classify, closes_fence, inline, is_separator_row, plain, split_row
 from themes import FAMILY, mix_hex
 from widgets import PopupMenu, precise_timer, rounded
 
-MONO = "Consolas"
+MONO = plattform.MONO_FONT
 MAX_COLUMN = 820          # maximale Breite der Chatspalte (Pixel bei 100 %)
 PULSE_MS = 40
 SCROLL_MS = 8             # weiches Scrollen: Abstand der Schritte (mit genauem Zeitgeber, ~120 Bilder/s)
@@ -1664,4 +1665,7 @@ class ChatView:
     @staticmethod
     def _open_file(path: str):
         if path and os.path.exists(path):
-            os.startfile(path)
+            try:
+                plattform.open_path(path)
+            except OSError:
+                pass

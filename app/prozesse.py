@@ -8,10 +8,9 @@ import subprocess
 import threading
 import time
 
+import plattform
 from backend import _end_with_app
 
-NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-NEW_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 MAX_RUNNING = 5
 KEEP_BYTES = 200_000    # so viel Ausgabe je Prozess bleibt im Speicher (das Ende)
 READ_CHARS = 4000       # prozess_ausgabe: höchstens so viel auf einmal (das Neueste)
@@ -32,9 +31,11 @@ class Prozess:
         self.nr, self.name, self.cwd = nr, name, str(cwd)
         self.started = time.time()
         env = dict(os.environ, PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")  # Python-Ausgabe sofort sehen
-        self.proc = subprocess.Popen(argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                     stdin=subprocess.DEVNULL, creationflags=NO_WINDOW | NEW_GROUP, env=env)
-        _end_with_app(self.proc)  # Job-Objekt: endet mit Monhip samt Unterprozessen, auch nach einem Absturz
+        # eigene Prozessgruppe (stop beendet auch die Unterprozesse); endet mit Monhip, auch nach einem Absturz –
+        # unter Windows samt Unterprozessen (Job-Objekt), unter Linux der Befehl selbst (bound)
+        self.proc = plattform.popen(argv, bound=True, group=True, cwd=cwd, stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env)
+        _end_with_app(self.proc)
         self._buf = bytearray()
         self._dropped = 0       # so viele Bytes vom Anfang sind schon verworfen
         self._read = 0          # bis hierher hat das Modell gelesen (absolut)
@@ -89,11 +90,7 @@ class Prozess:
 
     def stop(self):
         if self.running():
-            if os.name == "nt":  # samt allen Programmen, die der Befehl gestartet hat (z. B. node unter npm)
-                subprocess.run(["taskkill", "/PID", str(self.proc.pid), "/T", "/F"], capture_output=True,
-                               stdin=subprocess.DEVNULL, creationflags=NO_WINDOW, timeout=15)
-            else:
-                self.proc.kill()
+            plattform.kill_tree(self.proc)  # samt allen Programmen, die der Befehl gestartet hat (node unter npm)
             try:
                 self.proc.wait(5)
             except subprocess.TimeoutExpired:

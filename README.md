@@ -6,7 +6,7 @@ where people and their local AI assistants can collaborate.
 
 Language models run on your own computer in GGUF format using
 [llama.cpp](https://github.com/ggml-org/llama.cpp). The interface is written in Python with Tkinter
-and is primarily in German. The current feature set is geared toward Windows.
+and is primarily in German. Monhip runs on Windows and Linux; see [Linux](#linux) for the differences.
 
 ## Features
 
@@ -44,7 +44,8 @@ Expert mode makes an entire document folder available as a knowledge source for 
 - pause and resume an analysis, and reanalyze changed files.
 
 Scanned PDFs can be read page by page using a suitable model's vision capabilities.
-The PDF rendering required for this uses Windows features. Results are stored separately
+The PDF rendering required for this uses Windows features (on Linux: `pdftoppm` from poppler-utils).
+Results are stored separately
 under `chats/experten/`; the source documents remain unchanged.
 
 ### Use the AI as an agent
@@ -55,7 +56,7 @@ a text response:
 - read, search, and edit files and folders in shared directories;
 - create Word documents, Excel spreadsheets, and PowerPoint presentations;
 - create coding projects from templates and work with existing development tools;
-- run PowerShell and Python commands, provided this feature is enabled;
+- run PowerShell (Windows) or Bash (Linux) and Python commands, provided this feature is enabled;
 - search the web and retrieve webpages as text;
 - save notes as memory across chats and create reminders.
 
@@ -71,7 +72,8 @@ your own API key.
 
 [whisper.cpp](https://github.com/ggml-org/whisper.cpp) lets you transcribe microphone recordings
 and audio files locally. The application can download the required program and a
-speech recognition model. Microphone recording uses Windows interfaces.
+speech recognition model. Microphone recording uses Windows interfaces (on Linux: PipeWire, PulseAudio
+or ALSA). On Linux, whisper.cpp is not available as a ready-made download – see [Linux](#linux).
 
 ### Collaborate as a team
 
@@ -90,11 +92,10 @@ and requires a working network connection to that computer.
 
 ## Requirements
 
-- **Windows** for the intended full desktop feature set. Parts of the interface and document
-  processing can run on other operating systems; however, downloaders, microphone recording,
-  image processing, and other integrations use Windows technology.
-- **Python with Tkinter**, for example Python 3.12, to run from source.
-  The Python code uses the standard library; separate pip packages are not currently declared.
+- **Windows 10/11 or Linux** (x64 or arm64). On Linux, a few features need common system packages;
+  see [Linux](#linux).
+- **Python 3.12 or newer with Tkinter** to run from source. On Windows the Python code uses only
+  the standard library; on Linux, Pillow is used for images.
 - **A GGUF language model and llama.cpp** for AI responses. Model files are not included
   in the repository. RAM usage, GPU memory usage, and speed depend on the model
   and settings.
@@ -122,6 +123,43 @@ and requires a working network connection to that computer.
 Model inference runs locally. Downloads, web search, and page retrieval require internet
 access; Teamwork mode transfers shared content to the participating computers.
 
+## Linux
+
+Monhip uses the same code on both systems; everything that differs is collected in `app/plattform.py`
+and in Linux branches of the affected modules. On Linux, Monhip relies on common system programs.
+On Debian and Ubuntu, this installs all of them:
+
+```sh
+sudo apt install python3 python3-tk python3-pil xdg-utils poppler-utils libnotify-bin \
+    xclip wl-clipboard tkdnd pipewire-bin alsa-utils
+```
+
+| Package | Used for |
+| --- | --- |
+| `python3-tk` | the interface (Tkinter) |
+| `python3-pil` (Pillow) | image previews, images from the clipboard, `bilder_bearbeiten`, screenshots on X11 |
+| `xdg-utils` | opening files and folders (`xdg-open`) |
+| `poppler-utils` | scanned PDFs in expert mode (`pdftoppm`, `pdfinfo`) |
+| `libnotify-bin` | reminders as desktop notifications (`notify-send`) |
+| `xclip` / `wl-clipboard` | clipboard for the AI tools and for pasting files and images (X11 / Wayland) |
+| `tkdnd` | drag & drop of files onto the window (optional) |
+| `pipewire-bin` or `alsa-utils` | microphone recording (`pw-record`, `parecord` or `arecord`) |
+
+Other distributions have packages with similar names. Additional notes:
+
+- **llama.cpp** is downloaded as on Windows (the `ubuntu` builds: CPU, Vulkan or CUDA, depending on the
+  graphics card). A `llama-server` installed elsewhere on the system is found automatically.
+- **whisper.cpp** is not offered as a ready-made Linux program. Install `whisper-cli` with your package
+  manager or build it from [source](https://github.com/ggml-org/whisper.cpp); Monhip finds it in `PATH`
+  and downloads the speech recognition model itself.
+- **Screenshots** use `grim`, `gnome-screenshot` or `spectacle` on Wayland, and Pillow, ImageMagick
+  (`import`), `scrot` or `maim` on X11.
+- **Commands** run in Bash instead of PowerShell. `sudo` is not possible because nobody could enter the
+  password.
+- **Operating program windows** (keyboard and mouse control) is only available on Windows; the option
+  is hidden on Linux.
+- Deleted files go to the desktop trash (`gio trash`, or `~/.local/share/Trash` directly).
+
 ## Interface language
 
 Since version 1.3, you can choose between **Deutsch** and **English** under
@@ -130,7 +168,7 @@ the next time you start Monhip.
 
 On first launch without a saved language choice, Monhip automatically detects the system language:
 German systems use the German interface; English and all other system languages use English.
-On Windows, the Windows display language is used for this. A language selected manually
+On Windows, the Windows display language is used for this; on Linux, the locale (`LANG`). A language selected manually
 later takes precedence over the system language.
 
 The interface language is independent of speech recognition and the AI model's system prompt.

@@ -26,6 +26,7 @@ from pathlib import Path
 
 import chats
 import documents
+import plattform
 from backend import ContextFull, chat_turn
 
 DOC_SUFFIXES = set(documents.KINDS)       # PDF, Office, OpenDocument, RTF, HTML, CSV, JSON, Markdown, Text, XML, Log
@@ -151,15 +152,18 @@ for ($i = $From; $i -lt $n; $i++) {
 
 def render_pdf(pdf: Path, out: Path, first: int = 1, count: int = RENDER_BLOCK,
                width: int = 1400) -> tuple[list[tuple[int, Path]], int]:
-    """count PDF-Seiten ab Seite first als PNG (Windows rendert selbst, ohne Zusatzprogramme) →
-    ([(Seitennummer, Bild)], Seitenzahl insgesamt)."""
+    """count PDF-Seiten ab Seite first als PNG (Windows rendert selbst, ohne Zusatzprogramme; Linux mit pdftoppm aus
+    poppler-utils) → ([(Seitennummer, Bild)], Seitenzahl insgesamt)."""
     out.mkdir(parents=True, exist_ok=True)
+    if not plattform.WINDOWS:
+        return _render_poppler(pdf, out, first, count, width)
     script = out / "seiten.ps1"
     script.write_text(RENDER_SCRIPT, encoding="utf-8-sig")
     r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script),
                         "-Pdf", str(pdf), "-Out", str(out), "-From", str(first - 1), "-Max", str(count),
                         "-Width", str(width)],
-                       capture_output=True, encoding="oem", errors="replace", timeout=600, creationflags=_NO_WINDOW)
+                       capture_output=True, encoding=plattform.CONSOLE_ENCODING, errors="replace", timeout=600,
+                       creationflags=_NO_WINDOW)
     total = next((int(ln.split()[1]) for ln in r.stdout.splitlines() if ln.startswith("SEITEN ")), 0)
     pngs = [(int(nr), Path(png)) for nr, png in
             (ln[5:].strip().split(" ", 1) for ln in r.stdout.splitlines() if ln.startswith("BILD "))]
@@ -168,6 +172,30 @@ def render_pdf(pdf: Path, out: Path, first: int = 1, count: int = RENDER_BLOCK,
         raise RuntimeError("Die Seiten ließen sich nicht als Bild darstellen" + (f": {r.stderr.strip()[:200]}"
                                                                                   if r.stderr.strip() else "."))
     return pngs, total
+
+
+def _render_poppler(pdf: Path, out: Path, first: int, count: int, width: int) -> tuple[list[tuple[int, Path]], int]:
+    """Linux: Seitenzahl mit pdfinfo, Seiten mit pdftoppm (je Seite „p-<Nummer>.png“, Nummer mit führenden Nullen)."""
+    info = plattform.need("pdfinfo", package="poppler-utils")
+    pdftoppm = plattform.need("pdftoppm", package="poppler-utils")
+    r = subprocess.run([info, str(pdf)], capture_output=True, text=True, errors="replace", timeout=60,
+                       stdin=subprocess.DEVNULL)
+    m = re.search(r"^Pages:\s+(\d+)", r.stdout, re.M)
+    total = int(m.group(1)) if m else 0
+    last = min(total, first + count - 1) if total else first + count - 1
+    prefix = out / "p"
+    r = subprocess.run([pdftoppm, "-png", "-f", str(first), "-l", str(last), "-scale-to-x", str(width),
+                        "-scale-to-y", "-1", str(pdf), str(prefix)], capture_output=True, text=True, errors="replace",
+                       timeout=600, stdin=subprocess.DEVNULL)
+    pngs = []
+    for f in sorted(out.glob("p-*.png")):
+        nr = int(f.stem.rsplit("-", 1)[1])
+        if first <= nr <= last:
+            pngs.append((nr, f.replace(out / f"seite-{nr:04d}.png")))
+    if not pngs:
+        raise RuntimeError("Die Seiten ließen sich nicht als Bild darstellen" + (f": {r.stderr.strip()[:200]}"
+                                                                                  if r.stderr.strip() else "."))
+    return sorted(pngs), total
 
 
 class Transcript:

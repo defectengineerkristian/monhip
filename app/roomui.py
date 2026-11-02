@@ -17,7 +17,6 @@ import queue
 import re
 import secrets
 import shutil
-import subprocess
 import threading
 import time
 import tkinter as tk
@@ -34,6 +33,7 @@ import dialogs
 import documents
 import icons
 import images
+import plattform
 import projekt
 import room
 from agent import (ROOM_SCREEN_PROMPT, Agent, ToolError, date_line, describe_call, format_args, result_ok,
@@ -900,7 +900,7 @@ class RoomMode:
     def open_project(self):
         if self.server and self.server.project:
             try:
-                os.startfile(self.server.project.root)
+                plattform.open_path(self.server.project.root)
             except OSError as e:
                 dialogs.showerror(tr('Projektordner'), tr('Der Ordner lässt sich nicht öffnen: {0}', e), parent=self.app.root)
 
@@ -2332,7 +2332,7 @@ class RoomMode:
                 dialogs.showerror("Teamwork", tr('„{0}“ konnte nicht heruntergeladen werden: {1}', name, err), parent=root)
             elif dialogs.askyesno(tr('Heruntergeladen'), tr('„{0}“ wurde gespeichert:\n{1}\n\nIm Ordner zeigen?', name, path),
                                   parent=root):
-                subprocess.Popen(f'explorer /select,"{path}"')
+                plattform.show_in_folder(path)
 
         self.app.background(work, done)
 

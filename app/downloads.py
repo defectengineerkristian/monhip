@@ -1,8 +1,10 @@
 """Gemeinsame Download-Hilfen (llama.cpp, Spracherkennung, Modelle)."""
 
 import json
+import os
 import re
 import shutil
+import tarfile
 import time
 import urllib.request
 import zipfile
@@ -42,25 +44,47 @@ def download(url: str, dest: Path, progress, cancel, done: int = 0, total: int =
     return done
 
 
+def extract(archive: Path, dest: Path):
+    """Zip oder tar.gz (Linux-Builds) nach dest entpacken. tar behält Ausführrechte und Bibliotheks-Verknüpfungen;
+    der Filter „data“ lässt nichts außerhalb von dest schreiben."""
+    if archive.name.endswith((".tar.gz", ".tgz", ".tar.xz")):
+        with tarfile.open(archive) as t:
+            if hasattr(tarfile, "data_filter"):
+                t.extractall(dest, filter="data")
+            else:  # Python vor 3.11.4
+                t.extractall(dest)
+    else:
+        with zipfile.ZipFile(archive) as z:
+            z.extractall(dest)
+
+
 def install_zips(assets: list[tuple[str, str, int]], target: Path, required: str, progress, cancel,
                  done: int = 0, total: int = 0) -> int:
-    """Zips [(name, url, größe)] nach target entpacken: erst in target.part, dann umbenennen – ein abgebrochener
-    Download hinterlässt so keine halbe Installation. Ein einzelner Unterordner (z. B. Release/) wird
-    flachgezogen. required: Datei, die danach da sein muss."""
+    """Zips bzw. tar.gz [(name, url, größe)] nach target entpacken: erst in target.part, dann umbenennen – ein
+    abgebrochener Download hinterlässt so keine halbe Installation. Ein einzelner Unterordner (z. B. Release/) wird
+    flachgezogen, ebenso ein tieferer Ordner mit required (z. B. build/bin/ der Linux-Builds). required: Datei, die
+    danach da sein muss (unter Linux ausführbar)."""
     tmp = target.with_name(target.name + ".part")
     shutil.rmtree(tmp, ignore_errors=True)
     tmp.mkdir(parents=True)
     try:
         for name, url, _ in assets:
             done = download(url, tmp / name, progress, cancel, done, total)
-            with zipfile.ZipFile(tmp / name) as z:
-                z.extractall(tmp)
+            extract(tmp / name, tmp)
             (tmp / name).unlink()
         inner = [p for p in tmp.iterdir() if p.is_dir()]
         if not (tmp / required).is_file() and len(inner) == 1 and (inner[0] / required).is_file():
             for f in inner[0].iterdir():
                 f.rename(tmp / f.name)
             inner[0].rmdir()
+        if not (tmp / required).is_file():
+            hits = sorted(tmp.rglob(required), key=lambda p: len(p.parts))
+            if hits:
+                for f in list(hits[0].parent.iterdir()):
+                    if not (tmp / f.name).exists():
+                        f.rename(tmp / f.name)
+        if (tmp / required).is_file() and os.name != "nt":  # Zip-Dateien kennen keine Ausführrechte
+            (tmp / required).chmod((tmp / required).stat().st_mode | 0o755)
         if not (tmp / required).is_file():
             raise RuntimeError(f"In der heruntergeladenen Datei fehlt {required}.")
         if target.exists():

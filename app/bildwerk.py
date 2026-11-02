@@ -1,7 +1,7 @@
 """Viele Bilder auf einmal bearbeiten (Werkzeug bilder_bearbeiten): verkleinern, umwandeln, drehen – über
-PowerShell und System.Drawing wie images.py, also ohne Zusatzpakete. Die Ergebnisse kommen in einen eigenen Ordner,
-die Originale bleiben unverändert. Handyfotos werden vorher nach ihrer EXIF-Ausrichtung gedreht, sonst lägen sie
-nach dem Verkleinern quer."""
+PowerShell und System.Drawing wie images.py, also ohne Zusatzpakete (unter Linux mit Pillow, Paket python3-pil).
+Die Ergebnisse kommen in einen eigenen Ordner, die Originale bleiben unverändert. Handyfotos werden vorher nach
+ihrer EXIF-Ausrichtung gedreht, sonst lägen sie nach dem Verkleinern quer."""
 
 import fnmatch
 import os
@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+import plattform
 from i18n import tr
 from speicher import size_text
 
@@ -170,6 +171,8 @@ def run(jobs, opts: dict) -> tuple[list[tuple[Path, Path, str]], list[str]]:
     if not jobs:
         return [], []
     jobs[0][1].parent.mkdir(parents=True, exist_ok=True)
+    if not plattform.WINDOWS:
+        return run_pillow(jobs, opts)
     # als Datei mit BOM, damit Windows PowerShell 5.1 Umlaute in Pfaden richtig liest (Befehlszeile wäre zu kurz)
     with tempfile.NamedTemporaryFile("w", suffix=".ps1", delete=False, encoding="utf-8-sig") as f:
         f.write(script(jobs, opts))
@@ -180,6 +183,50 @@ def run(jobs, opts: dict) -> tuple[list[tuple[Path, Path, str]], list[str]]:
     finally:
         Path(f.name).unlink(missing_ok=True)
     return parse(r.stdout.decode("utf-8", "replace"), r.stderr.decode("utf-8", "replace"), jobs)
+
+
+SAVE_FORMATS = {".jpg": "JPEG", ".png": "PNG", ".bmp": "BMP", ".gif": "GIF", ".tif": "TIFF"}
+
+
+def run_pillow(jobs, opts: dict, image=None) -> tuple[list[tuple[Path, Path, str]], list[str]]:
+    """Wie run, aber mit Pillow (Linux): EXIF-Ausrichtung, drehen, verkleinern (Lanczos), Transparenz bei JPG/BMP
+    auf Weiß, JPG mit der gewünschten Qualität. EXIF-Daten werden – wie unter Windows – nicht übernommen."""
+    if image is None:
+        try:
+            from PIL import Image as image
+        except ImportError:
+            return [], ["Unter Linux braucht das Bearbeiten von Bildern Pillow (Paket python3-pil)."]
+    from PIL import ImageOps
+    transpose = getattr(image, "Transpose", image)
+    turns = {90: transpose.ROTATE_270, 180: transpose.ROTATE_180, 270: transpose.ROTATE_90}  # im Uhrzeigersinn
+    lanczos = getattr(image, "Resampling", image).LANCZOS
+    done, errors = [], []
+    for src, dst in jobs:
+        try:
+            with image.open(src) as img:
+                img = ImageOps.exif_transpose(img)
+                if opts["turn"]:
+                    img = img.transpose(turns[opts["turn"]])
+                w, h = img.size
+                if opts["max"] and max(w, h) > opts["max"]:
+                    scale = opts["max"] / max(w, h)
+                    w, h = max(1, round(w * scale)), max(1, round(h * scale))
+                    img = img.resize((w, h), lanczos)
+                fmt = SAVE_FORMATS.get(dst.suffix.lower(), "TIFF")
+                if fmt in ("JPEG", "BMP"):
+                    rgba = img.convert("RGBA")
+                    flat = image.new("RGB", rgba.size, (255, 255, 255))
+                    flat.paste(rgba, mask=rgba.getchannel("A"))
+                    img = flat
+                elif img.mode not in ("RGB", "RGBA", "L", "LA", "P"):
+                    img = img.convert("RGBA")
+                extra = {"quality": opts["q"], "optimize": True} if fmt == "JPEG" else {}
+                img.save(dst, fmt, **extra)
+            done.append((src, dst, f"{w}×{h}"))
+        except Exception as e:  # beschädigt, kein Bild, kein Platz …
+            Path(dst).unlink(missing_ok=True)
+            errors.append(f"{src.name}: {e}")
+    return done, errors
 
 
 def parse(stdout: str, stderr: str, jobs) -> tuple[list[tuple[Path, Path, str]], list[str]]:

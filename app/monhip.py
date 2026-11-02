@@ -3,10 +3,8 @@
 from i18n import LANGUAGES as UI_LANGUAGES, error_text, get_language, initialize, resolve_language, tr, tr_in
 
 import json
-import os
 import queue
 import secrets
-import subprocess
 import sys
 import threading
 import tkinter as tk
@@ -29,6 +27,7 @@ import icons
 import images
 import llamacpp
 import memory
+import plattform
 import projekt
 import prozesse
 import reminders
@@ -48,6 +47,27 @@ APP_DIR = Path(__file__).resolve().parent.parent  # Code in app/, Daten daneben
 CONFIG_FILE = APP_DIR / "config.json"
 MODEL_DIR = APP_DIR / "modelle"  # wird immer durchsucht, Ziel für Downloads
 ICON_FILE = Path(__file__).resolve().with_name("monhip.ico")
+
+
+def _custom_server() -> str:
+    """Letzter Eintrag der Backend-Auswahl (beginnt mit tr('Eigene'), siehe _on_server_selected)."""
+    return tr('Eigene llama-server.exe…') if plattform.WINDOWS else tr('Eigener llama-server…')
+
+
+def _ico_png(path: Path) -> str:
+    """Größtes als PNG gespeichertes Bild einer .ico-Datei (base64) – für das Fenstersymbol unter Linux."""
+    import base64
+    import struct
+    data = path.read_bytes()
+    count = struct.unpack("<H", data[4:6])[0]
+    best = None
+    for i in range(count):
+        size, offset = struct.unpack("<II", data[14 + 16 * i:22 + 16 * i])
+        if data[offset:offset + 4] == b"\x89PNG" and (best is None or size > best[0]):
+            best = (size, offset)
+    if not best:
+        raise ValueError("Kein PNG in der .ico-Datei.")
+    return base64.b64encode(data[best[1]:best[1] + best[0]]).decode("ascii")
 MAX_ATTACHMENTS = 10
 
 DEFAULTS = {
@@ -69,7 +89,7 @@ DEFAULTS = {
     "agent_commands": True,        # PowerShell & Python
     "git_enabled": False,          # Git & GitHub (nur zusammen mit Dateien & Ordner)
     "tool_groups": {},             # Werkzeuggruppen (agent.TOOL_GROUPS): Name → an/aus, fehlend = an
-    "agent_workspace": str(Path.home() / "Desktop" / "Agent-Arbeitsordner"),
+    "agent_workspace": str(plattform.desktop_dir() / "Agent-Arbeitsordner"),
     "agent_folders": [],
     "agent_confirm": True,
     "web_enabled": True,
@@ -168,8 +188,12 @@ class App:
             pass
         root.title("Monhip")
         try:
-            root.iconbitmap(default=str(ICON_FILE))  # gilt auch für alle Dialoge
-        except tk.TclError:
+            if plattform.WINDOWS:
+                root.iconbitmap(default=str(ICON_FILE))  # gilt auch für alle Dialoge
+            else:  # X11/Wayland können keine .ico – das 256er-Bild darin ist ein PNG
+                self._icon = tk.PhotoImage(master=root, data=_ico_png(ICON_FILE))
+                root.iconphoto(True, self._icon)
+        except (tk.TclError, OSError, ValueError):
             pass
         root.minsize(900, 600)
         root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -474,7 +498,7 @@ class App:
         # ---- Laden
         t = tabs["load"]
         self.server_var = tk.StringVar()
-        labels = [s["label"] for s in self.servers] + [tr('Eigene llama-server.exe…')]
+        labels = [s["label"] for s in self.servers] + [_custom_server()]
         ttk.Label(t, text="Backend").grid(row=0, column=0, sticky="w", padx=(0, 12), pady=3)
         self.server_combo = ttk.Combobox(t, textvariable=self.server_var, values=labels, state="readonly")
         self.server_combo.grid(row=0, column=1, sticky="ew", pady=3)
@@ -540,7 +564,8 @@ class App:
         ttk.Checkbutton(t, text=tr(
             'Dateien & Ordner – lesen, schreiben, Bilder ansehen, Word/Excel/PowerPoint, Programmierprojekte'), variable=self.agent_var).grid(row=4, column=0, columnspan=2,
                                                                                      sticky="w")
-        ttk.Checkbutton(t, text=tr('Befehle & Programme ausführen (PowerShell, Python)'), variable=self.cmd_var).grid(
+        ttk.Checkbutton(t, text=tr('Befehle & Programme ausführen (PowerShell, Python)') if plattform.WINDOWS else
+                        tr('Befehle & Programme ausführen (Bash, Python)'), variable=self.cmd_var).grid(
             row=5, column=0, columnspan=2, sticky="w", pady=(4, 0))
         ttk.Checkbutton(t, text=tr(
             'Git & GitHub – Commits, Branches, Push und Pull Requests (nur mit Dateien & Ordner; Push fragt jedes Mal)'),
@@ -548,10 +573,13 @@ class App:
         ttk.Checkbutton(t, text=tr(
             'Bildschirmfotos – das Modell darf deinen Bildschirm ansehen (fragt jedes Mal, nur mit Bildverständnis)'), variable=self.screen_var).grid(
             row=7, column=0, columnspan=2, sticky="w", pady=(4, 0))
-        self.control_var = tk.BooleanVar(value=self.cfg["control_enabled"])
-        ttk.Checkbutton(t, text=tr(
-            'Programme bedienen – das Modell darf ein Fenster mit Tastatur und Maus steuern (fragt je Fenster, nur mit '
-            'Bildverständnis)'), variable=self.control_var).grid(row=8, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        # Programme bedienen gibt es nur unter Windows (steuerung.py) – sonst ohne Häkchen und immer aus
+        self.control_var = tk.BooleanVar(value=self.cfg["control_enabled"] and plattform.CAN_CONTROL)
+        if plattform.CAN_CONTROL:
+            ttk.Checkbutton(t, text=tr(
+                'Programme bedienen – das Modell darf ein Fenster mit Tastatur und Maus steuern (fragt je Fenster, nur '
+                'mit Bildverständnis)'), variable=self.control_var).grid(row=8, column=0, columnspan=2, sticky="w",
+                                                                         pady=(4, 0))
         ttk.Checkbutton(t, text=tr('Jede Aktion bestätigen (empfohlen)'), variable=self.confirm_var).grid(
             row=9, column=0, columnspan=2, sticky="w", pady=(4, 0))
         # Werkzeuggruppen: einzeln abschaltbar (jede kostet bei jeder Anfrage Kontext), Standard an; gesperrt, solange
@@ -609,7 +637,9 @@ class App:
         ttk.Button(bf, text=tr('Löschen'), command=self._forget_selected).pack(side=tk.LEFT)
         ttk.Button(bf, text=tr('Alles vergessen'), command=self._forget_all).pack(side=tk.LEFT, padx=(4, 0))
         ttk.Separator(t).grid(row=4, column=0, sticky="ew", pady=12)
-        ttk.Checkbutton(t, text=tr('Erinnerungen – das Modell darf Erinnerungen stellen (Windows-Benachrichtigung)'),
+        ttk.Checkbutton(t, text=tr('Erinnerungen – das Modell darf Erinnerungen stellen (Windows-Benachrichtigung)')
+                        if plattform.WINDOWS else
+                        tr('Erinnerungen – das Modell darf Erinnerungen stellen (Benachrichtigung auf dem Desktop)'),
                         variable=self.reminder_var).grid(row=5, column=0, sticky="w")
         ttk.Label(t, text=tr(
             'Zum Beispiel „Erinnere mich in 20 Minuten an den Ofen“. Fällige Erinnerungen erscheinen, solange das '
@@ -687,7 +717,7 @@ class App:
 
         # ---- Server-Log
         t = tabs["log"]
-        log_frame, self.log = scrolled(t, wrap=tk.NONE, state=tk.DISABLED, font=("Consolas", 9),
+        log_frame, self.log = scrolled(t, wrap=tk.NONE, state=tk.DISABLED, font=(plattform.MONO_FONT, 9),
                                             padx=6, pady=4)
         log_frame.pack(fill=tk.BOTH, expand=True)
         self.theme.register_text(self.log)
@@ -723,12 +753,7 @@ class App:
         self.on_close()
         exe = Path(sys.executable)
         exe = exe.with_name("pythonw.exe") if exe.with_name("pythonw.exe").exists() else exe
-        cmd = [str(exe), str(APP_DIR / "Monhip.pyw")]
-        flags = 0x00000008 | 0x00000200 if os.name == "nt" else 0  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
-        try:  # eigenes Job-Objekt des Startprogramms (falls vorhanden) verlassen, sonst endete der neue Prozess mit
-            subprocess.Popen(cmd, cwd=APP_DIR, creationflags=flags | 0x01000000, close_fds=True)  # BREAKAWAY_FROM_JOB
-        except OSError:
-            subprocess.Popen(cmd, cwd=APP_DIR, creationflags=flags, close_fds=True)
+        plattform.start_detached([str(exe), str(APP_DIR / "Monhip.pyw")], APP_DIR)
 
     def open_settings(self, tab: str | None = None):
         win = self.settings_win
@@ -1018,7 +1043,10 @@ class App:
 
     def open_model_dir(self):
         MODEL_DIR.mkdir(exist_ok=True)
-        os.startfile(MODEL_DIR)
+        try:
+            plattform.open_path(MODEL_DIR)
+        except OSError as e:
+            dialogs.showerror("Monhip", error_text(e))
 
     def refresh_models(self):
         MODEL_DIR.mkdir(exist_ok=True)  # damit man Modelle gleich hineinlegen kann
@@ -1198,8 +1226,12 @@ class App:
 
     def _on_server_selected(self, _e=None):
         if self.server_var.get().startswith(tr('Eigene')):
-            f = filedialog.askopenfilename(title=tr('llama-server.exe wählen'), filetypes=[("llama-server", "*.exe")],
-                                           parent=self.settings_win)
+            if plattform.WINDOWS:
+                f = filedialog.askopenfilename(title=tr('llama-server.exe wählen'),
+                                               filetypes=[("llama-server", "*.exe")], parent=self.settings_win)
+            else:  # Programme haben unter Linux keine Endung
+                f = filedialog.askopenfilename(title=tr('llama-server wählen'), parent=self.settings_win,
+                                               filetypes=[("llama-server", "llama-server*"), (tr('Alle Dateien'), "*")])
             self.server_var.set(f or (self.servers[0]["label"] if self.servers else ""))
 
     def _selected_server(self) -> dict | None:
@@ -1215,7 +1247,7 @@ class App:
         """Liest server/ neu ein und aktualisiert die Backend-Auswahl."""
         self.servers = llamacpp.find_llama_servers()
         labels = [s["label"] for s in self.servers]
-        self.server_combo.configure(values=labels + [tr('Eigene llama-server.exe…')])
+        self.server_combo.configure(values=labels + [_custom_server()])
         match = [s["label"] for s in self.servers if select_exe and same_path(s["exe"], select_exe)]
         if match:
             self.server_var.set(match[0])
@@ -1271,7 +1303,7 @@ class App:
         def offer(plan):
             name = f"llama.cpp {plan['tag']} ({plan['kind']})"
             if plan["installed"]:
-                self._refresh_servers(str(plan["target"] / "llama-server.exe"))
+                self._refresh_servers(str(plan["target"] / llamacpp.SERVER_EXE))
                 self.srv_status.set(tr('{0} ist bereits die neueste Version.', name))
                 return None
             return (tr(
@@ -1567,10 +1599,11 @@ class App:
         try:
             self.recorder.start()
         except RuntimeError as e:
-            dialogs.showerror(tr(
-                'Spracherkennung'), tr(
+            dialogs.showerror(tr('Spracherkennung'), tr(
                 'Die Aufnahme konnte nicht starten: {0}\n\nIst ein Mikrofon angeschlossen und in Windows freigegeben?',
-                e))
+                e) if plattform.WINDOWS else tr(
+                'Die Aufnahme konnte nicht starten: {0}\n\nIst ein Mikrofon angeschlossen und in den '
+                'Systemeinstellungen als Eingang gewählt?', e))
             return
         self._tick_recording()
 
@@ -1609,7 +1642,8 @@ class App:
                 parts.append(f"whisper.cpp {plan['tag']} ({plan['kind']}): {plan['program'][2] / 1024 ** 2:.0f} MB")
             if plan["model"]:
                 parts.append(tr('Modell {0}: {1:.0f} MB', plan['model'][0], plan['model'][2] / 1024 ** 2))
-            return (tr('Spracherkennung herunterladen'), tr('Grafikkarte: {0}\n', plan['gpu']) + "\n".join(parts)
+            return (tr('Spracherkennung herunterladen'), (tr('Grafikkarte: {0}\n', plan['gpu']) if plan['gpu'] else "")
+                    + "\n".join(parts)
                     + tr('\n\nZusammen {0:.0f} MB – jetzt herunterladen?', plan['size'] / 1024 ** 2), tr('Spracherkennung'))
 
         def finished(plan, _):
@@ -1744,11 +1778,11 @@ class App:
     def _on_paste(self, _e=None):
         """Strg+V: im Explorer kopierte Dateien bzw. ein Bild (Screenshot) werden angehängt, sonst normal
         Text einfügen."""
-        files = filedrop.clipboard_files()
+        files = filedrop.clipboard_files(self.root)
         if files:
             self.add_attachments(files)
             return "break"
-        if filedrop.clipboard_has_image():
+        if filedrop.clipboard_has_image(self.root):
             self.background(images.save_clipboard, self._pasted_image)
             return "break"
         return None
@@ -2456,7 +2490,7 @@ class App:
             anchor="w", pady=(2, 8))
         lines = text.count("\n") + 1
         frame, box = scrolled(body, wrap=tk.WORD, width=88, height=max(4, min(lines + 1, 18)),
-                              font=("Consolas", 9), padx=8, pady=6)
+                              font=(plattform.MONO_FONT, 9), padx=8, pady=6)
         frame.pack(fill=tk.BOTH, expand=True)
         box.insert("1.0", text)
         box.configure(state=tk.DISABLED)

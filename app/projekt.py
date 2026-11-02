@@ -72,6 +72,10 @@ def remove_tree(path: Path):
     shutil.rmtree(path, onexc=unlock)
 
 
+# nicht /var und /run: dort liegen bei manchen Systemen Benutzerordner (/var/home) und USB-Laufwerke (/run/media)
+LINUX_SYSTEM_DIRS = ("bin", "boot", "dev", "etc", "lib", "lib32", "lib64", "opt", "proc", "sbin", "snap", "sys", "usr")
+
+
 def unsafe_root(root: Path, *also: Path) -> str | None:
     """Warum dieser Ordner nicht freigegeben werden darf – sonst None. Gesperrt sind Laufwerke, der Benutzerordner
     und alles darüber, Windows-, Programm- und AppData-Ordner (dort ließe sich Code ablegen, der von selbst startet)
@@ -89,6 +93,12 @@ def unsafe_root(root: Path, *also: Path) -> str | None:
         value = os.environ.get(name)
         if value and within(root, Path(value).resolve()):
             return "ein Windows-, Programm- oder AppData-Ordner"
+    if os.name != "nt":  # Linux: Systemordner und versteckte Einstellungen im Benutzerordner (Autostart, Shell …)
+        home = Path.home()
+        for system in (*(Path("/" + d) for d in LINUX_SYSTEM_DIRS),
+                       *(home / d for d in (".config", ".local", ".cache", ".ssh", ".gnupg", ".mozilla"))):
+            if within(root, system.resolve()):
+                return "ein System- oder Programmordner"
     for monhip in (MONHIP_DIR, *also):
         monhip = Path(monhip).resolve()
         if within(root, monhip) or within(monhip, root):

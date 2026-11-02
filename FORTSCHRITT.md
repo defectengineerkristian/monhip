@@ -3,11 +3,21 @@
 Was in welcher Version umgesetzt wurde, neueste zuerst. Neues kommt oben unter „Seit vX“ (bis zum nächsten Release),
 immer mit festen Daten (TT.MM.JJJJ).
 
-**Stand:** 30.10.2026 · **neuestes Release:** v1.4.6
+**Stand:** 02.11.2026 · **neuestes Release:** v1.4.6
 
 ---
 
 ## Seit v1.4.6
+- 02.11.2026: Monhip läuft unter Linux – derselbe Code, alles Systemabhängige in `app/plattform.py` (öffnen,
+  Papierkorb, Prozesse, Shell, Schriften) und Linux-Zweigen der Module. llama.cpp lädt die `ubuntu`-Builds (tar.gz,
+  CPU/Vulkan/CUDA, GPU über lspci bzw. /sys), llama-server und Befehle enden mit Monhip (PR_SET_PDEATHSIG aus einem
+  eigenen Start-Thread), Befehle in bash statt PowerShell (Prompt und Werkzeugtexte angepasst), Bilder mit Pillow,
+  Bildschirmfotos mit grim/gnome-screenshot/spectacle bzw. ImageMagick/scrot, Zwischenablage über Tk bzw.
+  xclip/wl-clipboard, Drag & Drop mit tkdnd, Mikrofon mit pw-record/parecord/arecord, whisper-cli aus dem PATH (das
+  Modell lädt Monhip), Seitenbilder für den Experten-Modus mit pdftoppm, Erinnerungen mit notify-send, PDFs mit
+  Noto/Liberation/DejaVu. „Programme bedienen“ bleibt Windows-only (unter Linux ausgeblendet). Paketliste in der
+  README. Unter Windows unverändert; behoben nebenbei: `encoding="oem"` und `os.startfile` brachen unter Linux ab,
+  `mark_from_internet` legte dort eine Datei „…:Zone.Identifier“ an. Neue Tests `tests/test_plattform.py`.
 - 30.10.2026: Leerer Chat ohne Anhang-Hinweis – unter „Womit kann ich helfen?“ steht nur noch das geladene Modell.
 
 ## v1.4.6 – 30.10.2026

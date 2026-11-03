@@ -48,7 +48,7 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends python3-tk python3-pil xdg-utils poppler-utils xclip \
-            tkdnd xvfb xauth fonts-dejavu-core
+            tkdnd xvfb xauth fonts-dejavu-core imagemagick git
 
       - name: Tests
         run: xvfb-run -a /usr/bin/python3 -m unittest discover -s tests

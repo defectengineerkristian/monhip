@@ -731,6 +731,7 @@ ENGLISH = {
     '…(insgesamt {0} Einträge in {1} Ordnern)': '…({0} items in {1} folders in total)',
     '…und {0} weitere': '…and {0} more',
     # Linux (plattform.py und die Linux-Zweige der Module)
+    'Tk-Standard': 'Tk default',
     'llama-server (System: {0})': 'llama-server (system: {0})',
     'Auf GitHub wurde keine passende llama.cpp-Version für Linux gefunden.': 'No matching llama.cpp version for Linux was found on GitHub.',
     'llama-server wählen': 'Choose llama-server',

@@ -11,7 +11,8 @@ Monhip has one code base for Windows and Linux; only the installers differ.
 
 Both installers rely on the same few facts:
 
-- **What to ship:** `Monhip.pyw`, every `app/*.py` and `app/monhip.ico` – never user data. The Linux
+- **What to ship:** `Monhip.pyw`, every `app/*.py`, `app/monhip.ico` and `app/fonts/` (icon font for Linux)
+  – never user data. The Linux
   package contains exactly that; the Windows installer downloads the release's source ZIP at install time
   and takes its top-level entries (so `tests/` and `installer/` come along, which does no harm).
 - **Version:** `VERSION` in `app/monhip.py`; GitHub releases are tagged `v<VERSION>`.

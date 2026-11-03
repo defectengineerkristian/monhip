@@ -167,6 +167,9 @@ Other distributions have packages with similar names. Additional notes:
   password.
 - **Operating program windows** (keyboard and mouse control) is only available on Windows; the option
   is hidden on Linux.
+- **Icons** come from [Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons)
+  (Microsoft, MIT License): `app/fonts/MonhipIcons.ttf` contains just the 45 icons Monhip uses and is built
+  with `tools/icon_font.py`. On Windows, Monhip uses the system's Segoe Fluent Icons as before.
 - Deleted files go to the desktop trash (`gio trash`, or `~/.local/share/Trash` directly).
 
 ## Interface language
@@ -194,7 +197,8 @@ environment variable `MONHIP_DATA` (the Linux package uses `~/.local/share/monhi
 | `Monhip.pyw` | Entry point for starting the application |
 | `app/` | Interface, model integration, agent tools, and other Python modules |
 | `installer/` | Linux package and Windows installer (`Monhip-Setup.exe`) – see [installer](installer/README.md) |
-| `tests/` | Automated tests (`python -m unittest discover -s tests`) |
+| `tests/` | Automated tests (`python -m unittest discover -s tests`), run on Windows and Linux for every push |
+| `tools/` | Developer tools, e.g. `icon_font.py` to rebuild the icon font |
 | `config.json` | Application settings |
 | `modelle/` | Local GGUF models and speech recognition models |
 | `server/` | Downloaded llama.cpp and whisper.cpp programs |

@@ -46,6 +46,39 @@ def _wait_dead(pid: int, seconds: float = 5) -> bool:
 
 
 class PlatformBasics(unittest.TestCase):
+    def test_wheel_delta(self):
+        from types import SimpleNamespace as E
+        from widgets import WHEEL_EVENTS, wheel_delta
+        self.assertEqual(wheel_delta(E(num=4, delta=0)), 120)   # X11: Rad hoch
+        self.assertEqual(wheel_delta(E(num=5, delta=0)), -120)  # X11: Rad runter
+        self.assertEqual(wheel_delta(E(num="??", delta=-240)), -240)
+        self.assertIn("<MouseWheel>", WHEEL_EVENTS)
+        if plattform.WINDOWS:
+            self.assertEqual(WHEEL_EVENTS, ("<MouseWheel>",))  # Windows: Bindungen wie bisher
+
+    def test_start_detached(self):
+        """Neustart (z. B. nach dem Sprachwechsel): unabhängiger Prozess, der von selbst läuft."""
+        with tempfile.TemporaryDirectory() as d:
+            marker = Path(d) / "gestartet.txt"
+            plattform.start_detached([sys.executable, "-c", f"open({str(marker)!r}, 'w').write('ok')"], d)
+            end = time.time() + 15
+            while not marker.exists() and time.time() < end:
+                time.sleep(0.1)
+            time.sleep(0.2)
+            self.assertEqual(marker.read_text(), "ok")
+
+    def test_drives(self):
+        import speicher
+        lines = speicher.drives()
+        self.assertTrue(lines)
+        if not plattform.WINDOWS:
+            self.assertTrue(lines[0].startswith("/  "), lines)
+
+    def test_python_template_matches_system(self):
+        import projects
+        self.assertIn("main.py", projects.TEMPLATES["python"]["run"])
+        self.assertTrue(projects.TEMPLATES["python"]["run"].startswith("py " if plattform.WINDOWS else "python3 "))
+
     def test_exe_and_shell(self):
         self.assertEqual(plattform.exe("llama-server"), "llama-server.exe" if plattform.WINDOWS else "llama-server")
         argv = plattform.shell_argv("echo hallo")

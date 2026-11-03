@@ -32,7 +32,8 @@ def available() -> bool:
 
 def run(cwd, *args, timeout=60, stdin: str | None = None) -> subprocess.CompletedProcess:
     if not available():
-        raise GitError("Git ist auf diesem PC nicht installiert (https://git-scm.com/download/win).")
+        raise GitError("Git ist auf diesem PC nicht installiert (https://git-scm.com/download/win)." if os.name == "nt"
+                       else "Git ist auf diesem PC nicht installiert (Paket git).")
     return subprocess.run(["git", *OPTS, *args], cwd=cwd, capture_output=True, timeout=timeout,
                           input=stdin.encode("utf-8") if stdin is not None else None,
                           stdin=None if stdin is not None else subprocess.DEVNULL,

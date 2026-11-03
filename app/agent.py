@@ -598,7 +598,7 @@ REMINDER_PROMPT = (
     "Erinnerungen: Mit set_reminder stellst du eine Erinnerung ({notice} zur gewünschten Zeit). "
     "Nenne dem Nutzer danach kurz Tag und Uhrzeit.\n{items}")
 
-TOOLCHAINS = [("Python", ("py", "python")), ("Java", ("java",)), ("javac", ("javac",)), ("Maven", ("mvn",)),
+TOOLCHAINS = [("Python", ("py", "python") if plattform.WINDOWS else ("python3", "python")), ("Java", ("java",)), ("javac", ("javac",)), ("Maven", ("mvn",)),
               ("Gradle", ("gradle",)), ("GCC", ("gcc", "g++")), ("Clang", ("clang", "clang++")), ("MSVC", ("cl",)),
               ("CMake", ("cmake",)), ("Rust/Cargo", ("cargo",)), (".NET", ("dotnet",)), ("Node.js", ("node",)),
               ("npm", ("npm",)), ("Go", ("go",)), ("Git", ("git",))]

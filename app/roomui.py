@@ -40,7 +40,7 @@ from agent import (ROOM_SCREEN_PROMPT, Agent, ToolError, date_line, describe_cal
                    run_conversation, time_label, tool_budget)
 from projekt import RISKY_SUFFIXES, mark_from_internet  # RISKY_SUFFIXES: vor dem Herunterladen warnen
 from themes import FAMILY, mix_hex
-from widgets import scrolled
+from widgets import bind_wheel, scrolled, wheel_delta
 
 TYPE_MS = 20           # Takt, in dem Antworten fremder KIs „getippt“ werden (kommen in Paketen alle ~0,3 s)
 PREVIEW_MAX = 20 * 1024 * 1024  # geteilte Bilder bis zu dieser Größe werden für die Vorschau automatisch geholt
@@ -432,7 +432,7 @@ class RoomMode:
         self._side_item = self._side.create_window(0, 0, window=self.panel, anchor="nw")
         self._side.bind("<Configure>", lambda e: self._side_layout())
         self.panel.bind("<Configure>", lambda e: self._side_layout())
-        app.root.bind_class("RoomSideWheel", "<MouseWheel>", self._side_wheel)
+        bind_wheel(app.root, self._side_wheel, cls="RoomSideWheel")
         self.member_tree = None
         self.mentions = _Mentions(self)
         self.refresh_panel()
@@ -621,8 +621,8 @@ class RoomMode:
         c.configure(scrollregion=(0, 0, c.winfo_width(), max(need, have)))
 
     def _side_wheel(self, e):
-        if self._side_bar.winfo_ismapped():
-            self._side.yview_scroll(-1 if e.delta > 0 else 1, "units")
+        if self._side_bar.winfo_ismapped() and wheel_delta(e):
+            self._side.yview_scroll(-1 if wheel_delta(e) > 0 else 1, "units")
 
     def _side_wheel_tags(self):
         stack = [self._side, self.panel]

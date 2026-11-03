@@ -1,0 +1,59 @@
+# Alle Tests bei jedem Push und Pull Request – auf Linux (Ubuntu 24.04, System-Python 3.12 wie im .deb) und auf
+# Windows (Python 3.13 wie beim Installer). Dazu wird der Windows-Installer gebaut (ohne ihn zu veröffentlichen).
+name: Tests (Windows und Linux)
+
+on:
+  push:
+    paths-ignore: ["**.md"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Pakete (wie im .deb, dazu virtueller Bildschirm)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends python3-tk python3-pil xdg-utils poppler-utils xclip \
+            tkdnd xvfb xauth fonts-dejavu-core imagemagick git
+      - name: Tests
+        run: xvfb-run -a /usr/bin/python3 -m unittest discover -s tests -v
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Tests
+        env:
+          PYTHONUTF8: "1"
+        run: python -m unittest discover -s tests -v
+
+  windows-installer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+    steps:
+      - uses: actions/checkout@v5
+      - name: Monhip-Setup.exe bauen
+        run: |
+          if ! command -v dotnet >/dev/null; then
+            sudo apt-get update -q
+            sudo apt-get install -y -q dotnet-sdk-8.0
+          fi
+          dotnet build installer/windows/Monhip-Setup.csproj -c Release -warnaserror

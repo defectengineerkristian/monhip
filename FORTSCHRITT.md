@@ -8,6 +8,16 @@ immer mit festen Daten (TT.MM.JJJJ).
 ---
 
 ## Seit v1.4.6
+- 04.11.2026: Symbole jetzt auch unter Linux: `app/fonts/MonhipIcons.ttf` (9 KB) enthält genau die 45 Symbole von
+  Monhip aus Fluent UI System Icons (Microsoft, MIT-Lizenz – derselbe Stil wie Segoe Fluent Icons unter Windows),
+  gebaut mit `tools/icon_font.py`; Monhip meldet sie nur für sich bei fontconfig an (Textfelder) und zeichnet die
+  Knopf-Bilder mit Pillow statt GDI. Linux außerdem: Mausrad in Chat, Karten und Teamwork-Seitenleiste (Tk 8.6
+  meldet es dort als Taste 4/5 – `widgets.bind_wheel`), Python-Projekte mit `python3` statt `py`, Python als
+  Entwicklerwerkzeug erkannt (`python3`), Design „Tk-Standard“ statt „Windows-Standard“ (mit `clam`), Signalton bei
+  Fehlern, Laufwerksliste mit allen eingehängten Datenträgern, Git-Hinweis ohne Windows-Link. Neue Rauchtests
+  (`tests/test_tools_smoke.py`: alle lokalen Werkzeuge echt ausgeführt; `tests/test_gui_smoke.py`: alle
+  Einstellungen, Designs, Chat, Mausrad, Teamwork-Raum als Gastgeber) und `.github/workflows/tests.yml`: alle Tests
+  bei jedem Push auf Ubuntu 24.04 und Windows (Python 3.13), dazu der Build des Windows-Installers.
 - 03.11.2026: Linux, NVIDIA: llama.cpp lief trotz CUDA-Build auf dem Prozessor – die Linux-Archive haben je einen
   Hauptordner, und die CUDA-Laufzeit (`cudart-llama-…/`, u. a. `libcudart.so.13`) blieb beim Entpacken in ihrem
   Unterordner, wo llama-server sie nicht fand (Windows-Zips haben keinen Hauptordner, dort kein Problem).

@@ -24,7 +24,7 @@ import icons
 import plattform
 from markdown_lite import ListLevels, classify, closes_fence, inline, is_separator_row, plain, split_row
 from themes import FAMILY, mix_hex
-from widgets import PopupMenu, precise_timer, rounded
+from widgets import PopupMenu, bind_wheel, precise_timer, rounded, wheel_delta
 
 MONO = plattform.MONO_FONT
 MAX_COLUMN = 820          # maximale Breite der Chatspalte (Pixel bei 100 %)
@@ -130,7 +130,7 @@ class ChatView:
         self._set_cursor("xterm")
         self._readonly()
         t.bind("<Configure>", self._on_configure, add="+")
-        t.bind("<MouseWheel>", self._on_wheel)
+        bind_wheel(t, self._on_wheel)
         t.bind("<Button-3>", self._on_context)
         t.bind("<ButtonPress-1>", lambda e: self._hide_quote_pop(), add="+")
         t.bind("<ButtonRelease-1>", self._on_release, add="+")
@@ -369,7 +369,7 @@ class ChatView:
         self.t.configure(padx=self._padx)  # einmal beim Aufbau – danach nie wieder configure (vermisst alles neu)
         frame = self.t.master
         frame.bind("<Configure>", self._place_column)
-        frame.bind("<MouseWheel>", self._on_wheel)  # auch neben der Spalte scrollen
+        bind_wheel(frame, self._on_wheel)  # auch neben der Spalte scrollen
 
     def set_active(self, active: bool):
         """Vorn (sichtbar) oder verdeckt hinter der anderen Ebene (Chat | Teamwork, set_mode): Verdeckt folgt die
@@ -720,7 +720,7 @@ class ChatView:
 
     def _canvas(self, cursor: str) -> tk.Canvas:
         c = tk.Canvas(self.t, highlightthickness=0, borderwidth=0, background=self.bg, cursor=cursor)
-        c.bind("<MouseWheel>", self._on_wheel)
+        bind_wheel(c, self._on_wheel)
         return c
 
     def _embed(self, widget, tag: str):
@@ -1448,8 +1448,9 @@ class ChatView:
 
     def _on_wheel(self, e):
         self._hide_quote_pop()  # steht an fester Stelle – beim Scrollen würde es verrutschen
-        if e.delta:
-            self._scroll_left -= e.delta / 120 * 3 * self.f_base.metrics("linespace")
+        delta = wheel_delta(e)
+        if delta:
+            self._scroll_left -= delta / 120 * 3 * self.f_base.metrics("linespace")
             if self._scroll_job is None:
                 precise_timer(True)
                 self._scroll_t = time.perf_counter() - SCROLL_MS / 1000  # erster Schritt sofort

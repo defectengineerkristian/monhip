@@ -143,6 +143,8 @@ def _show(kind: str, title: str, message: str, parent: tk.Misc | None) -> bool:
             winsound.MessageBeep(sound)
         except RuntimeError:
             pass
+    elif kind in ("error", "warning"):  # andere Systeme: Signalton des Desktops nur bei Fehlern und Warnungen
+        win.bell()
     present(win, parent, modal=True, focus=default)
     return result["v"]
 

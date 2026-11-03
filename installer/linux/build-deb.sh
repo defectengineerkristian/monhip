@@ -29,11 +29,14 @@ STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 ROOT="$STAGE/monhip_${VERSION}_all"
 
-# ---- Programm: /opt/monhip (Monhip.pyw, app/*.py, Symbol) – ohne Tests, Caches und Nutzerdaten
-install -d -m 0755 "$ROOT/opt/monhip/app"
+# ---- Programm: /opt/monhip (Monhip.pyw, app/*.py, Symbol, Icon-Schrift) – ohne Tests, Caches und Nutzerdaten
+install -d -m 0755 "$ROOT/opt/monhip/app/fonts"
 install -m 0644 "$REPO/Monhip.pyw" "$ROOT/opt/monhip/"
 for f in "$REPO"/app/*.py "$REPO/app/monhip.ico"; do
     install -m 0644 "$f" "$ROOT/opt/monhip/app/"
+done
+for f in "$REPO"/app/fonts/*; do  # MonhipIcons.ttf (Symbole unter Linux) samt Lizenz
+    install -m 0644 "$f" "$ROOT/opt/monhip/app/fonts/"
 done
 
 # ---- Starter, Desktop-Eintrag, Symbol (das 256er-PNG aus monhip.ico), Doku

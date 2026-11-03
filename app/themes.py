@@ -81,8 +81,8 @@ THEMES = {
             "people": ["#c2410c", "#15803d", "#1d4ed8", "#9333ea", "#a16207", "#0e7490"],
         },
     },
-    "system": {
-        "label": tr('Windows-Standard'),
+    "system": {  # Aussehen des Systems: unter Windows „vista“, sonst das schlichte „clam“ von Tk
+        "label": tr('Windows-Standard') if sys.platform == "win32" else tr('Tk-Standard'),
         "dark": False,
         "chat": {
             "fg": "#1b1b1b", "muted": "#6b6b6b", "accent": "#0b63c5",
@@ -329,7 +329,9 @@ class ThemeManager:
         self.root = root
         self.style = ttk.Style(root)
         names = self.style.theme_names()
-        self.native = "vista" if "vista" in names else self.style.theme_use()
+        # Linux: „clam“ statt Tks Grundthema „default“ (graue 90er-Optik); macOS behält „aqua“
+        self.native = ("vista" if "vista" in names else
+                       "clam" if sys.platform.startswith("linux") and "clam" in names else self.style.theme_use())
         self.key = "system"
         self.pal: dict | None = None
         self._texts: list[tk.Text] = []

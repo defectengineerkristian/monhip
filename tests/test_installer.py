@@ -41,7 +41,8 @@ class DebPackage(unittest.TestCase):
 
     def test_every_module_and_nothing_else(self):
         shipped = {p for p in self.files if p.startswith("/opt/monhip/app/") and not p.endswith("/")}
-        expected = {f"/opt/monhip/app/{p.name}" for p in (REPO / "app").glob("*.py")} | {"/opt/monhip/app/monhip.ico"}
+        expected = ({f"/opt/monhip/app/{p.name}" for p in (REPO / "app").glob("*.py")} | {"/opt/monhip/app/monhip.ico"}
+                    | {f"/opt/monhip/app/fonts/{p.name}" for p in (REPO / "app" / "fonts").iterdir()})
         self.assertEqual(shipped, expected)  # neue Module kommen von selbst mit, Caches und Tests nie
         self.assertIn("/opt/monhip/Monhip.pyw", self.files)
         self.assertFalse(any("__pycache__" in p or "/tests/" in p or p.endswith(".json") for p in self.files))

@@ -99,6 +99,18 @@ def _end_with_app(proc: subprocess.Popen) -> bool:
         k32.CloseHandle(handle)
 
 
+def library_dirs(exe_dir: Path) -> list[str]:
+    """Linux: Ordner mit Bibliotheken für LD_LIBRARY_PATH – der von llama-server und direkte Unterordner mit .so-Dateien.
+    Monhip bis 02.11.2026 ließ die CUDA-Laufzeit beim Entpacken in cudart-llama-…/ liegen; so läuft auch eine solche
+    Installation auf der Grafikkarte, ohne sie neu herunterzuladen."""
+    dirs = [exe_dir]
+    try:
+        dirs += sorted(d for d in exe_dir.iterdir() if d.is_dir() and any(d.glob("*.so*")))
+    except OSError:
+        pass
+    return [str(d) for d in dirs]
+
+
 def _free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -167,7 +179,8 @@ class LlamaServer:
             exe_dir = str(Path(server["exe"]).parent)
             env["PATH"] = os.pathsep.join([exe_dir, env.get("PATH", "")])
             if not plattform.WINDOWS:  # die .so-Dateien liegen neben llama-server (Windows sucht DLLs dort selbst)
-                env["LD_LIBRARY_PATH"] = os.pathsep.join(p for p in (exe_dir, env.get("LD_LIBRARY_PATH")) if p)
+                libs = library_dirs(Path(exe_dir)) + [p for p in [env.get("LD_LIBRARY_PATH")] if p]
+                env["LD_LIBRARY_PATH"] = os.pathsep.join(libs)
 
             self.log_cb("> " + (subprocess.list2cmdline(args) if plattform.WINDOWS else shlex.join(args)) + "\n")
             proc = plattform.popen(

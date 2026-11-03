@@ -255,6 +255,59 @@ class Downloads(unittest.TestCase):
             if not plattform.WINDOWS:
                 self.assertTrue(os.access(target / exe, os.X_OK))
 
+    def test_cuda_build_and_runtime_end_up_side_by_side(self):
+        """Wie die echten Linux-Archive (b12080): jedes mit eigenem Hauptordner – die CUDA-Laufzeit muss neben
+        llama-server landen, sonst lädt llama.cpp sein CUDA-Modul nicht und rechnet still auf dem Prozessor."""
+        import downloads
+
+        def tar(entries):
+            buf = io.BytesIO()
+            with tarfile.open(fileobj=buf, mode="w:gz") as t:
+                for name, mode, data, link in entries:
+                    info = tarfile.TarInfo(name)
+                    if link:
+                        info.type, info.linkname = tarfile.SYMTYPE, link
+                        t.addfile(info)
+                    elif data is None:
+                        info.type, info.mode = tarfile.DIRTYPE, 0o755
+                        t.addfile(info)
+                    else:
+                        info.size, info.mode = len(data), mode
+                        t.addfile(info, io.BytesIO(data))
+            return buf.getvalue()
+
+        exe = plattform.exe("llama-server")
+        archives = {
+            "llama.tar.gz": tar([("llama-b1/", 0, None, None), (f"llama-b1/{exe}", 0o755, b"#!/bin/sh\n", None),
+                                 ("llama-b1/libggml-cuda.so", 0o755, b"cuda", None), ("llama-b1/LICENSE", 0o644, b"a", None)]),
+            "cudart.tar.gz": tar([("cudart-llama-b1-bin-ubuntu-cuda-13.4-x64/", 0, None, None),
+                                  ("cudart-llama-b1-bin-ubuntu-cuda-13.4-x64/libcudart.so.13.0.1", 0o644, b"rt", None),
+                                  ("cudart-llama-b1-bin-ubuntu-cuda-13.4-x64/libcudart.so.13", 0, b"", "libcudart.so.13.0.1"),
+                                  ("cudart-llama-b1-bin-ubuntu-cuda-13.4-x64/LICENSE", 0o644, b"b", None)]),
+        }
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            with mock.patch.object(downloads, "download",
+                                   lambda url, dest, *a, **k: dest.write_bytes(archives[url]) or 1):
+                downloads.install_zips([("llama.tar.gz", "llama.tar.gz", 1), ("cudart.tar.gz", "cudart.tar.gz", 1)],
+                                       d / "llama-b1-bin-ubuntu-cuda-13.4-x64", exe, lambda *_: None,
+                                       threading.Event())
+            target = d / "llama-b1-bin-ubuntu-cuda-13.4-x64"
+            self.assertEqual(sorted(p.name for p in target.iterdir()),
+                             sorted([exe, "libggml-cuda.so", "libcudart.so.13.0.1", "libcudart.so.13", "LICENSE"]))
+            if not plattform.WINDOWS:
+                self.assertEqual((target / "libcudart.so.13").read_bytes(), b"rt")  # Verknüpfung stimmt
+
+    def test_library_dirs_include_old_cudart_subfolder(self):
+        """Installationen von vor der Korrektur: CUDA-Laufzeit in cudart-…/ – kommt mit in LD_LIBRARY_PATH."""
+        import backend
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            (d / "cudart-llama-b1").mkdir()
+            (d / "cudart-llama-b1" / "libcudart.so.13").write_bytes(b"")
+            (d / "leer").mkdir()
+            self.assertEqual(backend.library_dirs(d), [str(d), str(d / "cudart-llama-b1")])
+
     def test_zip_gets_executable_bit(self):
         import downloads
         if plattform.WINDOWS:

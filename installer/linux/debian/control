@@ -6,7 +6,8 @@ Architecture: all
 Installed-Size: @SIZE@
 Maintainer: @MAINTAINER@
 Depends: python3 (>= 3.12), python3-tk, python3-pil, xdg-utils
-Recommends: poppler-utils, libnotify-bin, xclip, wl-clipboard, tkdnd, pipewire-bin | pulseaudio-utils | alsa-utils
+Recommends: pciutils, libvulkan1, mesa-vulkan-drivers, poppler-utils, libnotify-bin, xclip, wl-clipboard, tkdnd,
+ pipewire-bin | pulseaudio-utils | alsa-utils
 Suggests: gnome-screenshot | grim | scrot | imagemagick
 Description: Desktop application for local AI models
  Monhip combines a chat with local language models (GGUF via llama.cpp, which

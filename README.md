@@ -137,8 +137,8 @@ To run from source instead, Monhip relies on common system programs. On Debian a
 installs all of them:
 
 ```sh
-sudo apt install python3 python3-tk python3-pil xdg-utils poppler-utils libnotify-bin \
-    xclip wl-clipboard tkdnd pipewire-bin alsa-utils
+sudo apt install python3 python3-tk python3-pil xdg-utils pciutils libvulkan1 mesa-vulkan-drivers \
+    poppler-utils libnotify-bin xclip wl-clipboard tkdnd pipewire-bin alsa-utils
 ```
 
 | Package | Used for |
@@ -146,6 +146,8 @@ sudo apt install python3 python3-tk python3-pil xdg-utils poppler-utils libnotif
 | `python3-tk` | the interface (Tkinter) |
 | `python3-pil` (Pillow) | image previews, images from the clipboard, `bilder_bearbeiten`, screenshots on X11 |
 | `xdg-utils` | opening files and folders (`xdg-open`) |
+| `pciutils` | recognizing the graphics card (`lspci`) to download the right llama.cpp build |
+| `libvulkan1`, `mesa-vulkan-drivers` | the Vulkan build of llama.cpp on AMD and Intel graphics (NVIDIA: CUDA build, needs the proprietary NVIDIA driver) |
 | `poppler-utils` | scanned PDFs in expert mode (`pdftoppm`, `pdfinfo`) |
 | `libnotify-bin` | reminders as desktop notifications (`notify-send`) |
 | `xclip` / `wl-clipboard` | clipboard for the AI tools and for pasting files and images (X11 / Wayland) |

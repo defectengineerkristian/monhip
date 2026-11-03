@@ -36,7 +36,8 @@ Declared in [`debian/control`](debian/control):
 
 - **Depends:** `python3 (>= 3.12)`, `python3-tk`, `python3-pil`, `xdg-utils` – Ubuntu 24.04 or newer,
   Debian 13 or newer.
-- **Recommends** (installed by default): `poppler-utils` (scanned PDFs in expert mode),
+- **Recommends** (installed by default): `pciutils` (graphics card detection), `libvulkan1` and
+  `mesa-vulkan-drivers` (llama.cpp on AMD/Intel graphics), `poppler-utils` (scanned PDFs in expert mode),
   `libnotify-bin` (reminders), `xclip` and `wl-clipboard` (clipboard on X11 and Wayland), `tkdnd`
   (drag & drop), `pipewire-bin` or `pulseaudio-utils` or `alsa-utils` (microphone).
 - **Suggests:** a screenshot program for Wayland desktops other than GNOME/KDE.

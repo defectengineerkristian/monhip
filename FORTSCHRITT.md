@@ -8,6 +8,13 @@ immer mit festen Daten (TT.MM.JJJJ).
 ---
 
 ## Seit v1.4.6
+- 03.11.2026: Linux, NVIDIA: llama.cpp lief trotz CUDA-Build auf dem Prozessor – die Linux-Archive haben je einen
+  Hauptordner, und die CUDA-Laufzeit (`cudart-llama-…/`, u. a. `libcudart.so.13`) blieb beim Entpacken in ihrem
+  Unterordner, wo llama-server sie nicht fand (Windows-Zips haben keinen Hauptordner, dort kein Problem).
+  `downloads.install_zips` entpackt jetzt jedes Archiv für sich und zieht dessen Hauptordner hoch;
+  `backend.library_dirs` nimmt Unterordner mit `.so`-Dateien in `LD_LIBRARY_PATH` auf, damit schon so installierte
+  Versionen ohne neuen Download (545 MB) auf der Grafikkarte laufen. Paket empfiehlt zusätzlich `pciutils`,
+  `libvulkan1` und `mesa-vulkan-drivers`.
 - 02.11.2026: Quelltext des Windows-Installers zurückgewonnen (ILSpy aus der bisherigen `Monhip-Setup.exe`) –
   `installer/windows/` (C#, .NET Framework 4.8, `Monhip-Setup.csproj`, Original-Manifest, Symbol aus
   `app/monhip.ico`); baut mit dem .NET SDK auch unter Linux und gleicht dem Original (dieselben Methoden, alle 621

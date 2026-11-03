@@ -28,6 +28,9 @@ jobs:
             tkdnd xvfb xauth fonts-dejavu-core imagemagick git
       - name: Tests
         run: xvfb-run -a /usr/bin/python3 -m unittest discover -s tests -v
+      - name: Fenster ziehen messen (nur zur Info)
+        continue-on-error: true
+        run: xvfb-run -a -s "-screen 0 1920x1200x24" /usr/bin/python3 tools/bench_resize.py --profile
 
   windows:
     runs-on: windows-latest
@@ -41,6 +44,11 @@ jobs:
         env:
           PYTHONUTF8: "1"
         run: python -m unittest discover -s tests -v
+      - name: Fenster ziehen messen (nur zur Info)
+        continue-on-error: true
+        env:
+          PYTHONUTF8: "1"
+        run: python tools/bench_resize.py --profile
 
   windows-installer:
     runs-on: ubuntu-24.04

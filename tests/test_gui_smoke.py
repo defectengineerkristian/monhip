@@ -41,6 +41,7 @@ def gui_worker():
         with mock.patch.object(i18n, "initialize", side_effect=lambda _path: initialize(config_file)):
             import monhip
         import chats
+        import chatview
         import checkpoints
         import dialogs
         import icons
@@ -107,6 +108,23 @@ def gui_worker():
             for _ in range(8):  # ~0,15 s weiches Scrollen
                 yield
             report["wheel_scrolled"] = v.t.yview()[0] > 0
+            # Ziehen in einem schmalen Fenster: Spaltenbreite bleibt beim Ziehen, danach kommt die passende
+            root.minsize(400, 300)
+            root.geometry("820x700")
+            for _ in range(5):
+                yield
+            time.sleep(0.25)
+            yield
+            before = v.t.winfo_width()
+            root.geometry("760x700")
+            root.update()
+            during = v.t.winfo_width()
+            time.sleep(0.25)
+            yield
+            yield
+            frame = v.t.master
+            expect = min(frame.winfo_width() - v._sb.winfo_width(), v._s(chatview.MAX_COLUMN) + 2 * v._padx)
+            report["column"] = {"before": before, "during": during, "after": v.t.winfo_width(), "expect": expect}
             # Teamwork: Raum als Gastgeber auf 127.0.0.1, Seitenleiste mit Symbolen
             app.set_mode("room")
             with mock.patch.object(app.room, "show_invite"):
@@ -162,6 +180,9 @@ class GuiSmoke(unittest.TestCase):
         self.assertEqual(report["errors"], [], result.stderr)
         self.assertTrue(report["connected"], report)
         self.assertTrue(report["wheel_scrolled"], "Mausrad scrollt den Chat nicht")
+        col = report["column"]
+        self.assertEqual(col["during"], col["before"], f"Spalte ändert beim Ziehen ihre Breite: {col}")
+        self.assertLessEqual(abs(col["after"] - col["expect"]), 2, f"Spalte hat danach nicht die richtige Breite: {col}")
         if report["render"]:  # Icon-Schrift da: Seitenleiste des Raums mit Symbolen (wie unter Windows)
             self.assertGreaterEqual(report["room_icons"], 5, report)
         if sys.platform.startswith("linux") and importable("PIL"):

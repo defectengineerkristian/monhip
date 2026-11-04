@@ -7,6 +7,7 @@ import queue
 import secrets
 import sys
 import threading
+import time
 import tkinter as tk
 from collections import deque
 from datetime import datetime, timedelta
@@ -166,6 +167,7 @@ class App:
         self.stream_q: deque = deque()   # Chat-Ereignisse in Reihenfolge (Text wird daraus gleichmäßig „getippt“)
         self.turn: dict = {}             # Zustand der laufenden Antwort
         self._draining = False
+        self._poll_cost = 0.0            # geglättete Dauer eines Durchlaufs von _poll_events (Sekunden)
         self.attachments: list[dict] = []
         self.quote: str | None = None    # „Antworten“ auf eine markierte Stelle
         self.expert_job: experte.Job | None = None   # laufende Auswertung (Experten-Modus, höchstens eine)
@@ -2525,7 +2527,17 @@ class App:
         """Ereignisse aus den Threads abholen. Die nächste Runde wird zuerst geplant, damit es auch weitergeht,
         während ein Handler einen Dialog offen hält (verschachtelte Ereignisschleife)."""
         fast = self.busy or self.stream_q or self.room.ai_busy  # während einer Antwort flüssiger
-        self.root.after(15 if fast else 50, self._poll_events)
+        # Kostet das Zeichnen viel (sehr lange Absätze), seltener ausgeben – mindestens die Hälfte der Zeit bleibt
+        # so für Maus und Tastatur (Ziehen am Fenster, Tippen); der Rückstand kommt dann in größeren Stücken
+        self.root.after(max(15, min(150, round(2000 * self._poll_cost))) if fast else 50, self._poll_events)
+        started = time.perf_counter()
+        try:
+            self._poll_once()
+        finally:
+            spent = min(time.perf_counter() - started, 0.2)  # ein offener Dialog darin zählt nicht voll
+            self._poll_cost = 0.7 * self._poll_cost + 0.3 * spent if fast else 0.0
+
+    def _poll_once(self):
         logs = []
         try:
             while True:

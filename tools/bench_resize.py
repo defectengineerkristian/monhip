@@ -94,7 +94,12 @@ def main():
 
         root = tk.Tk()
         app = monhip.App(root)
-        root.geometry("1100x800+0+0")
+        # Größen nach dem Bildschirm (GitHub-Windows-Rechner: 1024 × 768 – größer wird das Fenster dort nicht)
+        sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+        root.minsize(500, 400)
+        hi_w, base_h = min(1700, sw - 40), min(800, sh - 120)
+        start_w = min(1100, hi_w - 100)
+        root.geometry(f"{start_w}x{base_h}+0+0")
         for _ in range(20):
             root.update()
             time.sleep(0.02)
@@ -105,26 +110,29 @@ def main():
         app.view.scroll_end()
         root.update()
 
-        widen = [(w, 800) for w in range(1100, 1700, 8)]
-        narrow = [(w, 800) for w in range(1100, 760, -6)]       # schmaler als die Chat-Spalte: Text bricht um
-        taller = [(1100, h) for h in range(800, 1000, 5)]
-        result = {"system": sys.platform, "tk": root.tk.call("info", "patchlevel"), "chat_rounds": rounds,
-                  "fill_ms": round(fill_ms)}
+        widen = [(w, base_h) for w in range(start_w, hi_w, 8)]
+        # schmaler als die Chat-Spalte (um 900 px Fensterbreite): hier bricht Tk den Text um
+        narrow = [(w, base_h) for w in range(min(1000, sw - 40), 700, -6)]
+        taller = [(start_w, h) for h in range(base_h - 200, min(base_h + 200, sh - 60), 5)]
+        result = {"system": sys.platform, "tk": root.tk.call("info", "patchlevel"), "screen": f"{sw}x{sh}",
+                  "chat_rounds": rounds, "fill_ms": round(fill_ms)}
         prof = cProfile.Profile() if profile else None
         if prof:
             prof.enable()
         result["widen"] = stats(measure(root, widen))
         if prof:
             prof.disable()
-        root.geometry("1100x800")
+        root.geometry(f"{narrow[0][0]}x{base_h}")
         root.update()
         result["narrow"] = stats(measure(root, narrow))
-        root.geometry("1100x800")
+        root.geometry(f"{start_w}x{base_h - 200}")
         root.update()
         result["taller"] = stats(measure(root, taller))
+        root.geometry(f"{start_w}x{base_h}")
+        root.update()
         app.set_mode("room")
         root.update()
-        result["room_widen"] = stats(measure(root, [(w, 800) for w in range(1100, 1500, 8)]))
+        result["room_narrow"] = stats(measure(root, narrow))
         app.set_mode("chat")
         root.update()
         result["widgets"] = count_widgets(root)
@@ -141,15 +149,15 @@ def main():
 
         view._place_column = left
         view.t.master.bind("<Configure>", left)
-        root.geometry("1100x800")
+        root.geometry(f"{start_w}x{base_h}")
         root.update()
         result["variant_left_column"] = stats(measure(root, widen))
         view._place_column = centered
         view.t.master.bind("<Configure>", centered)
         view.clear()
-        root.geometry("1100x800")
+        root.geometry(f"{narrow[0][0]}x{base_h}")
         root.update()
-        result["variant_empty_chat"] = stats(measure(root, widen))
+        result["variant_empty_chat_narrow"] = stats(measure(root, narrow))
         print(json.dumps(result, ensure_ascii=False))
         if prof:
             out = io.StringIO()

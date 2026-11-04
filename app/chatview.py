@@ -110,6 +110,7 @@ class ChatView:
         self._layout_job = None
         self._col_w = None           # Breite, die die Spalte gerade hat (_place_column)
         self._col_job = None         # verzögertes Übernehmen einer neuen Breite beim Ziehen
+        self._col_t = 0.0            # Zeitpunkt der letzten Größenänderung des Rahmens (time.monotonic)
         self._anim_job = None
         self._live: set[int] = set()
         self._pending = False
@@ -393,7 +394,9 @@ class ChatView:
         """Spalte mittig setzen. Ist das Fenster schmaler als die Spalte, ändert sich beim Ziehen ihre Breite – dann
         bricht Tk den ganzen Verlauf neu um (Windows, langer Chat: ~40 ms je Schritt, das Ziehen ruckelt). Deshalb
         bleibt die Breite beim Ziehen, wie sie ist (die Spalte wird nur verschoben bzw. rechts abgeschnitten), und
-        die neue kommt einmal, sobald die Größe COLUMN_SETTLE_MS lang gleich bleibt."""
+        die neue kommt einmal, sobald die Größe COLUMN_SETTLE_MS lang gleich bleibt. Ein einzelner Sprung
+        (Maximieren, Andocken an den Bildschirmrand, Seitenleiste) gilt sofort – verzögert wird nur, wenn die
+        vorige Änderung weniger als COLUMN_SETTLE_MS zurückliegt."""
         if not self.active:
             return
         frame = self.t.master
@@ -404,9 +407,12 @@ class ChatView:
         if self._col_job:
             self.t.after_cancel(self._col_job)
             self._col_job = None
-        if e is not None and self._col_w and width != self._col_w:
-            self._col_job = self.t.after(COLUMN_SETTLE_MS, self._settle_column)
-            width = self._col_w
+        if e is not None:
+            now = time.monotonic()
+            dragging, self._col_t = now - self._col_t < COLUMN_SETTLE_MS / 1000, now
+            if dragging and self._col_w and width != self._col_w:
+                self._col_job = self.t.after(COLUMN_SETTLE_MS, self._settle_column)
+                width = self._col_w
         self._col_w = width
         self.t.place(x=max(0, (avail - width) // 2), y=0, width=width, height=height)
 

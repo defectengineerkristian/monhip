@@ -22,17 +22,19 @@ sys.path.insert(0, str(APP))
 
 
 def fill_chat(view, rounds: int):
+    """Langer Chat wie beim Öffnen eines gespeicherten (view.batch: erst am Ende einmal ans Ende scrollen)."""
     code = "\n".join(f"    wert_{i} = berechne({i}, faktor=2)  # Zeile {i}" for i in range(18))
-    for i in range(rounds):
-        view.user(f"Frage {i}: Wie geht das mit **Monhip** und langen Antworten? " + "Mehr Kontext. " * 6)
-        n = view.tool_begin("Websuche", f"suche {i}", '{"query": "monhip"}', icon="🌐")
-        view.tool_end(n, "Ergebnis " * 40, True)
-        view.markdown(
-            f"## Antwort {i}\n\n" + "Ein längerer Absatz mit *kursiv*, **fett** und `Code`. " * 12 + "\n\n"
-            "- Punkt eins mit etwas Text\n- Punkt zwei mit noch mehr Text\n  - eingerückt\n\n"
-            f"```python\ndef beispiel_{i}():\n{code}\n```\n\n"
-            "| Spalte A | Spalte B | Spalte C |\n|---|---|---|\n" + "| 1 | zwei | drei |\n" * 6)
-        view.footer("{}", 23.5)
+    with view.batch():
+        for i in range(rounds):
+            view.user(f"Frage {i}: Wie geht das mit **Monhip** und langen Antworten? " + "Mehr Kontext. " * 6)
+            n = view.tool_begin("Websuche", f"suche {i}", '{"query": "monhip"}', icon="🌐")
+            view.tool_end(n, "Ergebnis " * 40, True)
+            view.markdown(
+                f"## Antwort {i}\n\n" + "Ein längerer Absatz mit *kursiv*, **fett** und `Code`. " * 12 + "\n\n"
+                "- Punkt eins mit etwas Text\n- Punkt zwei mit noch mehr Text\n  - eingerückt\n\n"
+                f"```python\ndef beispiel_{i}():\n{code}\n```\n\n"
+                "| Spalte A | Spalte B | Spalte C |\n|---|---|---|\n" + "| 1 | zwei | drei |\n" * 6)
+            view.footer("{}", 23.5)
 
 
 def measure(root, steps, settle=0.0):

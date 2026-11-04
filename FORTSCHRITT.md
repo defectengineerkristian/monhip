@@ -8,6 +8,20 @@ immer mit festen Daten (TT.MM.JJJJ).
 ---
 
 ## Seit v1.4.6
+- 04.11.2026: Fenster ziehen und lange Antworten flüssiger. Ist das Fenster schmaler als die Chatspalte (z. B. an
+  den halben Bildschirm angedockt und dann größer gezogen), behält die Spalte beim Ziehen ihre Breite und bricht erst
+  um, wenn das Ziehen 120 ms innehält (`chatview.COLUMN_SETTLE_MS`); ein einzelner Sprung (Maximieren, Andocken) gilt
+  sofort. Vorher brach Tk bei jedem Schritt den ganzen Verlauf neu um – Windows (GitHub-Rechner, langer Chat): ~41 →
+  ~20 ms je Schritt, so viel wie mit leerem Chat. Gestreamte Antworten: Die angefangene Zeile wird nicht mehr bei
+  jedem Häppchen ganz neu gesetzt, sondern nur ab dem ersten geänderten Stück (`ChatView._show_partial`; bei langen
+  Absätzen war das quadratisch langsam: 2 000 Zeichen 4,0 → 2,6 s, 6 000 Zeichen 82 → 45 s Zeichenarbeit), und
+  `_poll_events` gibt bei teurem Zeichnen seltener aus (15–150 ms nach der gemessenen Dauer), damit Maus und Tastatur
+  dazwischen drankommen (längste Wartezeit beim Streamen 56 → 34 ms). Design-Bilder (runde Knöpfe und Felder):
+  Form nur einmal je Radius, jede Abdeckung nur einmal gemischt, Ergebnis zwischengespeichert – Designwechsel ~170 →
+  ~85 ms (zurück zu einem schon benutzten ~60 ms), Start ~40 ms schneller, Bilder Byte für Byte gleich
+  (`tests/test_themes.py`). Messwerkzeug `tools/bench_resize.py` (langer Chat, Fenster in kleinen Schritten ziehen;
+  läuft in der CI auf Windows und Linux mit), neue Tests `tests/test_chat_stream.py` (jeder Zwischenstand gleicht
+  Zeichen für Zeichen dem früheren Neusetzen) und Ziehen in `tests/test_gui_smoke.py`.
 - 04.11.2026: Symbole jetzt auch unter Linux: `app/fonts/MonhipIcons.ttf` (9 KB) enthält genau die 45 Symbole von
   Monhip aus Fluent UI System Icons (Microsoft, MIT-Lizenz – derselbe Stil wie Segoe Fluent Icons unter Windows),
   gebaut mit `tools/icon_font.py`; Monhip meldet sie nur für sich bei fontconfig an (Textfelder) und zeichnet die

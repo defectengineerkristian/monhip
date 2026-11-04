@@ -108,23 +108,31 @@ def gui_worker():
             for _ in range(8):  # ~0,15 s weiches Scrollen
                 yield
             report["wheel_scrolled"] = v.t.yview()[0] > 0
-            # Ziehen in einem schmalen Fenster: Spaltenbreite bleibt beim Ziehen, danach kommt die passende
+            # Ziehen in einem schmalen Fenster: Spaltenbreite bleibt beim Ziehen, danach kommt die passende;
+            # ein einzelner Sprung (Maximieren, Andocken) gilt sofort
             root.minsize(400, 300)
             root.geometry("820x700")
             for _ in range(5):
                 yield
             time.sleep(0.25)
             yield
+            frame = v.t.master
+
+            def expect():
+                return min(frame.winfo_width() - v._sb.winfo_width(), v._s(chatview.MAX_COLUMN) + 2 * v._padx)
+
+            root.geometry("790x700")  # erster Schritt nach einer Pause: sofort
+            root.update()
+            jump = {"width": v.t.winfo_width(), "expect": expect()}
             before = v.t.winfo_width()
-            root.geometry("760x700")
+            root.geometry("760x700")  # gleich danach: Ziehen
             root.update()
             during = v.t.winfo_width()
             time.sleep(0.25)
             yield
             yield
-            frame = v.t.master
-            expect = min(frame.winfo_width() - v._sb.winfo_width(), v._s(chatview.MAX_COLUMN) + 2 * v._padx)
-            report["column"] = {"before": before, "during": during, "after": v.t.winfo_width(), "expect": expect}
+            report["column"] = {"before": before, "during": during, "after": v.t.winfo_width(), "expect": expect(),
+                                "jump": jump}
             # Teamwork: Raum als Gastgeber auf 127.0.0.1, Seitenleiste mit Symbolen
             app.set_mode("room")
             with mock.patch.object(app.room, "show_invite"):
@@ -183,6 +191,8 @@ class GuiSmoke(unittest.TestCase):
         col = report["column"]
         self.assertEqual(col["during"], col["before"], f"Spalte ändert beim Ziehen ihre Breite: {col}")
         self.assertLessEqual(abs(col["after"] - col["expect"]), 2, f"Spalte hat danach nicht die richtige Breite: {col}")
+        self.assertLessEqual(abs(col["jump"]["width"] - col["jump"]["expect"]), 2,
+                             f"einzelner Größensprung wartet unnötig: {col}")
         if report["render"]:  # Icon-Schrift da: Seitenleiste des Raums mit Symbolen (wie unter Windows)
             self.assertGreaterEqual(report["room_icons"], 5, report)
         if sys.platform.startswith("linux") and importable("PIL"):

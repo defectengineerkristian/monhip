@@ -14,7 +14,7 @@ field comes from `MONHIP_MAINTAINER="Name <mail>"`, otherwise from `DEBFULLNAME`
 Install it with apt, so the dependencies come along:
 
 ```sh
-sudo apt install ./dist/monhip_1.4.6_all.deb
+sudo apt install ./dist/monhip_1.4.7_all.deb
 ```
 
 ## What gets installed

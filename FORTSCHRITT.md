@@ -3,11 +3,11 @@
 Was in welcher Version umgesetzt wurde, neueste zuerst. Neues kommt oben unter „Seit vX“ (bis zum nächsten Release),
 immer mit festen Daten (TT.MM.JJJJ).
 
-**Stand:** 02.11.2026 · **neuestes Release:** v1.4.6
+**Stand:** 05.11.2026 · **neuestes Release:** v1.4.7
 
 ---
 
-## Seit v1.4.6
+## v1.4.7 – 05.11.2026
 - 05.11.2026: Jupyter-Notebooks für den Agenten (`app/notebook.py`, Werkzeuggruppe „Jupyter-Notebooks“).
   `notebook_lesen` zeigt jede Zelle mit Nummer, Typ und Inhalt, dazu gekürzte Ausgaben und Fehler (Ende des
   Tracebacks, ohne Farbcodes). Abbildungen (PNG/JPG aus den Ausgaben, Bilder in Markdown-Zellen) gehen wie bei

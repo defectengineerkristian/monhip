@@ -3,11 +3,89 @@
 Was in welcher Version umgesetzt wurde, neueste zuerst. Neues kommt oben unter „Seit vX“ (bis zum nächsten Release),
 immer mit festen Daten (TT.MM.JJJJ).
 
-**Stand:** 30.10.2026 · **neuestes Release:** v1.4.6
+**Stand:** 05.11.2026 · **neuestes Release:** v1.4.7
 
 ---
 
-## Seit v1.4.6
+## v1.4.7 – 05.11.2026
+- 05.11.2026: Jupyter-Notebooks für den Agenten (`app/notebook.py`, Werkzeuggruppe „Jupyter-Notebooks“).
+  `notebook_lesen` zeigt jede Zelle mit Nummer, Typ und Inhalt, dazu gekürzte Ausgaben und Fehler (Ende des
+  Tracebacks, ohne Farbcodes). Abbildungen (PNG/JPG aus den Ausgaben, Bilder in Markdown-Zellen) gehen wie bei
+  `view_image` als Bild ans Modell – höchstens 4 je Aufruf, ohne Bildverständnis nur ihre Größe; interaktive Ausgaben
+  (plotly, Widgets) werden als solche benannt. `notebook_zelle` ersetzt, fügt ein oder löscht Zellen (ersetzte
+  Code-Zellen verlieren ihre alten Ausgaben), `notebook_anlegen` legt neue Notebooks an – geschrieben wie von Jupyter
+  selbst (dieselben Bytes wie nbformat), mit Checkpoint. Mit „Befehle & Programme“ dazu `notebook_ausfuehren`: von
+  oben in einem frischen Kernel (wie „Restart Kernel and Run All“), Halt an der ersten Zelle mit Fehler, Ausgaben im
+  Notebook gespeichert, Ergebnis samt neuer Abbildungen zurück ans Modell. Monhip sucht dafür ein Python mit Jupyter
+  (`.venv`/`venv` beim Notebook, Anaconda/Miniconda, `jupyter`, `py`, das eigene, `python3`) und startet dort
+  `app/notebook_runner.py`; startet der Kernel aus dem Notebook nicht, läuft es mit diesem Python. Wird das Notebook
+  während des Laufs in Jupyter gespeichert, bleibt diese Fassung. `read_file` zeigt Notebooks wie `notebook_lesen`,
+  `write_file`/`edit_file` lehnen alles ab, was kein gültiges Notebook mehr wäre. Tests `tests/test_notebook.py`
+  (Ausführen mit echtem Kernel, wenn Jupyter da ist – in der CI auf Windows und Linux); das Linux-Paket schlägt
+  `python3-nbclient` und `python3-ipykernel` vor.
+- 04.11.2026: Fenster ziehen und lange Antworten flüssiger. Ist das Fenster schmaler als die Chatspalte (z. B. an
+  den halben Bildschirm angedockt und dann größer gezogen), behält die Spalte beim Ziehen ihre Breite und bricht erst
+  um, wenn das Ziehen 120 ms innehält (`chatview.COLUMN_SETTLE_MS`); ein einzelner Sprung (Maximieren, Andocken) gilt
+  sofort. Vorher brach Tk bei jedem Schritt den ganzen Verlauf neu um – Windows (GitHub-Rechner, langer Chat): ~41 →
+  ~20 ms je Schritt, so viel wie mit leerem Chat. Gestreamte Antworten: Die angefangene Zeile wird nicht mehr bei
+  jedem Häppchen ganz neu gesetzt, sondern nur ab dem ersten geänderten Stück (`ChatView._show_partial`; bei langen
+  Absätzen war das quadratisch langsam: 2 000 Zeichen 4,0 → 2,6 s, 6 000 Zeichen 82 → 45 s Zeichenarbeit), und
+  `_poll_events` gibt bei teurem Zeichnen seltener aus (15–150 ms nach der gemessenen Dauer), damit Maus und Tastatur
+  dazwischen drankommen (längste Wartezeit beim Streamen 56 → 34 ms). Design-Bilder (runde Knöpfe und Felder):
+  Form nur einmal je Radius, jede Abdeckung nur einmal gemischt, Ergebnis zwischengespeichert – Designwechsel ~170 →
+  ~85 ms (zurück zu einem schon benutzten ~60 ms), Start ~40 ms schneller, Bilder Byte für Byte gleich
+  (`tests/test_themes.py`). Messwerkzeug `tools/bench_resize.py` (langer Chat, Fenster in kleinen Schritten ziehen;
+  läuft in der CI auf Windows und Linux mit), neue Tests `tests/test_chat_stream.py` (jeder Zwischenstand gleicht
+  Zeichen für Zeichen dem früheren Neusetzen) und Ziehen in `tests/test_gui_smoke.py`.
+- 04.11.2026: Symbole jetzt auch unter Linux: `app/fonts/MonhipIcons.ttf` (9 KB) enthält genau die 45 Symbole von
+  Monhip aus Fluent UI System Icons (Microsoft, MIT-Lizenz – derselbe Stil wie Segoe Fluent Icons unter Windows),
+  gebaut mit `tools/icon_font.py`; Monhip meldet sie nur für sich bei fontconfig an (Textfelder) und zeichnet die
+  Knopf-Bilder mit Pillow statt GDI. Linux außerdem: Mausrad in Chat, Karten und Teamwork-Seitenleiste (Tk 8.6
+  meldet es dort als Taste 4/5 – `widgets.bind_wheel`), Python-Projekte mit `python3` statt `py`, Python als
+  Entwicklerwerkzeug erkannt (`python3`), Design „Tk-Standard“ statt „Windows-Standard“ (mit `clam`), Signalton bei
+  Fehlern, Laufwerksliste mit allen eingehängten Datenträgern, Git-Hinweis ohne Windows-Link. Neue Rauchtests
+  (`tests/test_tools_smoke.py`: alle lokalen Werkzeuge echt ausgeführt; `tests/test_gui_smoke.py`: alle
+  Einstellungen, Designs, Chat, Mausrad, Teamwork-Raum als Gastgeber) und `.github/workflows/tests.yml`: alle Tests
+  bei jedem Push auf Ubuntu 24.04 und Windows (Python 3.13), dazu der Build des Windows-Installers.
+- 03.11.2026: Linux, NVIDIA: llama.cpp lief trotz CUDA-Build auf dem Prozessor – die Linux-Archive haben je einen
+  Hauptordner, und die CUDA-Laufzeit (`cudart-llama-…/`, u. a. `libcudart.so.13`) blieb beim Entpacken in ihrem
+  Unterordner, wo llama-server sie nicht fand (Windows-Zips haben keinen Hauptordner, dort kein Problem).
+  `downloads.install_zips` entpackt jetzt jedes Archiv für sich und zieht dessen Hauptordner hoch;
+  `backend.library_dirs` nimmt Unterordner mit `.so`-Dateien in `LD_LIBRARY_PATH` auf, damit schon so installierte
+  Versionen ohne neuen Download (545 MB) auf der Grafikkarte laufen. Paket empfiehlt zusätzlich `pciutils`,
+  `libvulkan1` und `mesa-vulkan-drivers`.
+- 02.11.2026: Quelltext des Windows-Installers zurückgewonnen (ILSpy aus der bisherigen `Monhip-Setup.exe`) –
+  `installer/windows/` (C#, .NET Framework 4.8, `Monhip-Setup.csproj`, Original-Manifest, Symbol aus
+  `app/monhip.ico`); baut mit dem .NET SDK auch unter Linux und gleicht dem Original (dieselben Methoden, alle 621
+  Texte gleich). Geändert: `checkpoints` steht auf der Schutzliste und lässt sich beim Deinstallieren mit entfernen
+  (vorher blieb er – und damit der Installationsordner – nach einer vollständigen Deinstallation stehen; Updates
+  ließen ihn schon immer in Ruhe), Versionsangaben der Datei kommen vom Release. GitHub Action
+  `.github/workflows/windows-setup.yml` baut bei jedem Release `Monhip-Setup.exe` und hängt sie samt `.sha256` an
+  (fester Name: `releases/latest/download/Monhip-Setup.exe`). Neuer Test: Jeder Datenname aus `app/` steht auf der
+  Schutzliste, in der Deinstallation und in `.gitignore`.
+- 02.11.2026: GitHub Action `.github/workflows/linux-deb.yml`: bei jedem veröffentlichten Release (oder von Hand für
+  einen Tag) Tag gegen `VERSION` prüfen, Tests, `.deb` bauen, auf Ubuntu 24.04 installieren und starten, dann
+  `.deb` und `.sha256` an das Release hängen. Den Windows-Installer (`Monhip-Setup.exe`, C#) zerlegt und in
+  `installer/windows/README.md` beschrieben: lädt das Quell-ZIP des Releases und tauscht die Einträge der vorigen
+  Version aus – `app/plattform.py` kommt also von selbst mit, angehängte Dateien stören nicht.
+- 02.11.2026: Linux-Paket – `installer/linux/build-deb.sh` baut `dist/monhip_<Version>_all.deb` (nur python3 und
+  dpkg-deb): Programm nach `/opt/monhip`, Starter `/usr/bin/monhip`, Menüeintrag, Symbol (PNG aus `monhip.ico`),
+  Abhängigkeiten und Empfehlungen wie in der README; `postinst` übersetzt `app/` vor, `prerm` räumt die Caches weg.
+  Daten dafür nicht mehr fest neben dem Programm: `plattform.DATA_DIR` – wie bisher neben `Monhip.pyw`, außer
+  `MONHIP_DATA` ist gesetzt (das Paket: `~/.local/share/monhip`) oder der Programmordner unter Linux schreibgeschützt;
+  unter Windows ohne `MONHIP_DATA` unverändert. Fensterklasse unter Linux „Monhip“ (passt zu `StartupWMClass`).
+  `installer/windows/` für die Quellen des Windows-Installers (README: was sich für ihn ändert). Unter Ubuntu 24.04
+  gebaut, mit apt installiert, gestartet, neu installiert und entfernt; neuer Test `tests/test_installer.py`.
+- 02.11.2026: Monhip läuft unter Linux – derselbe Code, alles Systemabhängige in `app/plattform.py` (öffnen,
+  Papierkorb, Prozesse, Shell, Schriften) und Linux-Zweigen der Module. llama.cpp lädt die `ubuntu`-Builds (tar.gz,
+  CPU/Vulkan/CUDA, GPU über lspci bzw. /sys), llama-server und Befehle enden mit Monhip (PR_SET_PDEATHSIG aus einem
+  eigenen Start-Thread), Befehle in bash statt PowerShell (Prompt und Werkzeugtexte angepasst), Bilder mit Pillow,
+  Bildschirmfotos mit grim/gnome-screenshot/spectacle bzw. ImageMagick/scrot, Zwischenablage über Tk bzw.
+  xclip/wl-clipboard, Drag & Drop mit tkdnd, Mikrofon mit pw-record/parecord/arecord, whisper-cli aus dem PATH (das
+  Modell lädt Monhip), Seitenbilder für den Experten-Modus mit pdftoppm, Erinnerungen mit notify-send, PDFs mit
+  Noto/Liberation/DejaVu. „Programme bedienen“ bleibt Windows-only (unter Linux ausgeblendet). Paketliste in der
+  README. Unter Windows unverändert; behoben nebenbei: `encoding="oem"` und `os.startfile` brachen unter Linux ab,
+  `mark_from_internet` legte dort eine Datei „…:Zone.Identifier“ an. Neue Tests `tests/test_plattform.py`.
 - 30.10.2026: Leerer Chat ohne Anhang-Hinweis – unter „Womit kann ich helfen?“ steht nur noch das geladene Modell.
 
 ## v1.4.6 – 30.10.2026

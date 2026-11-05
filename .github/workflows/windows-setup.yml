@@ -1,0 +1,82 @@
+# Windows-Installer für jedes Release: baut Monhip-Setup.exe aus installer/windows (C#, .NET Framework 4.8 – geht
+# mit dem .NET SDK auch unter Linux) mit der Version des Releases und hängt sie samt SHA-256 an das Release.
+# Fester Dateiname, damit .../releases/latest/download/Monhip-Setup.exe immer den neuesten Installer liefert.
+# Nachträglich für ein bestehendes Release: Actions → „Windows-Installer (Monhip-Setup.exe)“ → Run workflow → Tag.
+name: Windows-Installer (Monhip-Setup.exe)
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release-Tag, an das der Installer gehängt wird (z. B. v1.4.7)"
+        required: true
+
+permissions:
+  contents: write  # Dateien an das Release hängen
+
+concurrency:
+  group: windows-setup-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  setup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+    steps:
+      - name: Stand des Releases holen
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Tag und Version prüfen
+        run: |
+          if [ ! -f installer/windows/Monhip-Setup.csproj ]; then
+            echo "::error::$TAG enthält noch keinen Quelltext des Installers (installer/windows) – erst Releases danach."
+            exit 1
+          fi
+          version=$(sed -n 's/^VERSION = "\([^"]*\)".*/\1/p' app/monhip.py | head -n 1)
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::Release-Tag $TAG passt nicht zu VERSION = \"$version\" in app/monhip.py."
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: .NET SDK
+        run: |
+          if ! command -v dotnet >/dev/null; then
+            sudo apt-get update -q
+            sudo apt-get install -y -q dotnet-sdk-8.0
+          fi
+          dotnet --version
+
+      - name: Installer bauen
+        run: |
+          dotnet build installer/windows/Monhip-Setup.csproj -c Release -p:Version="$VERSION" \
+            -p:ContinuousIntegrationBuild=true -warnaserror
+          mkdir -p dist
+          cp installer/windows/bin/Release/net48/Monhip-Setup.exe dist/
+          file dist/Monhip-Setup.exe | grep -q "Mono/.Net assembly" || { echo "::error::Kein .NET-Programm"; exit 1; }
+          cd dist
+          sha256sum Monhip-Setup.exe > Monhip-Setup.exe.sha256
+          cat Monhip-Setup.exe.sha256
+
+      - name: An das Release hängen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$TAG" dist/Monhip-Setup.exe dist/Monhip-Setup.exe.sha256 --clobber --repo "$GITHUB_REPOSITORY"
+          {
+            echo "### Windows-Installer für $TAG"
+            echo
+            echo "\`Monhip-Setup.exe\` (Version $VERSION) hängt am Release: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
+            echo
+            echo '```'
+            cat dist/Monhip-Setup.exe.sha256
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

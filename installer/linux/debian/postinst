@@ -1,0 +1,8 @@
+#!/bin/sh
+# Python-Dateien einmal übersetzen: /opt/monhip ist für Nutzer schreibgeschützt, ohne __pycache__ würde Monhip
+# bei jedem Start alle Module neu übersetzen.
+set -e
+if [ "$1" = "configure" ]; then
+    /usr/bin/python3 -m compileall -q /opt/monhip/app >/dev/null 2>&1 || true
+fi
+exit 0

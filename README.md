@@ -6,7 +6,7 @@ where people and their local AI assistants can collaborate.
 
 Language models run on your own computer in GGUF format using
 [llama.cpp](https://github.com/ggml-org/llama.cpp). The interface is written in Python with Tkinter
-and is primarily in German. The current feature set is geared toward Windows.
+and is primarily in German. Monhip runs on Windows and Linux; see [Linux](#linux) for the differences.
 
 ## Features
 
@@ -44,7 +44,8 @@ Expert mode makes an entire document folder available as a knowledge source for 
 - pause and resume an analysis, and reanalyze changed files.
 
 Scanned PDFs can be read page by page using a suitable model's vision capabilities.
-The PDF rendering required for this uses Windows features. Results are stored separately
+The PDF rendering required for this uses Windows features (on Linux: `pdftoppm` from poppler-utils).
+Results are stored separately
 under `chats/experten/`; the source documents remain unchanged.
 
 ### Use the AI as an agent
@@ -55,8 +56,9 @@ a text response:
 - read, search, and edit files and folders in shared directories;
 - create Word documents, Excel spreadsheets, and PowerPoint presentations;
 - create coding projects from templates and work with existing development tools;
-- run PowerShell and Python commands, provided this feature is enabled;
+- run PowerShell (Windows) or Bash (Linux) and Python commands, provided this feature is enabled;
 - search the web and retrieve webpages as text;
+- work with Jupyter notebooks (see below);
 - save notes as memory across chats and create reminders.
 
 The settings define the working folder, additional shared folders, and available tools.
@@ -67,11 +69,40 @@ and its support for tool calls.
 Web search uses DuckDuckGo or, optionally, the Brave Search API. Brave requires
 your own API key.
 
+#### Jupyter notebooks
+
+With “Files & folders” enabled (tool group “Jupyter notebooks”), the model reads `.ipynb` files cell by
+cell with their outputs and errors, and changes, inserts or deletes individual cells. Output is kept
+short; errors keep the end of the traceback. **Figures** (plots and other PNG/JPG output, images in
+Markdown cells) are attached to the result as images, so a model with image understanding sees them, at
+most four per call. Other models only get each figure's size.
+
+With “Run commands & programs” enabled as well, the model runs a notebook from top to bottom in a fresh
+kernel (like “Restart Kernel and Run All”), stops at the first error, saves the outputs in the notebook
+and gets the outputs, errors and the new figures back. That way it can check and fix its own changes.
+Running needs Jupyter in a Python environment. Monhip itself does not. It looks for:
+
+- a `.venv`, `venv` or `env` folder next to the notebook or in a folder above it, up to the shared folder;
+- Anaconda or Miniconda in your home folder;
+- the Python behind the `jupyter` command;
+- `py` (Windows), then Monhip's own Python, then `python3` or `python`.
+
+To install Jupyter, use `py -m pip install notebook` on Windows, or
+`sudo apt install python3-nbclient python3-ipykernel jupyter-notebook` on Debian/Ubuntu (or
+`pip install notebook` in a virtual environment).
+If the notebook's kernel can't start (for example, it was written on another computer), Monhip uses
+that environment's own Python as the kernel and says so.
+
+Save a notebook that is open in Jupyter before asking the model, and reload it afterwards (*File →
+Reload Notebook from Disk*). If you save it while it is running, Monhip doesn't overwrite your version.
+Every change can be undone with the checkpoints.
+
 ### Convert speech to text locally
 
 [whisper.cpp](https://github.com/ggml-org/whisper.cpp) lets you transcribe microphone recordings
 and audio files locally. The application can download the required program and a
-speech recognition model. Microphone recording uses Windows interfaces.
+speech recognition model. Microphone recording uses Windows interfaces (on Linux: PipeWire, PulseAudio
+or ALSA). On Linux, whisper.cpp is not available as a ready-made download – see [Linux](#linux).
 
 ### Collaborate as a team
 
@@ -90,11 +121,10 @@ and requires a working network connection to that computer.
 
 ## Requirements
 
-- **Windows** for the intended full desktop feature set. Parts of the interface and document
-  processing can run on other operating systems; however, downloaders, microphone recording,
-  image processing, and other integrations use Windows technology.
-- **Python with Tkinter**, for example Python 3.12, to run from source.
-  The Python code uses the standard library; separate pip packages are not currently declared.
+- **Windows 10/11 or Linux** (x64 or arm64). On Linux, a few features need common system packages;
+  see [Linux](#linux).
+- **Python 3.12 or newer with Tkinter** to run from source. On Windows the Python code uses only
+  the standard library; on Linux, Pillow is used for images.
 - **A GGUF language model and llama.cpp** for AI responses. Model files are not included
   in the repository. RAM usage, GPU memory usage, and speed depend on the model
   and settings.
@@ -122,6 +152,55 @@ and requires a working network connection to that computer.
 Model inference runs locally. Downloads, web search, and page retrieval require internet
 access; Teamwork mode transfers shared content to the participating computers.
 
+## Linux
+
+Monhip uses the same code on both systems; everything that differs is collected in `app/plattform.py`
+and in Linux branches of the affected modules.
+
+On Debian and Ubuntu (24.04 or newer), the easiest way is the package built by
+`installer/linux/build-deb.sh` (see [installer/linux](installer/linux/README.md)): it installs Monhip to
+`/opt/monhip`, adds a menu entry and pulls in everything listed below. Its data lives in
+`~/.local/share/monhip`.
+
+To run from source instead, Monhip relies on common system programs. On Debian and Ubuntu, this
+installs all of them:
+
+```sh
+sudo apt install python3 python3-tk python3-pil xdg-utils pciutils libvulkan1 mesa-vulkan-drivers \
+    poppler-utils libnotify-bin xclip wl-clipboard tkdnd pipewire-bin alsa-utils
+```
+
+| Package | Used for |
+| --- | --- |
+| `python3-tk` | the interface (Tkinter) |
+| `python3-pil` (Pillow) | image previews, images from the clipboard, `bilder_bearbeiten`, screenshots on X11 |
+| `xdg-utils` | opening files and folders (`xdg-open`) |
+| `pciutils` | recognizing the graphics card (`lspci`) to download the right llama.cpp build |
+| `libvulkan1`, `mesa-vulkan-drivers` | the Vulkan build of llama.cpp on AMD and Intel graphics (NVIDIA: CUDA build, needs the proprietary NVIDIA driver) |
+| `poppler-utils` | scanned PDFs in expert mode (`pdftoppm`, `pdfinfo`) |
+| `libnotify-bin` | reminders as desktop notifications (`notify-send`) |
+| `xclip` / `wl-clipboard` | clipboard for the AI tools and for pasting files and images (X11 / Wayland) |
+| `tkdnd` | drag & drop of files onto the window (optional) |
+| `pipewire-bin` or `alsa-utils` | microphone recording (`pw-record`, `parecord` or `arecord`) |
+
+Other distributions have packages with similar names. Additional notes:
+
+- **llama.cpp** is downloaded as on Windows (the `ubuntu` builds: CPU, Vulkan or CUDA, depending on the
+  graphics card). A `llama-server` installed elsewhere on the system is found automatically.
+- **whisper.cpp** is not offered as a ready-made Linux program. Install `whisper-cli` with your package
+  manager or build it from [source](https://github.com/ggml-org/whisper.cpp); Monhip finds it in `PATH`
+  and downloads the speech recognition model itself.
+- **Screenshots** use `grim`, `gnome-screenshot` or `spectacle` on Wayland, and Pillow, ImageMagick
+  (`import`), `scrot` or `maim` on X11.
+- **Commands** run in Bash instead of PowerShell. `sudo` is not possible because nobody could enter the
+  password.
+- **Operating program windows** (keyboard and mouse control) is only available on Windows; the option
+  is hidden on Linux.
+- **Icons** come from [Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons)
+  (Microsoft, MIT License): `app/fonts/MonhipIcons.ttf` contains just the 45 icons Monhip uses and is built
+  with `tools/icon_font.py`. On Windows, Monhip uses the system's Segoe Fluent Icons as before.
+- Deleted files go to the desktop trash (`gio trash`, or `~/.local/share/Trash` directly).
+
 ## Interface language
 
 Since version 1.3, you can choose between **Deutsch** and **English** under
@@ -130,7 +209,7 @@ the next time you start Monhip.
 
 On first launch without a saved language choice, Monhip automatically detects the system language:
 German systems use the German interface; English and all other system languages use English.
-On Windows, the Windows display language is used for this. A language selected manually
+On Windows, the Windows display language is used for this; on Linux, the locale (`LANG`). A language selected manually
 later takes precedence over the system language.
 
 The interface language is independent of speech recognition and the AI model's system prompt.
@@ -139,16 +218,21 @@ or changed when you switch languages.
 
 ## Local data and project structure
 
-Monhip stores settings and usage data alongside the startup program:
+Monhip stores settings and usage data alongside the startup program – or in the folder named by the
+environment variable `MONHIP_DATA` (the Linux package uses `~/.local/share/monhip`):
 
 | Path | Contents |
 | --- | --- |
 | `Monhip.pyw` | Entry point for starting the application |
 | `app/` | Interface, model integration, agent tools, and other Python modules |
+| `installer/` | Linux package and Windows installer (`Monhip-Setup.exe`) – see [installer](installer/README.md) |
+| `tests/` | Automated tests (`python -m unittest discover -s tests`), run on Windows and Linux for every push |
+| `tools/` | Developer tools, e.g. `icon_font.py` to rebuild the icon font |
 | `config.json` | Application settings |
 | `modelle/` | Local GGUF models and speech recognition models |
 | `server/` | Downloaded llama.cpp and whisper.cpp programs |
 | `chats/` | Saved conversations, attached images, and expert analyses |
+| `checkpoints/`, `raeume/` | Undo points for file changes, Teamwork rooms |
 | `gedaechtnis.json` | The AI's notes across chats |
 | `erinnerungen.json` | Saved reminders |
 

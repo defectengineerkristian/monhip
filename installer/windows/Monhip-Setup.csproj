@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Monhip-Setup.exe: Installer, Starter (Monhip.exe), Updater und Deinstallation für Windows.
+       Der Quelltext in src/ ist aus der bisherigen Monhip-Setup.exe zurückgewonnen (ILSpy) und läuft auf dem
+       .NET Framework 4.8, das jedes aktuelle Windows mitbringt. Bauen geht auch unter Linux:
+         dotnet build installer/windows/Monhip-Setup.csproj -c Release -p:Version=1.4.7 -->
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>Monhip-Setup</AssemblyName>
+    <RootNamespace>MonhipInstaller</RootNamespace>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <Deterministic>true</Deterministic>
+    <ApplicationIcon>..\..\app\monhip.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>0.0.0</Version>
+    <Product>Monhip</Product>
+    <AssemblyTitle>Monhip Setup</AssemblyTitle>
+    <Description>Installiert, startet, aktualisiert und entfernt Monhip.</Description>
+    <Company>defectengineerkristian</Company>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="src\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Web.Extensions" />
+    <Reference Include="System.Management" />
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="System.IO.Compression.FileSystem" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Referenz-Assemblies des .NET Framework: so baut das Projekt auch ohne Windows (Linux, GitHub Actions) -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

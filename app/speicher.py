@@ -34,9 +34,28 @@ def size_text(n: float) -> str:
     return ""
 
 
+def _mounts() -> list[str]:
+    """Linux: eingehängte Datenträger (/, /home, USB-Sticks …) – ohne Snap-Abbilder und Doppelte."""
+    found, seen = [], set()
+    try:
+        lines = Path("/proc/mounts").read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ["/"]
+    for line in lines:
+        parts = line.split()
+        if len(parts) < 3 or not parts[0].startswith("/dev/") or parts[2] in ("squashfs", "iso9660"):
+            continue
+        point = parts[1].replace("\\040", " ")
+        if point.startswith(("/snap/", "/boot")) or parts[0] in seen:
+            continue
+        seen.add(parts[0])
+        found.append(point)
+    return sorted(found, key=lambda p: (p != "/", p)) or ["/"]
+
+
 def drives() -> list[str]:
-    """Belegung aller Laufwerke (Windows: A:–Z:)."""
-    roots = [f"{c}:\\" for c in string.ascii_uppercase if os.path.exists(f"{c}:\\")] if os.name == "nt" else ["/"]
+    """Belegung aller Laufwerke (Windows: A:–Z:, Linux: eingehängte Datenträger)."""
+    roots = [f"{c}:\\" for c in string.ascii_uppercase if os.path.exists(f"{c}:\\")] if os.name == "nt" else _mounts()
     out = []
     for r in roots:
         try:

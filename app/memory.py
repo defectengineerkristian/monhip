@@ -3,9 +3,10 @@
 import json
 import threading
 from datetime import datetime
-from pathlib import Path
 
-FILE = Path(__file__).resolve().parent.parent / "gedaechtnis.json"
+import plattform
+
+FILE = plattform.DATA_DIR / "gedaechtnis.json"
 MAX_NOTES = 60          # ältere fallen aus dem System-Prompt, damit er nicht ausufert
 MAX_CHARS = 300
 _lock = threading.Lock()  # Werkzeuge laufen im Hintergrund-Thread, die Einstellungen im Tk-Thread

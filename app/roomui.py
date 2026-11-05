@@ -17,7 +17,6 @@ import queue
 import re
 import secrets
 import shutil
-import subprocess
 import threading
 import time
 import tkinter as tk
@@ -34,13 +33,14 @@ import dialogs
 import documents
 import icons
 import images
+import plattform
 import projekt
 import room
 from agent import (ROOM_SCREEN_PROMPT, Agent, ToolError, date_line, describe_call, format_args, result_ok,
                    run_conversation, time_label, tool_budget)
 from projekt import RISKY_SUFFIXES, mark_from_internet  # RISKY_SUFFIXES: vor dem Herunterladen warnen
 from themes import FAMILY, mix_hex
-from widgets import scrolled
+from widgets import bind_wheel, scrolled, wheel_delta
 
 TYPE_MS = 20           # Takt, in dem Antworten fremder KIs „getippt“ werden (kommen in Paketen alle ~0,3 s)
 PREVIEW_MAX = 20 * 1024 * 1024  # geteilte Bilder bis zu dieser Größe werden für die Vorschau automatisch geholt
@@ -432,7 +432,7 @@ class RoomMode:
         self._side_item = self._side.create_window(0, 0, window=self.panel, anchor="nw")
         self._side.bind("<Configure>", lambda e: self._side_layout())
         self.panel.bind("<Configure>", lambda e: self._side_layout())
-        app.root.bind_class("RoomSideWheel", "<MouseWheel>", self._side_wheel)
+        bind_wheel(app.root, self._side_wheel, cls="RoomSideWheel")
         self.member_tree = None
         self.mentions = _Mentions(self)
         self.refresh_panel()
@@ -621,8 +621,8 @@ class RoomMode:
         c.configure(scrollregion=(0, 0, c.winfo_width(), max(need, have)))
 
     def _side_wheel(self, e):
-        if self._side_bar.winfo_ismapped():
-            self._side.yview_scroll(-1 if e.delta > 0 else 1, "units")
+        if self._side_bar.winfo_ismapped() and wheel_delta(e):
+            self._side.yview_scroll(-1 if wheel_delta(e) > 0 else 1, "units")
 
     def _side_wheel_tags(self):
         stack = [self._side, self.panel]
@@ -900,7 +900,7 @@ class RoomMode:
     def open_project(self):
         if self.server and self.server.project:
             try:
-                os.startfile(self.server.project.root)
+                plattform.open_path(self.server.project.root)
             except OSError as e:
                 dialogs.showerror(tr('Projektordner'), tr('Der Ordner lässt sich nicht öffnen: {0}', e), parent=self.app.root)
 
@@ -2332,7 +2332,7 @@ class RoomMode:
                 dialogs.showerror("Teamwork", tr('„{0}“ konnte nicht heruntergeladen werden: {1}', name, err), parent=root)
             elif dialogs.askyesno(tr('Heruntergeladen'), tr('„{0}“ wurde gespeichert:\n{1}\n\nIm Ordner zeigen?', name, path),
                                   parent=root):
-                subprocess.Popen(f'explorer /select,"{path}"')
+                plattform.show_in_folder(path)
 
         self.app.background(work, done)
 

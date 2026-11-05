@@ -1,5 +1,6 @@
 """Eigener llama.cpp (unabhängig von LM Studio): installierte Versionen in server/ finden, Grafikkarte
-erkennen, passende llama-server-Version von github.com/ggml-org/llama.cpp laden."""
+erkennen, passende llama-server-Version von github.com/ggml-org/llama.cpp laden – unter Windows die Zip-Dateien
+„bin-win-…“, unter Linux die tar.gz-Dateien „bin-ubuntu-…“ (laufen auch auf anderen aktuellen Distributionen)."""
 
 from i18n import tr
 
@@ -9,11 +10,14 @@ import subprocess
 from pathlib import Path
 
 import downloads
+import plattform
 
-SERVER_DIR = Path(__file__).resolve().parent.parent / "server"
+SERVER_DIR = plattform.DATA_DIR / "server"
 RELEASES_URL = "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=10"
-_FOLDER_RE = re.compile(r"llama-b(\d+)-bin-win-(.+)-(?:x64|arm64)$")  # Ordnername = Name der Zip-Datei
+# Ordnername = Name der Zip- bzw. tar.gz-Datei (Linux-CPU ohne Art im Namen: dort „cpu“ ergänzt, siehe _folder)
+_FOLDER_RE = re.compile(r"llama-b(\d+)-bin-(?:win|ubuntu)-(.+)-(?:x64|arm64)$")
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+SERVER_EXE = plattform.exe("llama-server")
 
 
 # ---------------------------------------------------------------- Installierte Server
@@ -33,9 +37,10 @@ def _kind_label(kind: str) -> str:
 
 
 def find_llama_servers() -> list[dict]:
-    """Alle server/*/llama-server.exe – CUDA > ROCm > Vulkan > Sonstige > CPU, neueste zuerst."""
+    """Alle server/*/llama-server(.exe) – CUDA > ROCm > Vulkan > Sonstige > CPU, neueste zuerst. Unter Linux
+    zuletzt auch ein installierter llama-server aus dem PATH (Paketverwaltung, selbst gebaut)."""
     found = []
-    for exe in SERVER_DIR.glob("*/llama-server.exe") if SERVER_DIR.is_dir() else []:
+    for exe in SERVER_DIR.glob(f"*/{SERVER_EXE}") if SERVER_DIR.is_dir() else []:
         folder = exe.parent.name
         if folder.endswith((".part", ".alt")):
             continue
@@ -45,6 +50,9 @@ def find_llama_servers() -> list[dict]:
         else:  # von Hand abgelegt
             build, kind, label = 0, folder.lower(), folder
         found.append(((_kind_rank(kind), -build), {"label": label, "exe": str(exe)}))
+    system = None if plattform.WINDOWS else plattform.which("llama-server")
+    if system:
+        found.append(((9, 0), {"label": tr('llama-server (System: {0})', system), "exe": system}))
     return [s for _, s in sorted(found, key=lambda x: x[0])]
 
 
@@ -52,16 +60,35 @@ def find_llama_servers() -> list[dict]:
 
 def _run(args: list[str]) -> str:
     try:
-        return subprocess.run(args, capture_output=True, encoding="oem", errors="replace", timeout=20,
-                              creationflags=_NO_WINDOW).stdout or ""
+        return subprocess.run(args, capture_output=True, encoding=plattform.CONSOLE_ENCODING, errors="replace",
+                              timeout=20, stdin=subprocess.DEVNULL, creationflags=_NO_WINDOW).stdout or ""
     except (OSError, subprocess.SubprocessError):
         return ""
 
 
+def _linux_gpus() -> list[str]:
+    """Grafikkarten unter Linux: Namen aus lspci, ohne lspci wenigstens der Hersteller aus /sys/class/drm."""
+    names = [line.split(": ", 1)[-1].strip() for line in _run(["lspci"]).splitlines()
+             if re.search(r"VGA compatible controller|3D controller|Display controller", line)]
+    if not names:
+        vendors = {"0x10de": "NVIDIA", "0x1002": "AMD", "0x8086": "Intel"}
+        for f in sorted(Path("/sys/class/drm").glob("card*/device/vendor")):
+            try:
+                name = vendors.get(f.read_text().strip())
+            except OSError:
+                continue
+            if name and name not in names:
+                names.append(name)
+    return names
+
+
 def detect_gpu() -> tuple[str, str, tuple[int, int] | None]:
     """(Hersteller „nvidia“/„amd“/„intel“/„“, Name, höchste vom NVIDIA-Treiber unterstützte CUDA-Version)."""
-    names = [n.strip() for n in _run(["powershell", "-NoProfile", "-Command",
-                                      "(Get-CimInstance Win32_VideoController).Name"]).splitlines() if n.strip()]
+    if plattform.WINDOWS:
+        names = [n.strip() for n in _run(["powershell", "-NoProfile", "-Command",
+                                          "(Get-CimInstance Win32_VideoController).Name"]).splitlines() if n.strip()]
+    else:
+        names = _linux_gpus()
     m = re.search(r"CUDA (?:UMD )?Version:\s*(\d+)\.(\d+)", _run(["nvidia-smi"]))  # alte/neue Treiber
     cuda = (int(m.group(1)), int(m.group(2))) if m else None
     # NVIDIA vor AMD vor Intel: die eigene Grafikkarte gewinnt gegen die im Prozessor
@@ -74,22 +101,27 @@ def detect_gpu() -> tuple[str, str, tuple[int, int] | None]:
 
 # ---------------------------------------------------------------- Herunterladen
 
-def _pick_assets(release: dict, vendor: str, cuda: tuple[int, int] | None) -> tuple[str, list[dict]]:
-    """CUDA (höchste vom Treiber unterstützte, dazu die cudart-Zip), sonst Vulkan, sonst CPU."""
+def _pick_assets(release: dict, vendor: str, cuda: tuple[int, int] | None,
+                 linux: bool = not plattform.WINDOWS) -> tuple[str, list[dict]]:
+    """CUDA (höchste vom Treiber unterstützte, dazu die cudart-Datei), sonst Vulkan, sonst CPU."""
     arch = "arm64" if platform.machine().lower() in ("arm64", "aarch64") else "x64"
     tag = release["tag_name"]
     assets = {a["name"]: a for a in release.get("assets", [])}
+    system, ext = ("ubuntu", ".tar.gz") if linux else ("win", ".zip")
 
     def main(kind):
-        return assets.get(f"llama-{tag}-bin-win-{kind}-{arch}.zip")
+        if linux and kind == "cpu":  # unter Linux heißt die CPU-Fassung nur „bin-ubuntu-x64“
+            return assets.get(f"llama-{tag}-bin-ubuntu-{arch}{ext}")
+        return assets.get(f"llama-{tag}-bin-{system}-{kind}-{arch}{ext}")
 
     if vendor == "nvidia":
-        pat = re.compile(rf"llama-{re.escape(tag)}-bin-win-cuda-(\d+)\.(\d+)-{arch}\.zip$")
+        pat = re.compile(rf"llama-{re.escape(tag)}-bin-{system}-cuda-(\d+)\.(\d+)-{arch}{re.escape(ext)}$")
         versions = sorted((int(m.group(1)), int(m.group(2))) for n in assets if (m := pat.match(n)))
         usable = [v for v in versions if v <= cuda] if cuda else versions[:1]  # ohne nvidia-smi: älteste
         if usable:
             ver = "%d.%d" % usable[-1]
-            runtime = assets.get(f"cudart-llama-bin-win-cuda-{ver}-{arch}.zip")
+            runtime = assets.get(f"cudart-llama-{tag}-bin-ubuntu-cuda-{ver}-{arch}{ext}" if linux else
+                                 f"cudart-llama-bin-win-cuda-{ver}-{arch}.zip")
             return f"CUDA {ver}", [main(f"cuda-{ver}")] + ([runtime] if runtime else [])
     if vendor and main("vulkan"):
         return "Vulkan", [main("vulkan")]
@@ -107,17 +139,26 @@ def plan() -> dict:
             continue
         kind, assets = _pick_assets(rel, vendor, cuda)
         if assets:
-            target = SERVER_DIR / assets[0]["name"].removesuffix(".zip")
+            target = SERVER_DIR / _folder(assets[0]["name"])
             return {"tag": rel["tag_name"], "kind": kind, "gpu": gpu, "target": target,
                     "assets": [(a["name"], a["browser_download_url"], a["size"]) for a in assets],
-                    "size": sum(a["size"] for a in assets), "installed": (target / "llama-server.exe").is_file()}
-    raise RuntimeError(tr('Auf GitHub wurde keine passende llama.cpp-Version für Windows gefunden.'))
+                    "size": sum(a["size"] for a in assets), "installed": (target / SERVER_EXE).is_file()}
+    if plattform.WINDOWS:
+        raise RuntimeError(tr('Auf GitHub wurde keine passende llama.cpp-Version für Windows gefunden.'))
+    raise RuntimeError(tr('Auf GitHub wurde keine passende llama.cpp-Version für Linux gefunden.'))
+
+
+def _folder(asset_name: str) -> str:
+    """Ordner in server/ für eine Download-Datei: ihr Name ohne Endung; „llama-b1-bin-ubuntu-x64“ (Linux-CPU) wird zu
+    „llama-b1-bin-ubuntu-cpu-x64“, damit _FOLDER_RE die Art erkennt wie bei Windows („bin-win-cpu-x64“)."""
+    name = asset_name.removesuffix(".zip").removesuffix(".tar.gz")
+    return re.sub(r"-bin-ubuntu-(x64|arm64)$", r"-bin-ubuntu-cpu-\1", name)
 
 
 def install(p: dict, progress, cancel) -> Path:
-    """Lädt und entpackt plan() nach server/<Version>/; gibt die llama-server.exe zurück."""
+    """Lädt und entpackt plan() nach server/<Version>/; gibt den llama-server zurück."""
     SERVER_DIR.mkdir(exist_ok=True)
     downloads.clean_leftovers(SERVER_DIR)
-    downloads.install_zips(p["assets"], p["target"], "llama-server.exe", progress, cancel, total=p["size"])
+    downloads.install_zips(p["assets"], p["target"], SERVER_EXE, progress, cancel, total=p["size"])
     downloads.remove_older(p["target"], _FOLDER_RE)
-    return p["target"] / "llama-server.exe"
+    return p["target"] / SERVER_EXE

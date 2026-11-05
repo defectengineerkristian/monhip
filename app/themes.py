@@ -6,6 +6,7 @@ Neue Designs: einfach einen weiteren Eintrag in THEMES mit denselben Schlüsseln
 from i18n import tr
 
 import base64
+import functools
 import math
 import struct
 import sys
@@ -15,9 +16,11 @@ from tkinter import font as tkfont
 from tkinter import ttk
 
 import icons
+import plattform
 
-# Schrift der Oberfläche – eine Stelle für alle Teile (chatview, widgets, dialogs … übernehmen FAMILY)
-FAMILY = "Segoe UI"
+# Schrift der Oberfläche – eine Stelle für alle Teile (chatview, widgets, dialogs … übernehmen FAMILY);
+# unter Linux die Schrift des Desktops
+FAMILY = plattform.UI_FONT
 FONT = (FAMILY, 9)
 
 THEMES = {
@@ -79,8 +82,8 @@ THEMES = {
             "people": ["#c2410c", "#15803d", "#1d4ed8", "#9333ea", "#a16207", "#0e7490"],
         },
     },
-    "system": {
-        "label": tr('Windows-Standard'),
+    "system": {  # Aussehen des Systems: unter Windows „vista“, sonst das schlichte „clam“ von Tk
+        "label": tr('Windows-Standard') if sys.platform == "win32" else tr('Tk-Standard'),
         "dark": False,
         "chat": {
             "fg": "#1b1b1b", "muted": "#6b6b6b", "accent": "#0b63c5",
@@ -185,32 +188,49 @@ def _pixels(w: int, h: int, color) -> list[bytes]:
     return [bytes(c for x in range(w) for c in color(x + 0.5, y + 0.5)) for y in range(h)]
 
 
+@functools.lru_cache(maxsize=None)
+def _round_cover(r: int, bw: float) -> tuple:
+    """Abdeckung je Pixel des kleinen Bildes (2r + 3 Pixel im Quadrat) als (außen, innen) – hängt nur von Radius und
+    Randbreite ab, nicht von den Farben; ein Designwechsel mischt damit nur noch Farben."""
+    k = r + 1
+    half = k + 0.5  # kleines Bild: 2k + 1 Pixel, Spalte/Zeile k ist die gerade Mitte
+
+    def cover(x, y):
+        qx, qy = abs(x - half) - (half - r), abs(y - half) - (half - r)
+        d = math.hypot(max(qx, 0), max(qy, 0)) + min(max(qx, qy), 0) - r
+        outer = max(0.0, min(1.0, 0.5 - d))
+        return outer, (max(0.0, min(1.0, 0.5 - (d + bw))) if outer else 0.0)
+
+    return tuple(tuple(cover(x + 0.5, y + 0.5) for x in range(2 * k + 1)) for y in range(2 * k + 1))
+
+
+@functools.lru_cache(maxsize=256)
 def _rounded_png(r: int, mid: int, fill: str, border: str, under: str, bw: float, wide: int | None = None) -> str:
     """Rechteck mit runden, kantengeglätteten Ecken auf der Farbe under – als Vorlage für ein 9-Teile-Bildelement
     (Rand r + 1). Bewusst undurchsichtig: halbtransparente Bilder mischt Tk unter Windows bei jedem Zeichnen neu.
     Die Mitte ist mid Pixel hoch und wide (sonst mid) Pixel breit, weil ttk sie kachelt statt dehnt – bei 1 Pixel
     wären das zehntausende Zeichenaufrufe je Feld (Chatfeld: 2,7 s statt 0,1 ms); in der Breite wachsen Felder und
-    Leisten mit dem Fenster, dort spart eine breite Mitte beim Ziehen am Fensterrand weitere Kacheln."""
+    Leisten mit dem Fenster, dort spart eine breite Mitte beim Ziehen am Fensterrand weitere Kacheln.
+    Schnell: Form aus _round_cover, jede der wenigen verschiedenen Abdeckungen nur einmal gemischt (Start und
+    Designwechsel ~60 ms schneller), und zwischengespeichert – zurück zu einem Design rechnet gar nichts mehr."""
     wide = wide or mid
     fill_c, border_c, under_c = _rgb(fill), _rgb(border), _rgb(under)
     k = r + 1
-    half = k + 0.5  # kleines Bild: 2k + 1 Pixel, Spalte/Zeile k ist die gerade Mitte
+    shades: dict = {}
 
-    def color(x, y):
-        qx, qy = abs(x - half) - (half - r), abs(y - half) - (half - r)
-        d = math.hypot(max(qx, 0), max(qy, 0)) + min(max(qx, qy), 0) - r
-        outer = max(0.0, min(1.0, 0.5 - d))
+    def shade(cover) -> bytes:
+        outer, inner = cover
         if not outer:
-            return under_c
-        inner = max(0.0, min(1.0, 0.5 - (d + bw)))
-        return _mix(under_c, _mix(border_c, fill_c, inner / outer), outer)
+            return bytes(under_c)
+        return bytes(_mix(under_c, _mix(border_c, fill_c, inner / outer), outer))
 
-    small = _pixels(2 * k + 1, 2 * k + 1, color)
+    small = [b"".join(shades.get(c) or shades.setdefault(c, shade(c)) for c in row) for row in _round_cover(r, bw)]
     rows = [row[:3 * k] + row[3 * k:3 * k + 3] * wide + row[3 * k + 3:] for row in small]
     rows = rows[:k] + rows[k:k + 1] * mid + rows[k + 1:]
     return _png(2 * k + wide, 2 * k + mid, rows)
 
 
+@functools.lru_cache(maxsize=64)
 def _chevron_png(w: int, h: int, x0: float, y0: float, aw: float, ah: float, color: str, under: str,
                  stroke: float) -> str:
     """Pfeil „⌄“ (Aufklappen) auf der Farbe under."""
@@ -327,7 +347,9 @@ class ThemeManager:
         self.root = root
         self.style = ttk.Style(root)
         names = self.style.theme_names()
-        self.native = "vista" if "vista" in names else self.style.theme_use()
+        # Linux: „clam“ statt Tks Grundthema „default“ (graue 90er-Optik); macOS behält „aqua“
+        self.native = ("vista" if "vista" in names else
+                       "clam" if sys.platform.startswith("linux") and "clam" in names else self.style.theme_use())
         self.key = "system"
         self.pal: dict | None = None
         self._texts: list[tk.Text] = []
@@ -352,6 +374,7 @@ class ThemeManager:
         # Abgerundete Bildelemente (Knöpfe, Felder, Kärtchen): Bilder werden beim Designwechsel neu gemalt
         self.scale = max(1.0, float(root.tk.call("tk", "scaling")) / 1.333)
         self._images: dict[str, tk.PhotoImage] = {}
+        self._image_data: dict[str, str] = {}  # zuletzt gemalte Daten je Bild (gleiche: nicht neu einlesen)
         self._elements: set[str] = set()
         icons.setup(root, self.scale)
 
@@ -543,8 +566,9 @@ class ThemeManager:
         img = self._images.get(name)
         if img is None:
             img = self._images[name] = tk.PhotoImage(master=self.root, data=data, format="png")
-        else:
+        elif self._image_data.get(name) != data:
             img.configure(data=data, format="png")
+        self._image_data[name] = data
         return img
 
     def _round(self, element: str, r: float, under: str, looks: list, padding=1):

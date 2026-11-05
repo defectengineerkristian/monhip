@@ -17,6 +17,7 @@ from pathlib import Path
 
 import documents
 import images
+import plattform
 from web import mark_from_internet  # roomui holt sie von hier
 from agent import EXEC_SUFFIXES, SKIP_DIRS, ToolError, _numbered, _read_text_file, list_directory, match_edit, \
     search_files
@@ -30,7 +31,7 @@ KEEP_VERSIONS = 300                 # so viele alte Fassungen bleiben im Version
 WRITE_OPS = {"write", "edit", "mkdir", "delete", "put"}
 ARCHIVES = {".zip", ".7z", ".rar", ".tar", ".gz"}
 RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(10)), *(f"LPT{i}" for i in range(10))}
-MONHIP_DIR = Path(__file__).resolve().parent.parent
+MONHIP_DIR = plattform.CODE_DIR  # dazu der Datenordner (roomui: app_dir)
 # Programme/Skripte (und Office mit Makros): beim Herunterladen warnen, von Gästen geschrieben markieren
 RISKY_SUFFIXES = EXEC_SUFFIXES | {".msi", ".dll", ".sys", ".psm1", ".appx", ".msix", ".docm", ".xlsm", ".pptm"}
 
@@ -72,6 +73,10 @@ def remove_tree(path: Path):
     shutil.rmtree(path, onexc=unlock)
 
 
+# nicht /var und /run: dort liegen bei manchen Systemen Benutzerordner (/var/home) und USB-Laufwerke (/run/media)
+LINUX_SYSTEM_DIRS = ("bin", "boot", "dev", "etc", "lib", "lib32", "lib64", "opt", "proc", "sbin", "snap", "sys", "usr")
+
+
 def unsafe_root(root: Path, *also: Path) -> str | None:
     """Warum dieser Ordner nicht freigegeben werden darf – sonst None. Gesperrt sind Laufwerke, der Benutzerordner
     und alles darüber, Windows-, Programm- und AppData-Ordner (dort ließe sich Code ablegen, der von selbst startet)
@@ -89,6 +94,12 @@ def unsafe_root(root: Path, *also: Path) -> str | None:
         value = os.environ.get(name)
         if value and within(root, Path(value).resolve()):
             return "ein Windows-, Programm- oder AppData-Ordner"
+    if os.name != "nt":  # Linux: Systemordner und versteckte Einstellungen im Benutzerordner (Autostart, Shell …)
+        home = Path.home()
+        for system in (*(Path("/" + d) for d in LINUX_SYSTEM_DIRS),
+                       *(home / d for d in (".config", ".local", ".cache", ".ssh", ".gnupg", ".mozilla"))):
+            if within(root, system.resolve()):
+                return "ein System- oder Programmordner"
     for monhip in (MONHIP_DIR, *also):
         monhip = Path(monhip).resolve()
         if within(root, monhip) or within(monhip, root):

@@ -21,12 +21,14 @@ from tkinter import font as tkfont
 from tkinter import ttk
 
 import icons
+import plattform
 from markdown_lite import ListLevels, classify, closes_fence, inline, is_separator_row, plain, split_row
 from themes import FAMILY, mix_hex
-from widgets import PopupMenu, precise_timer, rounded
+from widgets import PopupMenu, bind_wheel, precise_timer, rounded, wheel_delta
 
-MONO = "Consolas"
+MONO = plattform.MONO_FONT
 MAX_COLUMN = 820          # maximale Breite der Chatspalte (Pixel bei 100 %)
+COLUMN_SETTLE_MS = 120    # Fenster schmaler als die Spalte: neue Breite erst, wenn das Ziehen so lange innehält
 PULSE_MS = 40
 SCROLL_MS = 8             # weiches Scrollen: Abstand der Schritte (mit genauem Zeitgeber, ~120 Bilder/s)
 SCROLL_TAU = 0.045        # Abklingzeit in s: ein Raststück Mausrad ist nach ~0,15 s am Ziel
@@ -90,6 +92,11 @@ class ChatView:
         self._thumbs: dict = {}      # Vorschaubilder angehängter Bilder: Pfad bzw. (Pfad, Verkleinerung) → PhotoImage
         self.gen = 0                 # erhöht sich bei clear(); spätere Rückmeldungen erkennen so alte Ansichten
         self.md: dict | None = None  # Zustand der gerade gestreamten Markdown-Antwort
+        # Angefangene Zeile beim Streamen: _md_line schreibt ihre Stücke in _rec statt ins Textfeld, _show_partial
+        # ändert dann nur ab dem ersten anderen Stück (vorher: ganze Zeile je Aufruf neu – bei langen Absätzen
+        # quadratisch langsam). incremental=False: wie früher (Vergleich in den Tests)
+        self._rec: list | None = None
+        self.incremental = True
         self.is_placeholder = False
         self._n = 0
         self._depth = 0
@@ -101,6 +108,9 @@ class ChatView:
         self.active = True           # vorn sichtbar (set_active)
         self._bubble_w = None
         self._layout_job = None
+        self._col_w = None           # Breite, die die Spalte gerade hat (_place_column)
+        self._col_job = None         # verzögertes Übernehmen einer neuen Breite beim Ziehen
+        self._col_t = 0.0            # Zeitpunkt der letzten Größenänderung des Rahmens (time.monotonic)
         self._anim_job = None
         self._live: set[int] = set()
         self._pending = False
@@ -122,6 +132,8 @@ class ChatView:
         self._act_job = None         # verzögertes Ausblenden von „Kopieren / Bearbeiten“
         self._make_fonts()
         self._make_tags()
+        # Tk 8.6 zählt Zeichen außerhalb der Grundebene (Emojis) doppelt (UTF-16), Tk 9 einfach
+        self._wide = int(self.t.tk.call("string", "length", "\U0001F600")) - 1
 
         t = self.t
         t.configure(cursor="", insertontime=0)  # Mauszeiger vom Rahmen (_set_cursor), keine Schreibmarke (_readonly)
@@ -129,7 +141,7 @@ class ChatView:
         self._set_cursor("xterm")
         self._readonly()
         t.bind("<Configure>", self._on_configure, add="+")
-        t.bind("<MouseWheel>", self._on_wheel)
+        bind_wheel(t, self._on_wheel)
         t.bind("<Button-3>", self._on_context)
         t.bind("<ButtonPress-1>", lambda e: self._hide_quote_pop(), add="+")
         t.bind("<ButtonRelease-1>", self._on_release, add="+")
@@ -368,7 +380,7 @@ class ChatView:
         self.t.configure(padx=self._padx)  # einmal beim Aufbau – danach nie wieder configure (vermisst alles neu)
         frame = self.t.master
         frame.bind("<Configure>", self._place_column)
-        frame.bind("<MouseWheel>", self._on_wheel)  # auch neben der Spalte scrollen
+        bind_wheel(frame, self._on_wheel)  # auch neben der Spalte scrollen
 
     def set_active(self, active: bool):
         """Vorn (sichtbar) oder verdeckt hinter der anderen Ebene (Chat | Teamwork, set_mode): Verdeckt folgt die
@@ -379,13 +391,34 @@ class ChatView:
             self._place_column()
 
     def _place_column(self, e=None):
+        """Spalte mittig setzen. Ist das Fenster schmaler als die Spalte, ändert sich beim Ziehen ihre Breite – dann
+        bricht Tk den ganzen Verlauf neu um (Windows, langer Chat: ~40 ms je Schritt, das Ziehen ruckelt). Deshalb
+        bleibt die Breite beim Ziehen, wie sie ist (die Spalte wird nur verschoben bzw. rechts abgeschnitten), und
+        die neue kommt einmal, sobald die Größe COLUMN_SETTLE_MS lang gleich bleibt. Ein einzelner Sprung
+        (Maximieren, Andocken an den Bildschirmrand, Seitenleiste) gilt sofort – verzögert wird nur, wenn die
+        vorige Änderung weniger als COLUMN_SETTLE_MS zurückliegt."""
         if not self.active:
             return
         frame = self.t.master
         sb = self._sb.winfo_reqwidth() if self._sb else 0
         avail = max(1, (e.width if e else frame.winfo_width()) - sb)
+        height = e.height if e else frame.winfo_height()
         width = min(avail, self._s(MAX_COLUMN) + 2 * self._padx)
-        self.t.place(x=(avail - width) // 2, y=0, width=width, height=e.height if e else frame.winfo_height())
+        if self._col_job:
+            self.t.after_cancel(self._col_job)
+            self._col_job = None
+        if e is not None:
+            now = time.monotonic()
+            dragging, self._col_t = now - self._col_t < COLUMN_SETTLE_MS / 1000, now
+            if dragging and self._col_w and width != self._col_w:
+                self._col_job = self.t.after(COLUMN_SETTLE_MS, self._settle_column)
+                width = self._col_w
+        self._col_w = width
+        self.t.place(x=max(0, (avail - width) // 2), y=0, width=width, height=height)
+
+    def _settle_column(self):
+        self._col_job = None
+        self._place_column()
 
     def _new(self, kind: str, **info) -> int:
         self._n += 1
@@ -719,7 +752,7 @@ class ChatView:
 
     def _canvas(self, cursor: str) -> tk.Canvas:
         c = tk.Canvas(self.t, highlightthickness=0, borderwidth=0, background=self.bg, cursor=cursor)
-        c.bind("<MouseWheel>", self._on_wheel)
+        bind_wheel(c, self._on_wheel)
         return c
 
     def _embed(self, widget, tag: str):
@@ -940,12 +973,67 @@ class ChatView:
             if new and self._after_block():
                 self.t.insert(self._at, "\n", "gap")
                 self.t.mark_set(self.md["mark"], self._at)
-            self.t.delete(self.md["mark"], self._at)
+            if lines or not self.incremental:  # fertige Zeilen: angefangene weg, dann endgültig setzen
+                self.t.delete(self.md["mark"], self._at)
+                md["shown"] = []
             for k, line in enumerate(lines):
                 self._md_line(line, partial=False, following=lines[k + 1] if k + 1 < len(lines) else None)
                 self.t.mark_set(self.md["mark"], self._at)
             if md["line"]:
-                self._md_line(md["line"], partial=True)
+                self._rec = []
+                try:
+                    self._md_line(md["line"], partial=True)
+                    pieces = self._rec
+                finally:
+                    self._rec = None
+                self._show_partial(pieces)
+
+    def _ins(self, text: str, tags):
+        """Einfügen an der Schreibstelle – beim Zeichnen einer angefangenen Zeile nur merken (siehe _rec)."""
+        if self._rec is not None:
+            self._rec.append((text, tags if isinstance(tags, tuple) else (tags,)))
+        else:
+            self.t.insert(self._at, text, tags)
+
+    def _tk_len(self, text: str) -> int:
+        """Länge in Tk-Zeichen (Tk 8.6: Emojis zählen doppelt)."""
+        return len(text) + (sum(1 for ch in text if ord(ch) > 0xFFFF) * self._wide if self._wide else 0)
+
+    def _show_partial(self, pieces: list[tuple[str, tuple]]):
+        """Angefangene Zeile zeigen: gleiche Stücke am Anfang und am Ende bleiben stehen, nur dazwischen wird ersetzt;
+        wächst bloß ein Textstück, kommt nur der neue Text dazu. Der Zeilenumbruch am Ende bleibt so stehen – würde er
+        mit gelöscht, verschmölze Tk die (lange) Zeile kurz mit der nächsten und vermäße sie danach ganz neu (~35 ms bei
+        2000 Zeichen, bei jedem Schritt). Stimmt die Länge im Textfeld nicht mit der Buchführung überein (sollte nie
+        passieren), wird die Zeile wie früher ganz neu gesetzt."""
+        md = self.md
+        old = md.get("shown") or []
+        lengths = [self._tk_len(text) for text, _ in old]
+        if old and self.t.compare(f"{self._at}-{sum(lengths)}c", "!=", md["mark"]):
+            self.t.delete(md["mark"], self._at)
+            old, lengths = [], []
+        n = min(len(old), len(pieces))
+        k = 0
+        while k < n and old[k] == pieces[k]:
+            k += 1
+        j = 0
+        while j < n - k and old[-1 - j] == pieces[-1 - j]:
+            j += 1
+        old_mid, new_mid = old[k:len(old) - j], pieces[k:len(pieces) - j]
+        if not old_mid and not new_mid:
+            md["shown"] = pieces
+            return
+        suffix = sum(lengths[len(old) - j:])
+        at = f"{self._at}-{suffix}c" if suffix else self._at
+        if (len(old_mid) == len(new_mid) == 1 and old_mid[0][1] == new_mid[0][1]
+                and new_mid[0][0].startswith(old_mid[0][0])):
+            self.t.insert(at, new_mid[0][0][len(old_mid[0][0]):], new_mid[0][1])
+        else:
+            middle = sum(lengths[k:len(old) - j])
+            if middle:
+                self.t.delete(f"{at}-{middle}c", at)
+            for text, tags in new_mid:
+                self.t.insert(at, text, tags)
+        md["shown"] = pieces
 
     def md_finish(self):
         md = self.md
@@ -965,7 +1053,7 @@ class ChatView:
         """following: die nächste schon fertige Zeile (falls bekannt) – folgen weitere Tabellenzeilen, wird die
         Tabelle erst nach der letzten gesetzt statt nach jeder Zeile neu (gespeicherte Chats öffnen)."""
         md = self.md
-        ins = self.t.insert
+        ins = self._ins
         if md["code"] is not None:
             if closes_fence(line, md["code"]["fence"]):
                 if not partial:
@@ -978,7 +1066,7 @@ class ChatView:
             md["table"] = None
         if kind == "blank":
             if not partial and md["any"] and not md["blank"]:
-                ins(self._at, "\n", "gap")
+                ins("\n", "gap")
                 md["blank"] = True
             return
         if partial and kind in ("fence", "table", "hr", "pagebreak"):
@@ -995,21 +1083,21 @@ class ChatView:
         elif kind == "heading":
             tag = f"md_h{min(info['level'], 3)}"
             self._inline(info["text"], (tag,), fonts=False, partial=partial)
-            ins(self._at, "\n", tag)
+            ins("\n", tag)
         elif kind in ("hr", "pagebreak"):
             if gap:
-                ins(self._at, "\n", "gap")
-            ins(self._at, "\n", "hr")
-            ins(self._at, "\n", "gap")
+                ins("\n", "gap")
+            ins("\n", "hr")
+            ins("\n", "gap")
             md["blank"] = True
         elif kind in ("bullet", "number"):
             self._list_item(kind, info, partial)
         elif kind == "quote":
             self._inline(info["text"], ("p", "quote"), partial=partial)
-            ins(self._at, "\n", ("p", "quote"))
+            ins("\n", ("p", "quote"))
         else:
             self._inline(info["text"], ("p",), partial=partial)
-            ins(self._at, "\n", "p")
+            ins("\n", "p")
 
     def _inline(self, text: str, base: tuple, fonts: bool = True, partial: bool = False):
         for seg, st, url in inline(text):
@@ -1028,7 +1116,7 @@ class ChatView:
                 tags.append("link")
                 if not partial:  # angefangene Zeilen werden ständig neu gezeichnet – erst fertige Links klickbar
                     tags += ["clickable", f"lnk:{self._new('link', url=url)}"]
-            self.t.insert(self._at, seg, tuple(tags))
+            self._ins(seg, tuple(tags))
 
     def _list_item(self, kind: str, info: dict, partial: bool):
         levels = self.md["levels"]
@@ -1050,10 +1138,10 @@ class ChatView:
             self.t.tag_configure(tag, lmargin1=lm1, lmargin2=lm2, tabs=(lm2,))
             self._indent_tags.add(tag)
         base = ("li", tag)
-        self.t.insert(self._at, prefix, base + ("bullet",))
-        self.t.insert(self._at, "\t", base)
+        self._ins(prefix, base + ("bullet",))
+        self._ins("\t", base)
         self._inline(info["text"], base, partial=partial)
-        self.t.insert(self._at, "\n", base)
+        self._ins("\n", base)
 
     # ---------------------------------------------------------------- Code-Blöcke
 
@@ -1074,12 +1162,12 @@ class ChatView:
         pos = 0
         for start, end, kind in highlight(line, code["lang"]):
             if start > pos:
-                self.t.insert(self._at, line[pos:start], base)
-            self.t.insert(self._at, line[start:end], base + (f"c_{kind}",))
+                self._ins(line[pos:start], base)
+            self._ins(line[start:end], base + (f"c_{kind}",))
             pos = end
         if pos < len(line):
-            self.t.insert(self._at, line[pos:], base)
-        self.t.insert(self._at, "\n", base)
+            self._ins(line[pos:], base)
+        self._ins("\n", base)
 
     def _code_end(self):
         self.t.insert(self._at, "\n", "pre_pad")
@@ -1447,8 +1535,9 @@ class ChatView:
 
     def _on_wheel(self, e):
         self._hide_quote_pop()  # steht an fester Stelle – beim Scrollen würde es verrutschen
-        if e.delta:
-            self._scroll_left -= e.delta / 120 * 3 * self.f_base.metrics("linespace")
+        delta = wheel_delta(e)
+        if delta:
+            self._scroll_left -= delta / 120 * 3 * self.f_base.metrics("linespace")
             if self._scroll_job is None:
                 precise_timer(True)
                 self._scroll_t = time.perf_counter() - SCROLL_MS / 1000  # erster Schritt sofort
@@ -1664,4 +1753,7 @@ class ChatView:
     @staticmethod
     def _open_file(path: str):
         if path and os.path.exists(path):
-            os.startfile(path)
+            try:
+                plattform.open_path(path)
+            except OSError:
+                pass

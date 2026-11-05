@@ -35,6 +35,29 @@ def precise_timer(on: bool):
         pass
 
 
+# Mausrad: Windows und macOS melden <MouseWheel> mit delta, X11 unter Tk 8.6 dagegen Taste 4 (hoch) bzw. 5 (runter)
+WHEEL_EVENTS = ("<MouseWheel>",) if sys.platform in ("win32", "darwin") else ("<MouseWheel>", "<Button-4>", "<Button-5>")
+
+
+def wheel_delta(e) -> int:
+    """Mausrad-Ereignis → delta wie unter Windows (±120 je Raste), auch für Taste 4/5 unter X11."""
+    num = getattr(e, "num", None)
+    if num == 4:
+        return 120
+    if num == 5:
+        return -120
+    return e.delta or 0
+
+
+def bind_wheel(widget: tk.Misc, handler, cls: str | None = None):
+    """handler für das Mausrad an widget binden – bzw. an die Bindeklasse cls (bind_class) –, auf jedem System."""
+    for seq in WHEEL_EVENTS:
+        if cls:
+            widget.bind_class(cls, seq, handler)
+        else:
+            widget.bind(seq, handler)
+
+
 def scrolled(parent, widget=tk.Text, **kw):
     """Text- oder Listenfeld mit ttk-Scrollbalken (der native lässt sich nicht einfärben) → (Rahmen, Feld)."""
     frame = ttk.Frame(parent)

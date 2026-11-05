@@ -1,0 +1,10 @@
+#!/bin/sh
+# Die von postinst angelegten __pycache__-Ordner gehören keinem Paket – vor dem Entfernen/Aktualisieren löschen,
+# sonst bleibt /opt/monhip stehen. Die Daten der Nutzer (~/.local/share/monhip) bleiben unberührt.
+set -e
+case "$1" in
+    remove|upgrade|deconfigure)
+        find /opt/monhip -name __pycache__ -type d -prune -exec rm -rf {} + 2>/dev/null || true
+        ;;
+esac
+exit 0

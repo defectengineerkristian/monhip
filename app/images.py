@@ -1,8 +1,11 @@
 """Bilder für Modelle mit Bildverständnis: prüfen, Vorschau, data-URL, Zwischenablage, Bildschirmfoto.
-Vorschau und Zwischenablage über PowerShell/System.Drawing, weil Tk kein JPG kann.
+Vorschau und Zwischenablage unter Windows über PowerShell/System.Drawing, weil Tk kein JPG kann; unter Linux über
+Pillow (Paket python3-pil) bzw. ImageMagick, Bildschirmfotos mit dem, was der Desktop mitbringt (grim,
+gnome-screenshot, spectacle, scrot, ImageMagick).
 """
 
 import base64
+import struct
 import subprocess
 import tempfile
 import threading
@@ -10,6 +13,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import plattform
 from documents import Document
 
 SUFFIXES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".bmp": "image/bmp",
@@ -33,7 +37,7 @@ def powershell(script: str) -> str:
     try:
         # PowerShell schreibt in der OEM-Codepage (Umlaute in Fehlermeldungen)
         r = subprocess.run(["powershell", "-NoProfile", "-STA", "-Command", script], capture_output=True,
-                           encoding="oem", errors="replace", timeout=60, creationflags=_NO_WINDOW)
+                           encoding=plattform.CONSOLE_ENCODING, errors="replace", timeout=60, creationflags=_NO_WINDOW)
         return r.stdout.strip()
     except (OSError, subprocess.SubprocessError):
         return ""
@@ -60,6 +64,10 @@ def read(path, thumb: Path, size: int) -> Document:
     path = Path(path)
     check(path)
     thumb.parent.mkdir(parents=True, exist_ok=True)
+    if not plattform.WINDOWS:
+        w, h = _thumbnail(path, thumb, size)
+        kind = "Bild (" + {".jpeg": "JPG"}.get(path.suffix.lower(), path.suffix[1:].upper()) + ")"
+        return Document(path, kind, "", image=(w, h), thumb=thumb)
     out = powershell(f"""
 Add-Type -AssemblyName System.Drawing
 $img = [System.Drawing.Image]::FromFile({_ps_str(path)})
@@ -81,6 +89,52 @@ try {{
         raise ValueError("Das Bild lässt sich nicht öffnen – Datei beschädigt?") from None
     kind = "Bild (" + {".jpeg": "JPG"}.get(path.suffix.lower(), path.suffix[1:].upper()) + ")"
     return Document(path, kind, "", image=(w, h), thumb=thumb)
+
+
+def pillow():
+    """PIL.Image, wenn Pillow installiert ist (unter Linux für Vorschau und Bildbearbeitung), sonst None."""
+    try:
+        from PIL import Image
+        return Image
+    except ImportError:
+        return None
+
+
+def _thumbnail(path: Path, thumb: Path, size: int) -> tuple[int, int]:
+    """Linux: PNG-Vorschau (höchstens size × size, nie vergrößert) mit Pillow, sonst ImageMagick → (Breite, Höhe)."""
+    image = pillow()
+    if image:
+        try:
+            with image.open(path) as img:
+                w, h = img.size
+                small = img.convert("RGBA") if img.mode not in ("RGB", "RGBA", "L", "LA") else img.copy()
+            small.thumbnail((size, size), getattr(image, "Resampling", image).LANCZOS)
+            small.save(thumb, "PNG")
+            return w, h
+        except (OSError, ValueError, image.DecompressionBombError):
+            raise ValueError("Das Bild lässt sich nicht öffnen – Datei beschädigt?") from None
+    magick = plattform.which("magick", "convert")
+    if not magick:
+        raise ValueError("Für Bilder braucht Monhip unter Linux Pillow (Paket python3-pil) oder ImageMagick.")
+    try:
+        r = subprocess.run([magick, f"{path}[0]", "-format", "%w %h\n", "-write", "info:-", "-thumbnail",
+                            f"{size}x{size}>", f"png:{thumb}"], capture_output=True, text=True, timeout=60,
+                           stdin=subprocess.DEVNULL)
+        w, h = (int(x) for x in r.stdout.split()[:2])
+    except (OSError, subprocess.SubprocessError, ValueError):
+        raise ValueError("Das Bild lässt sich nicht öffnen – Datei beschädigt?") from None
+    if not thumb.is_file():
+        raise ValueError("Das Bild lässt sich nicht öffnen – Datei beschädigt?")
+    return w, h
+
+
+def png_size(path: Path) -> tuple[int, int]:
+    """Breite und Höhe aus dem Kopf einer PNG-Datei (IHDR) – ohne sie ganz zu lesen."""
+    with open(path, "rb") as f:
+        head = f.read(24)
+    if head[:8] != b"\x89PNG\r\n\x1a\n" or head[12:16] != b"IHDR":
+        raise ValueError("kein PNG")
+    return struct.unpack(">II", head[16:24])
 
 
 def cleanup_temp(max_age_hours: float = 24):
@@ -121,6 +175,8 @@ def screenshot() -> tuple[Path, int, int]:
     SetProcessDPIAware, sonst nimmt PowerShell bei Windows-Skalierung nur einen Ausschnitt auf."""
     TEMP_DIR.mkdir(parents=True, exist_ok=True)
     target = TEMP_DIR / datetime.now().strftime("Bildschirmfoto %Y-%m-%d %H-%M-%S.png")
+    if not plattform.WINDOWS:
+        return _screenshot_linux(target)
     out = powershell(f"""
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 Add-Type 'using System.Runtime.InteropServices; public class Dpi {{ [DllImport("user32.dll")] public static extern bool SetProcessDPIAware(); }}'
@@ -139,10 +195,50 @@ $g.Dispose(); $b.Dispose()
     return target, w, h
 
 
+# Linux: Programme für Bildschirmfotos (Name, Argumente vor der Zieldatei) – Wayland erlaubt nur die des Desktops
+_SHOT_WAYLAND = (("grim", ()), ("gnome-screenshot", ("-f",)), ("spectacle", ("-b", "-n", "-o")))
+_SHOT_X11 = (("import", ("-window", "root")), ("scrot", ("-o",)), ("maim", ()), ("gnome-screenshot", ("-f",)),
+             ("spectacle", ("-b", "-n", "-o")))
+
+
+def _screenshot_linux(target: Path) -> tuple[Path, int, int]:
+    """Ganzer Bildschirm als PNG. X11: Pillow (ImageGrab) oder ein Programm, Wayland: grim, GNOME oder KDE."""
+    image = None if plattform.WAYLAND else pillow()
+    if image:
+        try:
+            from PIL import ImageGrab
+            shot = ImageGrab.grab()
+            shot.save(target, "PNG")
+            return target, shot.width, shot.height
+        except (OSError, ImportError):
+            pass
+    tools = _SHOT_WAYLAND if plattform.WAYLAND else _SHOT_X11
+    for name, args in tools:
+        exe = plattform.which(name)
+        if not exe:
+            continue
+        try:
+            subprocess.run([exe, *args, str(target)], capture_output=True, timeout=30, stdin=subprocess.DEVNULL)
+            w, h = png_size(target)
+            return target, w, h
+        except (OSError, subprocess.SubprocessError, ValueError):
+            target.unlink(missing_ok=True)
+    names = ", ".join(name for name, _ in tools)
+    raise RuntimeError(f"Das Bildschirmfoto konnte nicht aufgenommen werden – dafür braucht es eines dieser "
+                       f"Programme: {names}.")
+
+
 def save_clipboard() -> Path | None:
     """Bild aus der Zwischenablage (z. B. Screenshot mit Win+Umschalt+S) als PNG speichern."""
     TEMP_DIR.mkdir(parents=True, exist_ok=True)
     target = TEMP_DIR / datetime.now().strftime("Screenshot %Y-%m-%d %H-%M-%S.png")
+    if not plattform.WINDOWS:
+        import filedrop
+        data = filedrop.clipboard_image_png()
+        if not data:
+            return None
+        target.write_bytes(data)
+        return target
     out = powershell(f"""
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 $img = [System.Windows.Forms.Clipboard]::GetImage()

@@ -5,14 +5,17 @@ und ggf. Kurznamen in ALIASES ergänzen.
 """
 
 import re
+import sys
+
+WINDOWS = sys.platform == "win32"
 
 GITIGNORE_COMMON = ".vscode/\n.idea/\n*.log\n.DS_Store\nThumbs.db\n"
 
 TEMPLATES = {
     "python": {
         "label": "Python",
-        "tools": ["py", "python"],
-        "run": "py main.py",
+        "tools": ["py", "python"] if WINDOWS else ["python3", "python"],  # Linux: meist nur python3
+        "run": "py main.py" if WINDOWS else "python3 main.py",
         "files": {
             "main.py": '"""__NAME__"""\n\n\ndef main():\n    print("Hallo aus __NAME__!")\n\n\n'
                        'if __name__ == "__main__":\n    main()\n',

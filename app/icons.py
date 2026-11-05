@@ -1,26 +1,31 @@
 """Einheitliche Icons aus der Icon-Schrift von Windows: Segoe Fluent Icons (Windows 11), sonst Segoe MDL2 Assets.
+Unter Linux dieselben Symbole aus Fluent UI System Icons (Microsoft, MIT-Lizenz): app/fonts/MonhipIcons.ttf enthält
+genau die Zeichen aus FLUENT (gebaut mit tools/icon_font.py) und wird nur für Monhip bei fontconfig angemeldet.
 
 Ein ttk-Element hat nur eine Schrift – deshalb zwei Wege:
 - Textfelder und Zeichenflächen: Zeichen glyph(name) in der Schrift FAMILY (über einen Tag bzw. font=).
-- ttk-Knöpfe, -Beschriftungen und Treeview-Zeilen: Bild über opts()/only()/image(), per GDI aus derselben Schrift
-  gerendert (Graustufen-Kantenglättung, Deckung als Alpha). retint() färbt alle Bilder beim Designwechsel neu – es
-  bleiben dieselben PhotoImage-Objekte, die Knöpfe zeigen die neue Farbe also sofort.
+- ttk-Knöpfe, -Beschriftungen und Treeview-Zeilen: Bild über opts()/only()/image(), aus derselben Schrift gerendert
+  (Windows: GDI, Linux: Pillow; Graustufen-Kantenglättung, Deckung als Alpha). retint() färbt alle Bilder beim
+  Designwechsel neu – es bleiben dieselben PhotoImage-Objekte, die Knöpfe zeigen die neue Farbe also sofort.
 Ohne Icon-Schrift liefert glyph() das frühere Ersatzzeichen, opts() nichts (nur Text) und only() das Ersatzzeichen
 als Text."""
 
 import base64
 import ctypes
+import ctypes.util
 import os
 import struct
+import sys
 import zlib
 from ctypes import wintypes
 from pathlib import Path
 
 import tkinter as tk
 
+WINDOWS = sys.platform == "win32"
 _FONTS = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
-FAMILY = ("Segoe Fluent Icons" if (_FONTS / "SegoeIcons.ttf").exists() else
-          "Segoe MDL2 Assets" if (_FONTS / "segmdl2.ttf").exists() else None)
+FONT_FILE = Path(__file__).resolve().parent / "fonts" / "MonhipIcons.ttf"  # Linux
+LINUX_FAMILY = "Monhip Icons"
 
 # Name → (Zeichen der Icon-Schrift, Ersatzzeichen ohne sie)
 GLYPHS = {
@@ -39,6 +44,59 @@ GLYPHS = {
     "stop": ("\uee95", "■"), "tasks": ("\ue9d5", "≡"), "terminal": ("\ue756", "❯"), "think": ("\uea80", "✻"),
     "undo": ("\ue7a7", "↶"), "upload": ("\ue898", "⬆"), "warning": ("\ue7ba", "!"), "cross": ("\ue711", "✗"),
 }
+
+# Linux: Name → Symbol aus Fluent UI System Icons (Größe 20, „regular“ bzw. „filled“). In MonhipIcons.ttf liegen sie in
+# dieser Reihenfolge ab U+E000 – Reihenfolge nur am Ende erweitern und die Schrift dann neu bauen (tools/icon_font.py)
+FLUENT = {
+    "add": "add_20_regular", "attach": "attach_20_regular", "branch": "branch_fork_20_regular",
+    "calc": "calculator_20_regular", "check": "checkmark_20_regular", "chev_down": "chevron_down_20_regular",
+    "chev_left": "chevron_left_20_regular", "chev_right": "chevron_right_20_regular", "clock": "clock_20_regular",
+    "close": "dismiss_20_regular", "copy": "copy_20_regular", "delete": "delete_20_regular",
+    "dot": "circle_20_filled", "download": "arrow_download_20_regular", "edit": "edit_20_regular",
+    "folder": "folder_20_regular", "globe": "globe_20_regular", "help": "question_circle_20_regular",
+    "history": "history_20_regular", "info": "info_20_regular", "join": "person_add_20_regular",
+    "keyboard": "keyboard_20_regular", "list": "text_bullet_list_ltr_20_regular", "mic": "mic_20_regular",
+    "page": "document_20_regular", "paste": "clipboard_paste_20_regular", "person": "person_20_regular",
+    "photo": "image_20_regular", "pin": "pin_20_regular", "play": "play_20_regular",
+    "refresh": "arrow_clockwise_20_regular", "reply": "arrow_reply_20_regular", "robot": "bot_20_regular",
+    "search": "search_20_regular", "settings": "settings_20_regular", "shield": "shield_20_regular",
+    "star": "star_20_regular", "stop": "stop_20_filled", "tasks": "task_list_ltr_20_regular",
+    "terminal": "window_console_20_regular", "think": "brain_circuit_20_regular", "undo": "arrow_undo_20_regular",
+    "upload": "arrow_upload_20_regular", "warning": "warning_20_regular", "cross": "dismiss_20_regular",
+}
+_LINUX_CHARS = {name: chr(0xE000 + i) for i, name in enumerate(FLUENT)}
+
+
+def _register_font(path: Path) -> bool:
+    """Linux: Schriftdatei nur für Monhip bei fontconfig anmelden (FcConfigAppFontAddFile) – Tk findet sie dann unter
+    ihrem Familiennamen, ohne dass sie im System installiert sein muss."""
+    if not path.is_file():
+        return False
+    try:
+        fc = ctypes.CDLL(ctypes.util.find_library("fontconfig") or "libfontconfig.so.1")
+        fc.FcConfigAppFontAddFile.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+        fc.FcConfigAppFontAddFile.restype = ctypes.c_int
+        return bool(fc.FcConfigAppFontAddFile(None, os.fsencode(path)))
+    except (OSError, AttributeError):
+        return False
+
+
+def _pillow_ok() -> bool:
+    """Linux: Pillow mit FreeType da (zeichnet die Bilder) und die Icon-Schrift dabei?"""
+    try:
+        from PIL import features
+        return FONT_FILE.is_file() and bool(features.check("freetype2"))
+    except ImportError:
+        return False
+
+
+if WINDOWS:
+    FAMILY = ("Segoe Fluent Icons" if (_FONTS / "SegoeIcons.ttf").exists() else
+              "Segoe MDL2 Assets" if (_FONTS / "segmdl2.ttf").exists() else None)
+    RENDER = FAMILY is not None             # Bilder per GDI aus der Icon-Schrift
+else:
+    FAMILY = LINUX_FAMILY if _register_font(FONT_FILE) else None  # setup() prüft, ob Tk sie wirklich findet
+    RENDER = _pillow_ok()                   # Bilder per Pillow aus MonhipIcons.ttf
 
 # Bildzeichen der Werkzeuge (agent.ICONS – kommen im Teamwork auch von anderen Rechnern, daher Zeichen statt Namen)
 # und der aufklappbaren Blöcke → Icon-Name
@@ -59,12 +117,22 @@ _images: dict[tuple, tk.PhotoImage] = {}  # (Name, Farbrolle, Pixel, Einzug, Ran
 
 
 def setup(root: tk.Misc, scale: float):
-    """Einmal beim Start (ThemeManager): Wurzelfenster für die Bilder und Windows-Skalierung."""
-    global _root, _scale
+    """Einmal beim Start (ThemeManager): Wurzelfenster für die Bilder und Windows-Skalierung. Linux: Findet Tk die
+    angemeldete Icon-Schrift nicht, gibt es in Textfeldern die Ersatzzeichen statt leerer Kästchen."""
+    global _root, _scale, FAMILY
     _root, _scale = root, scale
+    if not WINDOWS and FAMILY:
+        from tkinter import font as tkfont
+        try:
+            if FAMILY not in tkfont.families(root):
+                FAMILY = None
+        except tk.TclError:
+            FAMILY = None
 
 
 def _char(name: str) -> str:
+    if not WINDOWS:
+        return _LINUX_CHARS.get(name, " ")  # „blank“: Leerzeichen
     return _MDL2.get(name, GLYPHS[name][0]) if FAMILY == "Segoe MDL2 Assets" else GLYPHS[name][0]
 
 
@@ -85,7 +153,7 @@ def image(name: str, role: str = "fg", size: int = 16, indent: int = 0, lower: f
     lower: Icon so viele Pixel (bei 100 %) tiefer, über einen durchsichtigen Rand oben. Tk zentriert Bild und
     Textzeile gegeneinander; bei Text ab 10 pt ist die Zeile höher als das Icon, und die Buchstaben sitzen unter
     ihrer Mitte – ohne lower stünde das Icon dann zu hoch (Seitenleiste: 1,5 px)."""
-    if not FAMILY or _root is None:
+    if not RENDER or _root is None:
         return None
     px = max(8, round(size * _scale))
     pad, top = round(indent * _scale), round(2 * lower * _scale)
@@ -134,7 +202,7 @@ def _png(name: str, px: int, color: str, pad: int = 0, top: int = 0) -> str:
     """PNG (RGBA, base64): Farbe überall, Deckung als Alpha; pad Pixel links und top Pixel oben durchsichtig."""
     cover = _cover.get((name, px))
     if cover is None:
-        cover = _cover[(name, px)] = _render(_char(name), px)
+        cover = _cover[(name, px)] = (_render if WINDOWS else _render_pillow)(_char(name), px)
     r, g, b = (int(color[i:i + 2], 16) for i in (1, 3, 5))
     rows = (b"\0" + bytes(4 * (pad + px))) * top + b"".join(
         b"\0" + bytes(4 * pad) + b"".join(bytes((r, g, b, a)) for a in cover[y * px:(y + 1) * px]) for y in range(px))
@@ -200,3 +268,20 @@ def _render(char: str, px: int) -> bytes:
         g.DeleteObject(bmp)
         g.DeleteDC(dc)
     return data[2::4]
+
+
+_pil_fonts: dict = {}
+
+
+def _render_pillow(char: str, px: int) -> bytes:
+    """Linux: wie _render, aber mit Pillow (FreeType) aus MonhipIcons.ttf – Zeichen mittig nach seinem Umriss."""
+    from PIL import Image, ImageDraw, ImageFont
+    font = _pil_fonts.get(px)
+    if font is None:
+        font = _pil_fonts[px] = ImageFont.truetype(str(FONT_FILE), px)
+    img = Image.new("L", (px, px), 0)
+    if char.strip():
+        left, top, right, bottom = font.getbbox(char)
+        ImageDraw.Draw(img).text((round((px - (right - left)) / 2 - left), round((px - (bottom - top)) / 2 - top)),
+                                 char, font=font, fill=255)
+    return img.tobytes()

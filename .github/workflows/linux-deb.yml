@@ -1,0 +1,98 @@
+# Linux-Paket für jedes Release: testet den Stand des Release-Tags, baut monhip_<Version>_all.deb
+# (installer/linux/build-deb.sh), installiert und startet es auf Ubuntu 24.04 und hängt es samt SHA-256 an das Release.
+# Nachträglich für ein bestehendes Release: Actions → „Linux-Paket (.deb)“ → Run workflow → Tag eingeben.
+name: Linux-Paket (.deb)
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release-Tag, an das das Paket gehängt wird (z. B. v1.4.7)"
+        required: true
+
+permissions:
+  contents: write  # Dateien an das Release hängen
+
+concurrency:
+  group: linux-deb-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  deb:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - name: Stand des Releases holen
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Tag und Version prüfen
+        run: |
+          if [ ! -x installer/linux/build-deb.sh ]; then
+            echo "::error::$TAG enthält noch kein installer/linux/build-deb.sh – erst Releases danach bekommen ein .deb."
+            exit 1
+          fi
+          version=$(sed -n 's/^VERSION = "\([^"]*\)".*/\1/p' app/monhip.py | head -n 1)
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::Release-Tag $TAG passt nicht zu VERSION = \"$version\" in app/monhip.py."
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Pakete für die Tests
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends python3-tk python3-pil xdg-utils poppler-utils xclip \
+            tkdnd xvfb xauth fonts-dejavu-core imagemagick git
+
+      - name: Tests
+        run: xvfb-run -a /usr/bin/python3 -m unittest discover -s tests
+
+      - name: Paket bauen
+        env:
+          MAINTAINER_VAR: ${{ vars.MONHIP_MAINTAINER }}
+        run: |
+          # Maintainer: Repository-Variable MONHIP_MAINTAINER, sonst die noreply-Adresse des Repo-Besitzers
+          export MONHIP_MAINTAINER="${MAINTAINER_VAR:-$GITHUB_REPOSITORY_OWNER <$GITHUB_REPOSITORY_OWNER_ID+$GITHUB_REPOSITORY_OWNER@users.noreply.github.com>}"
+          installer/linux/build-deb.sh
+          cd dist
+          sha256sum "monhip_${VERSION}_all.deb" > "monhip_${VERSION}_all.deb.sha256"
+          dpkg-deb -I "monhip_${VERSION}_all.deb"
+
+      - name: Paket installieren und starten
+        run: |
+          sudo apt-get install -y -q "./dist/monhip_${VERSION}_all.deb"
+          set +e
+          xvfb-run -a timeout 20 monhip > monhip.log 2>&1
+          code=$?
+          set -e
+          cat monhip.log
+          # 124 = nach 20 s noch am Laufen (von timeout beendet) – alles andere heißt: vorzeitig beendet
+          if [ "$code" -ne 124 ] || grep -q "Traceback" monhip.log; then
+            echo "::error::Monhip aus dem Paket ist nicht sauber gestartet (Code $code)."
+            exit 1
+          fi
+          test -d "$HOME/.local/share/monhip"
+          sudo apt-get remove -y -q monhip
+          test ! -e /opt/monhip
+
+      - name: An das Release hängen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$TAG" "dist/monhip_${VERSION}_all.deb" "dist/monhip_${VERSION}_all.deb.sha256" \
+            --clobber --repo "$GITHUB_REPOSITORY"
+          {
+            echo "### Linux-Paket für $TAG"
+            echo
+            echo "\`monhip_${VERSION}_all.deb\` hängt am Release: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
+            echo
+            echo '```'
+            cat "dist/monhip_${VERSION}_all.deb.sha256"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

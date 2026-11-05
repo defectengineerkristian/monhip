@@ -1,17 +1,19 @@
 """Erinnerungen des Modells (Werkzeuge set_reminder/cancel_reminder), gespeichert in erinnerungen.json.
-Die App fragt regelmäßig due() ab und meldet fällige per notify() als Windows-Benachrichtigung.
+Die App fragt regelmäßig due() ab und meldet fällige per notify() als Windows-Benachrichtigung (Linux: notify-send).
 """
 
 import json
 import re
+import subprocess
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from xml.sax.saxutils import escape
 
+import plattform
 from images import powershell
 
-FILE = Path(__file__).resolve().parent.parent / "erinnerungen.json"
+FILE = plattform.DATA_DIR / "erinnerungen.json"
 _lock = threading.Lock()
 _FORMATS = ("%d.%m.%Y %H:%M", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M", "%d.%m. %H:%M", "%H:%M")
 # AppID von Windows PowerShell: damit dürfen Benachrichtigungen ohne eigene App-Registrierung erscheinen
@@ -112,6 +114,8 @@ def prompt_block() -> str:
 
 def notify(title: str, text: str) -> bool:
     """Windows-Benachrichtigung (unten rechts, mit Erinnerungston). Blockiert ~1 s – im Thread aufrufen."""
+    if not plattform.WINDOWS:
+        return _notify_linux(title, text)
     xml = (f"<toast scenario='reminder'><visual><binding template='ToastGeneric'><text>{escape(title)}</text>"
            f"<text>{escape(text)}</text></binding></visual>"
            "<actions><action content='OK' arguments='ok' activationType='system'/></actions>"
@@ -125,3 +129,17 @@ $xml.LoadXml('{xml.replace("'", "''")}')
     [Windows.UI.Notifications.ToastNotification]::new($xml))
 'ok'""")
     return out.endswith("ok")
+
+
+def _notify_linux(title: str, text: str) -> bool:
+    """Benachrichtigung des Desktops über notify-send (libnotify); bleibt stehen, bis man sie wegklickt."""
+    exe = plattform.which("notify-send")
+    if not exe:
+        return False
+    icon = Path(__file__).resolve().with_name("monhip.ico")
+    try:
+        r = subprocess.run([exe, "--app-name=Monhip", "--urgency=critical", f"--icon={icon}", title, text],
+                           capture_output=True, stdin=subprocess.DEVNULL, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return r.returncode == 0

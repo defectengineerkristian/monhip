@@ -26,6 +26,8 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends python3-tk python3-pil xdg-utils poppler-utils xclip \
             tkdnd xvfb xauth fonts-dejavu-core imagemagick git
+      - name: Jupyter (für den Test der Notebook-Werkzeuge)
+        run: sudo apt-get install -y -q --no-install-recommends python3-nbclient python3-ipykernel python3-matplotlib
       - name: Tests
         run: xvfb-run -a /usr/bin/python3 -m unittest discover -s tests -v
       - name: Fenster ziehen messen (nur zur Info)
@@ -40,6 +42,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
+      - name: Jupyter (für den Test der Notebook-Werkzeuge)
+        run: python -m pip install --quiet nbclient ipykernel matplotlib
       - name: Tests
         env:
           PYTHONUTF8: "1"

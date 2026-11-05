@@ -29,6 +29,7 @@ import filedrop
 import gitwork
 import images
 import memory
+import notebook
 import office
 import ordnen
 import pdfsatz
@@ -414,6 +415,36 @@ MEDIA_TOOLS = [  # mit Dateizugriff, Gruppe „media“: PDFs und Bilder bearbei
           drehen={"type": "integer", "description": "90, 180 oder 270 (im Uhrzeigersinn)"}),
 ]
 
+NOTEBOOK_TOOLS = [  # mit Dateizugriff, Gruppe „notebooks“: Jupyter-Notebooks (notebook.py)
+    _tool("notebook_lesen", "Liest ein Jupyter-Notebook (.ipynb): jede Zelle mit Nummer, Typ und Inhalt, dazu ihre "
+          "Ausgaben (gekürzt) und Fehler. Abbildungen (Diagramme, Bilder) bekommst du als Bild angehängt, wenn du "
+          "Bilder verstehst – höchstens 4 je Aufruf, weitere über zellen.", optional=("zellen",), path=PATH,
+          zellen={"type": "string", "description": "Nur diese Zellen, z. B. '3', '2-5' oder '7-' (Standard: alle)"}),
+    _tool("notebook_zelle", "Ändert ein Jupyter-Notebook zellenweise. aktion ersetzen: neuer Inhalt für Zelle nr; "
+          "einfuegen: neue Zelle nach Zelle nr (0 = ganz oben); loeschen: Zelle nr entfernen. Nummern aus "
+          "notebook_lesen.", optional=("inhalt", "typ"), path=PATH,
+          aktion={"type": "string", "enum": ["ersetzen", "einfuegen", "loeschen"]},
+          nr={"type": "integer", "description": "Zellennummer"},
+          inhalt={"type": "string", "description": "Ganzer neuer Inhalt der Zelle (Code bzw. Markdown)"},
+          typ={"type": "string", "enum": ["code", "markdown"], "description": "Standard: code bzw. wie bisher"}),
+    _tool("notebook_anlegen", "Legt ein neues Jupyter-Notebook (Python) mit diesen Zellen an.", path=PATH,
+          zellen={"type": "array", "description": "Zellen in Reihenfolge",
+                  "items": {"type": "object", "properties": {"typ": {"type": "string", "enum": ["code", "markdown"]},
+                                                             "inhalt": STR},
+                            "required": ["typ", "inhalt"]}}),
+]
+NOTEBOOK_RUN_TOOLS = [  # dazu mit Befehlen (führt den Code im Notebook aus)
+    _tool("notebook_ausfuehren", "Führt ein Jupyter-Notebook von oben in einem frischen Kernel aus (wie „Restart "
+          "Kernel and Run All“), hält an der ersten Zelle mit Fehler und speichert die Ausgaben im Notebook. Zeigt dir "
+          "Ausgaben, Fehler und die neuen Abbildungen (als Bild, wenn du Bilder verstehst).",
+          optional=("bis_zelle", "timeout_seconds", "python"), path=PATH,
+          bis_zelle={"type": "integer", "description": "Nur bis zu dieser Zelle (Standard: alle)"},
+          timeout_seconds={"type": "integer", "description": "Zeitlimit je Zelle in Sekunden (Standard 300, "
+                                                             "höchstens 3600)"},
+          python={"type": "string", "description": "Python bzw. Umgebung mit Jupyter – nur wenn der Nutzer eine "
+                                                   "bestimmte will (Standard: wird gesucht)"}),
+]
+
 # Teamwork-Erlaubnis „Strikt“ (Agent(ask_every=True)): vor jedem Werkzeug fragen – außer bei reiner Koordination im
 # Raum und Rechnen (berühren weder den Rechner noch das Internet) und bei Werkzeugen, die selbst in jedem Fall fragen,
 # bevor sie etwas lesen, ändern, ausführen oder verschicken (dort bleibt ihre genauere Vorschau). In CONFIRMS_ITSELF nur
@@ -426,11 +457,12 @@ CONFIRMS_ITSELF = frozenset({
     "create_excel_workbook", "create_presentation", "create_pdf", "run_command", "run_python", "projekt_write",
     "projekt_edit", "projekt_delete", "projekt_upload", "datei_teilen", "dateien_ordnen", "bilder_bearbeiten",
     "checkpoint_zurueck", "prozess_starten", "download_file", "clipboard_read", "clipboard_write",
-    "fenster_bedienen"})
+    "fenster_bedienen", "notebook_anlegen", "notebook_ausfuehren"})
 
 # Werkzeuggruppen, die man in den Einstellungen abschalten kann (jede kostet bei jeder Anfrage Kontext) – nur zusammen
 # mit ihrer Voraussetzung (Dateien, Befehle, Internet) aktiv; Agent(groups={name: False}) schaltet ab, Standard an
-TOOL_GROUPS = ("calc", "checkpoints", "plan", "office", "organize", "media", "processes", "download", "clipboard")
+TOOL_GROUPS = ("calc", "checkpoints", "plan", "office", "organize", "media", "processes", "download", "clipboard",
+               "notebooks")
 
 LABELS = {
     "list_directory": tr('Ordner ansehen'), "read_file": tr('Datei lesen'), "write_file": tr('Datei schreiben'),
@@ -460,7 +492,9 @@ LABELS = {
     "bilder_bearbeiten": tr('Bilder bearbeiten'), "rechnen": tr('Rechnen'), "create_pdf": tr('PDF-Dokument'),
     "download_file": tr('Datei herunterladen'), "clipboard_read": tr('Zwischenablage lesen'),
     "clipboard_write": tr('In die Zwischenablage'), "fenster_liste": tr('Fenster auflisten'),
-    "fenster_bedienen": tr('Fenster bedienen'),
+    "fenster_bedienen": tr('Fenster bedienen'), "notebook_lesen": tr('Notebook lesen'),
+    "notebook_zelle": tr('Notebook ändern'), "notebook_anlegen": tr('Notebook anlegen'),
+    "notebook_ausfuehren": tr('Notebook ausführen'),
 }
 ICONS = {"web_search": "🌐", "fetch_url": "🌐", "search_files": "⌕", "write_file": "✎", "edit_file": "✎",
          "run_command": "❯", "run_python": "❯", "view_image": "▣", "take_screenshot": "▣", "remember": "✦",
@@ -471,7 +505,8 @@ ICONS = {"web_search": "🌐", "fetch_url": "🌐", "search_files": "⌕", "writ
          "github_pull_request": "⬆", "plan_setzen": "☰", "checkpoint_zurueck": "↶", "prozess_starten": "❯",
          "prozess_ausgabe": "❯", "prozess_stoppen": "❯", "dateien_ordnen": "📁", "speicher_analysieren": "⌕",
          "pdf_bearbeiten": "✎", "bilder_bearbeiten": "▣", "rechnen": "=", "download_file": "⬇",
-         "clipboard_read": "📋", "clipboard_write": "📋", "fenster_liste": "▣", "fenster_bedienen": "⌨"}  # Experten-Modus sonst ohne Bildzeichen
+         "clipboard_read": "📋", "clipboard_write": "📋", "fenster_liste": "▣", "fenster_bedienen": "⌨",
+         "notebook_lesen": "📓", "notebook_zelle": "✎", "notebook_anlegen": "📓", "notebook_ausfuehren": "❯"}  # Experten-Modus sonst ohne Bildzeichen
 
 FILE_PROMPT = (
     "Du arbeitest auf dem {system}-PC des Nutzers.\n"
@@ -521,6 +556,12 @@ ORGANIZE_PROMPT = (
     "freigibt.")
 
 MEDIA_PROMPT = "PDFs bearbeitest du mit pdf_bearbeiten, viele Bilder mit bilder_bearbeiten (beide legen neue Dateien an)."
+
+NOTEBOOK_PROMPT = (
+    "Jupyter-Notebooks (.ipynb) liest du mit notebook_lesen und änderst sie mit notebook_zelle bzw. legst sie mit "
+    "notebook_anlegen an – nie mit write_file/edit_file. {run}Hat der Nutzer das Notebook in Jupyter offen, soll er es "
+    "vorher speichern und danach neu laden (File → Reload Notebook from Disk) – sag ihm das nach Änderungen kurz.")
+NOTEBOOK_RUN_PROMPT = "Prüfe deine Änderungen mit notebook_ausfuehren (Ausgaben, Fehler, Abbildungen). "
 
 PROCESS_PROMPT = (
     "Programme, die weiterlaufen sollen, startest du mit prozess_starten statt run_command und sagst dem Nutzer, "
@@ -723,6 +764,19 @@ def _strip_line_numbers(text: str) -> str:
     return "\n".join(LINE_NO.sub("", ln, count=1) for ln in text.split("\n"))
 
 
+def _check_notebook(p: Path, content: str):
+    """write_file/edit_file an einem Notebook: nur, wenn danach noch ein gültiges Notebook dasteht."""
+    if p.suffix.lower() != ".ipynb":
+        return
+    try:
+        notebook.check(json.loads(content), p.name)
+    except ValueError as e:
+        raise ToolError(f"Das wäre kein gültiges Notebook mehr ({e}) – Notebooks änderst du mit notebook_zelle "
+                        "bzw. legst sie mit notebook_anlegen an.") from None
+    except notebook.NotebookError as e:
+        raise ToolError(f"{e} Notebooks änderst du mit notebook_zelle bzw. legst sie mit notebook_anlegen an.") from None
+
+
 def _preview(text: str, limit: int = 1500) -> str:
     return text if len(text) <= limit else text[:limit] + "\n…"
 
@@ -734,7 +788,7 @@ class ToolError(Exception):
 # dasselbe aus den Hilfsmodulen (die agent nicht importieren können)
 MODEL_ERRORS = (ToolError, gitwork.GitError, arbeitsplan.PlanError, checkpoints.CheckpointError,
                 prozesse.ProzessError, ordnen.OrdnenError, pdfwerk.PdfError, bildwerk.BildError,
-                rechner.RechenError, steuerung.ControlError)
+                rechner.RechenError, steuerung.ControlError, notebook.NotebookError)
 
 
 def _flag(value) -> bool:
@@ -897,6 +951,8 @@ class Agent:
                       + (OFFICE_TOOLS if files and g["office"] else [])
                       + (ORGANIZE_TOOLS if files and g["organize"] else [])
                       + (MEDIA_TOOLS if files and g["media"] else [])
+                      + (NOTEBOOK_TOOLS if files and g["notebooks"] else [])
+                      + (NOTEBOOK_RUN_TOOLS if files and commands and g["notebooks"] else [])
                       + (CMD_TOOLS if commands else []) + (PROCESS_TOOLS if commands and g["processes"] else [])
                       + (PLAN_TOOLS if (files or commands) and g["plan"] else [])
                       + (GIT_TOOLS if self.git else [])
@@ -928,6 +984,9 @@ class Agent:
             parts += [p for p, tool in ((OFFICE_PROMPT, "create_pdf"), (PROJECT_PROMPT, "create_project"),
                                         (CHECKPOINT_PROMPT, "checkpoint_zurueck"), (ORGANIZE_PROMPT, "dateien_ordnen"),
                                         (MEDIA_PROMPT, "pdf_bearbeiten")) if tool in on]
+            if "notebook_lesen" in on:
+                parts.append(NOTEBOOK_PROMPT.format(
+                    run=NOTEBOOK_RUN_PROMPT if "notebook_ausfuehren" in on else ""))
         if self.commands:
             parts.append(CMD_PROMPT.format(shell=SHELL, tools=installed_toolchains(), hints=shell_hints()))
             if "prozess_starten" in on:
@@ -1066,6 +1125,9 @@ class Agent:
 
     def tool_read_file(self, path, start_line=1, end_line=None):
         p = self._path(path)
+        if p.suffix.lower() == ".ipynb" and "notebook_lesen" in self._allowed and p.is_file():
+            return ("(Jupyter-Notebook – gezeigt wie mit notebook_lesen; ändern mit notebook_zelle)\n"
+                    + self.tool_notebook_lesen(path))
         if p.suffix.lower() in documents.CONVERTED:  # PDF, Office, OpenDocument, RTF → als Text
             text = documents.read(p).text
         else:
@@ -1079,6 +1141,7 @@ class Agent:
 
     def tool_write_file(self, path, content):
         p = self._path(path)
+        _check_notebook(p, content)
         verb = tr('überschreiben') if p.exists() else tr('anlegen')
         if not self._ok(tr('Datei {0}?', verb), f"{p}\n\n{_preview(content)}"):
             return "Vom Nutzer abgelehnt."
@@ -1091,6 +1154,7 @@ class Agent:
         p = self._path(path)
         text = _read_text_file(p)
         old_text, new_text = match_edit(text, old_text, new_text)
+        _check_notebook(p, text.replace(old_text, new_text, 1))
         if not self._ok(tr('Datei ändern?'), tr('{0}\n\n– bisher –\n{1}\n\n– neu –\n{2}', p, _preview(old_text, 800), _preview(new_text, 800))):
             return "Vom Nutzer abgelehnt."
         self._sichern(p)
@@ -1576,6 +1640,98 @@ class Agent:
     def tool_ki_fragen(self, ki, frage):
         return self.room.ask(ki, frage)
 
+    # ------------------------------------------------------------ Jupyter-Notebooks (notebook.py)
+
+    def _notebook(self, path) -> Path:
+        p = self._path(path)
+        if p.suffix.lower() != ".ipynb":
+            raise notebook.NotebookError(f"{p.name} ist kein Jupyter-Notebook (.ipynb).")
+        if not p.is_file():
+            raise notebook.NotebookError(f"{p} gibt es nicht – neue Notebooks mit notebook_anlegen.")
+        return p
+
+    def _near(self, p: Path) -> list[Path]:
+        """Ordner des Notebooks und darüber bis zum freigegebenen Ordner, dazu der Arbeitsordner – dort sucht
+        notebook.find_python nach einer virtuellen Umgebung."""
+        root = next((r for r in self.roots if r in p.parents), None)
+        out, d = [], p.parent
+        while True:
+            out.append(d)
+            if root is None or d == root or d.parent == d:
+                break
+            d = d.parent
+        return out + ([self.ws] if self.ws and self.ws not in out else [])
+
+    def _show_figures(self, figures, newest: bool = False) -> str:
+        """Abbildungen wie bei view_image ans Ergebnis hängen (nur mit Bildverständnis) – Hinweis dazu fürs Modell."""
+        paths, note = notebook.pick_figures(figures, self.vision, newest)
+        self._images += paths
+        return f"\n\n{note}" if note else ""
+
+    def tool_notebook_lesen(self, path, zellen=""):
+        p = self._notebook(path)
+        text, figures = notebook.render(notebook.load(p), p.name, zellen)
+        return text + self._show_figures(figures)
+
+    def tool_notebook_zelle(self, path, aktion, nr, inhalt=None, typ=""):
+        p = self._notebook(path)
+        nb = notebook.load(p)
+        message, old, new = notebook.change(nb, aktion, nr, inhalt, typ)
+        parts = [str(p)] + ([tr('– bisher –') + "\n" + _preview(old, 800)] if old else []) + (
+            [tr('– neu –') + "\n" + _preview(new, 800)] if new else [])
+        if not self._ok(tr('Notebook ändern?'), "\n\n".join(parts)):
+            return "Vom Nutzer abgelehnt."
+        self._sichern(p)
+        notebook.save(p, nb)
+        return message
+
+    def tool_notebook_anlegen(self, path, zellen):
+        p = self._path(path)
+        if p.suffix.lower() != ".ipynb":
+            if p.suffix:
+                raise notebook.NotebookError(f"{p.name}: Notebooks enden auf .ipynb.")
+            p = p.with_name(p.name + ".ipynb")
+        if p.exists():
+            raise notebook.NotebookError(f"{p} gibt es schon – ändern mit notebook_zelle (vorher notebook_lesen).")
+        specs = notebook.cell_specs(zellen)
+        shown = "\n\n".join(f"[{kind}]\n{content}" for kind, content in specs)
+        if not self._ok(tr('Notebook anlegen?'), f"{p}\n\n{_preview(shown)}"):
+            return "Vom Nutzer abgelehnt."
+        self._sichern(p)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        notebook.save(p, notebook.new_notebook(specs))
+        return (f"Notebook {p} mit {len(specs)} Zellen angelegt (Kernel Python 3)."
+                + (" Ausführen mit notebook_ausfuehren." if "notebook_ausfuehren" in self._allowed else ""))
+
+    def tool_notebook_ausfuehren(self, path, bis_zelle=None, timeout_seconds=None, python=""):
+        p = self._notebook(path)
+        timeout = max(10, min(int(timeout_seconds or max(self.cmd_timeout, 300)), 3600))
+        until = max(0, int(bis_zelle or 0))
+        what = tr('Zellen 1 bis {0}', until) if until else tr('Alle Zellen')
+        if not self._ok(tr('Notebook ausführen?'), tr(
+                '{0}\n\n{1} von oben in einem frischen Kernel (wie „Restart Kernel and Run All“) – das führt den Code '
+                'im Notebook aus. Die Ausgaben werden im Notebook gespeichert.', p, what)):
+            return "Vom Nutzer abgelehnt."
+        count = len(notebook.load(p)["cells"])
+        if until > count:
+            raise notebook.NotebookError(f"bis_zelle {until}: Das Notebook hat nur {count} Zellen.")
+        exe = notebook.find_python(self._near(p), python)
+        before, started = p.stat().st_mtime_ns, time.monotonic()
+        try:
+            status, data = notebook.execute(exe, p, until, timeout, self._run)
+        except notebook.NotebookError:
+            if self.stop is not None and self.stop.is_set():
+                return "Abgebrochen – vom Nutzer gestoppt. Das Notebook ist unverändert."
+            raise
+        result = json.loads(data.decode("utf-8"))
+        notebook.check(result, p.name)
+        saved = p.stat().st_mtime_ns == before
+        if saved:
+            self._sichern(p)
+            notebook.write_bytes(p, data)
+        text, figures = notebook.render_run(result, p.name, status, time.monotonic() - started, saved)
+        return text + f"\n(Python: {' '.join(exe)})" + self._show_figures(figures, newest=True)
+
     def pop_images(self) -> list[Path]:
         """Bilder, die das letzte Werkzeug dem Modell zeigen will (und danach vergessen)."""
         found, self._images = self._images, []
@@ -2001,6 +2157,16 @@ def describe_call(name: str, raw_args: str) -> tuple[str, str, str]:
         if name in ("datei_teilen", "projekt_upload"):  # nur der Dateiname – der Pfad verriete z. B. den Benutzernamen
             detail = Path(str(a.get("local_path") or a.get("path") or "")).name if name == "datei_teilen" else (
                 str(a.get("path") or "") or Path(str(a.get("local_path") or "")).name)
+        if name == "notebook_zelle":
+            act = notebook.ACTIONS.get(str(a.get("aktion") or "").strip().lower(), "")
+            nr = a.get("nr")
+            detail = tr('{0}  ·  Zelle {1} ersetzen', detail, nr) if act == "ersetzen" else tr(
+                '{0}  ·  Zelle nach {1} einfügen', detail, nr) if act == "einfuegen" else tr(
+                '{0}  ·  Zelle {1} löschen', detail, nr) if act == "loeschen" else detail
+        elif name == "notebook_lesen" and a.get("zellen"):
+            detail = tr('{0}  ·  Zellen {1}', detail, a['zellen'])
+        elif name == "notebook_ausfuehren" and a.get("bis_zelle"):
+            detail = tr('{0}  ·  bis Zelle {1}', detail, a['bis_zelle'])
         if name in ("read_file", "projekt_read") and (a.get("start_line") or a.get("end_line")):
             detail = tr('{0}  ·  Zeile {1}', detail, a.get('start_line') or 1) + (f"–{a['end_line']}" if a.get("end_line") else "")
         elif name == "fetch_url" and a.get("start"):

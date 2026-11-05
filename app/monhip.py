@@ -599,7 +599,8 @@ class App:
                 ("calc", tr('Rechnen')), ("checkpoints", tr('Rückgängig (Checkpoints)')), ("plan", tr('Arbeitsplan')),
                 ("office", tr('Word, Excel, PowerPoint, PDF')), ("organize", tr('Dateien ordnen & Speicher')),
                 ("media", tr('PDFs & Bilder bearbeiten')), ("processes", tr('Hintergrund-Prozesse')),
-                ("download", tr('Dateien herunterladen')), ("clipboard", tr('Zwischenablage')))):
+                ("download", tr('Dateien herunterladen')), ("clipboard", tr('Zwischenablage')),
+                ("notebooks", tr('Jupyter-Notebooks')))):
             box = ttk.Checkbutton(gf, text=label, variable=self.group_vars[g])
             box.grid(row=i // 3, column=i % 3, sticky="w", padx=(0, 18), pady=(2, 0))
             self._group_boxes[g] = box
@@ -1419,7 +1420,7 @@ class App:
         """Werkzeuggruppen ohne ihre Voraussetzung (Dateien, Befehle, Internet) gesperrt zeigen."""
         files, cmd, web_access = self.agent_var.get(), self.cmd_var.get(), self.web_var.get()
         needs = {"checkpoints": files, "office": files, "organize": files, "media": files, "processes": cmd,
-                 "plan": files or cmd, "download": files and web_access}
+                 "plan": files or cmd, "download": files and web_access, "notebooks": files}
         for g, box in self._group_boxes.items():
             box.state(["!disabled"] if needs.get(g, True) else ["disabled"])
 

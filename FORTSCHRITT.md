@@ -8,6 +8,21 @@ immer mit festen Daten (TT.MM.JJJJ).
 ---
 
 ## Seit v1.4.6
+- 05.11.2026: Jupyter-Notebooks für den Agenten (`app/notebook.py`, Werkzeuggruppe „Jupyter-Notebooks“).
+  `notebook_lesen` zeigt jede Zelle mit Nummer, Typ und Inhalt, dazu gekürzte Ausgaben und Fehler (Ende des
+  Tracebacks, ohne Farbcodes). Abbildungen (PNG/JPG aus den Ausgaben, Bilder in Markdown-Zellen) gehen wie bei
+  `view_image` als Bild ans Modell – höchstens 4 je Aufruf, ohne Bildverständnis nur ihre Größe; interaktive Ausgaben
+  (plotly, Widgets) werden als solche benannt. `notebook_zelle` ersetzt, fügt ein oder löscht Zellen (ersetzte
+  Code-Zellen verlieren ihre alten Ausgaben), `notebook_anlegen` legt neue Notebooks an – geschrieben wie von Jupyter
+  selbst (dieselben Bytes wie nbformat), mit Checkpoint. Mit „Befehle & Programme“ dazu `notebook_ausfuehren`: von
+  oben in einem frischen Kernel (wie „Restart Kernel and Run All“), Halt an der ersten Zelle mit Fehler, Ausgaben im
+  Notebook gespeichert, Ergebnis samt neuer Abbildungen zurück ans Modell. Monhip sucht dafür ein Python mit Jupyter
+  (`.venv`/`venv` beim Notebook, Anaconda/Miniconda, `jupyter`, `py`, das eigene, `python3`) und startet dort
+  `app/notebook_runner.py`; startet der Kernel aus dem Notebook nicht, läuft es mit diesem Python. Wird das Notebook
+  während des Laufs in Jupyter gespeichert, bleibt diese Fassung. `read_file` zeigt Notebooks wie `notebook_lesen`,
+  `write_file`/`edit_file` lehnen alles ab, was kein gültiges Notebook mehr wäre. Tests `tests/test_notebook.py`
+  (Ausführen mit echtem Kernel, wenn Jupyter da ist – in der CI auf Windows und Linux); das Linux-Paket schlägt
+  `python3-nbclient` und `python3-ipykernel` vor.
 - 04.11.2026: Fenster ziehen und lange Antworten flüssiger. Ist das Fenster schmaler als die Chatspalte (z. B. an
   den halben Bildschirm angedockt und dann größer gezogen), behält die Spalte beim Ziehen ihre Breite und bricht erst
   um, wenn das Ziehen 120 ms innehält (`chatview.COLUMN_SETTLE_MS`); ein einzelner Sprung (Maximieren, Andocken) gilt

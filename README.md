@@ -58,6 +58,7 @@ a text response:
 - create coding projects from templates and work with existing development tools;
 - run PowerShell (Windows) or Bash (Linux) and Python commands, provided this feature is enabled;
 - search the web and retrieve webpages as text;
+- work with Jupyter notebooks (see below);
 - save notes as memory across chats and create reminders.
 
 The settings define the working folder, additional shared folders, and available tools.
@@ -67,6 +68,34 @@ and its support for tool calls.
 
 Web search uses DuckDuckGo or, optionally, the Brave Search API. Brave requires
 your own API key.
+
+#### Jupyter notebooks
+
+With “Files & folders” enabled (tool group “Jupyter notebooks”), the model reads `.ipynb` files cell by
+cell with their outputs and errors, and changes, inserts or deletes individual cells. Output is kept
+short; errors keep the end of the traceback. **Figures** (plots and other PNG/JPG output, images in
+Markdown cells) are attached to the result as images, so a model with image understanding sees them, at
+most four per call. Other models only get each figure's size.
+
+With “Run commands & programs” enabled as well, the model runs a notebook from top to bottom in a fresh
+kernel (like “Restart Kernel and Run All”), stops at the first error, saves the outputs in the notebook
+and gets the outputs, errors and the new figures back. That way it can check and fix its own changes.
+Running needs Jupyter in a Python environment. Monhip itself does not. It looks for:
+
+- a `.venv`, `venv` or `env` folder next to the notebook or in a folder above it, up to the shared folder;
+- Anaconda or Miniconda in your home folder;
+- the Python behind the `jupyter` command;
+- `py` (Windows), then Monhip's own Python, then `python3` or `python`.
+
+To install Jupyter, use `py -m pip install notebook` on Windows, or
+`sudo apt install python3-nbclient python3-ipykernel jupyter-notebook` on Debian/Ubuntu (or
+`pip install notebook` in a virtual environment).
+If the notebook's kernel can't start (for example, it was written on another computer), Monhip uses
+that environment's own Python as the kernel and says so.
+
+Save a notebook that is open in Jupyter before asking the model, and reload it afterwards (*File →
+Reload Notebook from Disk*). If you save it while it is running, Monhip doesn't overwrite your version.
+Every change can be undone with the checkpoints.
 
 ### Convert speech to text locally
 

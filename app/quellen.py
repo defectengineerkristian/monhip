@@ -409,7 +409,9 @@ class SourcePanel:
 
     def _refresh_colors(self):
         col = self.app.theme_chat()
-        bg = self.text.cget("background")
+        # Farbe als #rrggbb – „Windows-Standard“ setzt Systemfarben wie „SystemWindow“ (mix_hex kennt nur Hexwerte)
+        r, g, b = (v // 257 for v in self.text.winfo_rgb(self.text.cget("background")))
+        bg = f"#{r:02x}{g:02x}{b:02x}"
         t = self.text
         t.tag_configure("h", font=(FAMILY, 11, "bold"), spacing1=2, spacing3=4)
         t.tag_configure("sub", font=(FAMILY, 9, "bold"), foreground=col["muted"], spacing1=10, spacing3=2)

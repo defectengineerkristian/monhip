@@ -20,6 +20,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import unicodedata
 import urllib.error
 from datetime import datetime
 from pathlib import Path
@@ -610,6 +611,106 @@ def status_of(source: Path) -> dict | None:
             "ok": sum(1 for e in files.values() if e.get("status") == "ok")}
 
 
+# ---------------------------------------------------------------- Suche (Stichwörter, ohne Zusatzmodell)
+
+# Füllwörter: in Fragen wie „Wie beende ich den Vertrag?“ fanden „wie“, „ich“, „den“ sonst beliebige Seiten
+STOPWORDS = frozenset("""
+aber alle allem allen aller alles als also am an andere anderem anderen anderer anderes auch auf aus bei beim bin bis bist
+bitte da damit dann das dass dein deine dem den denn der des dessen dich dies diese diesem diesen dieser dieses dir doch dort
+du durch ein eine einem einen einer eines er es etwa etwas euch euer für gegen genau gibt hab habe haben hat hatte hätte hier
+hin ich ihm ihn ihnen ihr ihre im in indem ins ist jede jedem jeden jeder jedes jetzt kann kein keine können könnte man mein
+meine mich mir mit muss musste nach nicht nichts noch nun nur ob oder ohne sehr sein seine sich sie sind so soll sollte
+sondern sonst steht über um und uns unser unter vom von vor wann war waren warum was weil welche welchem welchen welcher
+welches wenn wer werde werden wie wieder will wir wird wo wurde würde zu zum zur zwar
+a an and are as at be by can do does for from has have how i if in into is it of on or so that the their there this to was
+what when where which who why will with you your
+""".split())
+ENDINGS = ("ing", "en", "er", "es", "ed", "e", "n", "s")  # Wortendungen, die die Suche abschneidet (beende → beend*)
+NEAR = 30                                                 # Teile eines zerlegten Wortes: höchstens so weit auseinander
+INSIDE = 15                                               # so viele längere Wörter, die ein Suchwort enthalten
+
+
+def _norm(word: str) -> str:
+    """Wie der Index (unicode61, remove_diacritics 2): klein, ohne Akzente und Umlautpunkte – „Kündigung“ → „kundigung“."""
+    w = unicodedata.normalize("NFKD", word.lower())
+    return "".join(ch for ch in w if not unicodedata.combining(ch))
+
+
+def _stem(word: str) -> str:
+    """Grob die Endung ab, damit die Suche Wortformen findet: „Verträge“ → „vertrag“ (Umlaut schon weg), „beende“ →
+    „beend“, „Kündigungen“ → „kundigung“. Nur, wenn mindestens vier Buchstaben bleiben."""
+    for end in ENDINGS:
+        if word.endswith(end) and len(word) - len(end) >= 4:
+            return word[:-len(end)]
+    return word
+
+
+class _Vocabulary:
+    """Die Wörter im Index (fts5vocab) – für Wortteile zusammengesetzter Wörter, ohne den Index neu aufzubauen."""
+
+    def __init__(self, con: sqlite3.Connection):
+        self.con = con
+        con.execute("CREATE VIRTUAL TABLE IF NOT EXISTS temp.vokabeln USING fts5vocab(main, seiten, row)")
+
+    def starts(self, prefix: str, besides: str = "") -> bool:
+        """Gibt es ein Wort, das mit prefix anfängt – auf Wunsch eines, das nicht mit besides anfängt?"""
+        sql = "SELECT 1 FROM temp.vokabeln WHERE term >= ? AND term < ?"
+        args = [prefix, prefix + "\U0010ffff"]
+        if besides:
+            sql += " AND NOT (term >= ? AND term < ?)"
+            args += [besides, besides + "\U0010ffff"]
+        return self.con.execute(sql + " LIMIT 1", args).fetchone() is not None
+
+    def containing(self, part: str) -> list[str]:
+        """Längere Wörter mit part in der Mitte oder am Ende („frist“ → „kundigungsfrist“), die häufigsten zuerst."""
+        like = part.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        return [t for (t,) in self.con.execute(
+            "SELECT term FROM temp.vokabeln WHERE term LIKE ? ESCAPE '\\' AND term NOT LIKE ? ESCAPE '\\' "
+            "ORDER BY doc DESC LIMIT ?", (f"%{like}%", f"{like}%", INSIDE))]
+
+    def split(self, word: str) -> list[str] | None:
+        """Zusammengesetztes Wort in zwei Teile, die es als eigene Wörter gibt: „kundigungsfrist“ → [„kundigung“,
+        „frist“] (Fugen-s/-n/-en/-es fällt weg); der längste erste Teil gewinnt. Das Wort selbst zählt dabei nicht
+        mit – sonst wäre „kundigungs“ schon ein Teil, nur weil irgendwo „Kündigungsfrist“ steht."""
+        for i in range(len(word) - 3, 2, -1):
+            head, tail = word[:i], word[i:]
+            if tail in STOPWORDS or not self.starts(tail):
+                continue
+            for cut in ("", "s", "es", "n", "en"):
+                first = head[:len(head) - len(cut)]
+                if head.endswith(cut) and len(first) >= 3 and self.starts(first, besides=word):
+                    return [first, tail]
+        return None
+
+
+def _quote(term: str, prefix: bool = False) -> str:
+    return '"' + term.replace('"', '""') + '"' + ("*" if prefix else "")
+
+
+def word_query(word: str, vocab: _Vocabulary) -> str:
+    """FTS5-Ausdruck für ein Suchwort: Wortanfang (mit gekürzter Endung), Wörter, die es enthalten, zerlegt
+    zusammengesetzt, ß/ss."""
+    stem = _stem(_norm(word))
+    if len(stem) < 4:
+        return _quote(stem)
+    alts = [_quote(stem, True)]
+    alts += [_quote(t) for t in vocab.containing(stem)]
+    parts = vocab.split(stem)  # auch, wenn es das Wort gibt: „Kündigungsfrist“ findet „Kündigung … Frist“ mit
+    if parts:
+        alts.append(f"NEAR({' '.join(_quote(p, True) for p in parts)}, {NEAR})")
+    for a, b in (("ss", "ß"), ("ß", "ss")):
+        if a in stem:
+            alts.append(_quote(stem.replace(a, b), True))
+    return alts[0] if len(alts) == 1 else "(" + " OR ".join(alts) + ")"
+
+
+def search_words(phrase: str) -> list[str]:
+    """Suchwörter einer Formulierung ohne Füllwörter (bestünde sie nur daraus, bleiben sie)."""
+    words = re.findall(r"\w+", phrase.lower())
+    useful = [w for w in words if w not in STOPWORDS]
+    return (useful or words)[:12]
+
+
 # ---------------------------------------------------------------- Lesen (Werkzeuge der KI)
 
 class Library:
@@ -642,28 +743,51 @@ class Library:
         raise LookupError(f"Keine Datei „{name}“ in der Auswertung – siehe experte_liste.")
 
     def search(self, query: str, file: str = "", limit: int = 8) -> str:
-        words = re.findall(r"\w+", str(query or "").lower())
-        if not words:
+        """Volltextsuche. Mehrere Formulierungen mit | („Kündigung | Vertrag beenden“) werden einzeln gesucht und
+        abwechselnd gezeigt. Je Formulierung erst Stellen mit allen Wörtern, dann (gekennzeichnet) mit einzelnen.
+        Füllwörter zählen nicht; Wortformen, Teile zusammengesetzter Wörter und ß/ss findet word_query."""
+        phrases = [search_words(p) for p in str(query or "").split("|")]
+        phrases = [p for p in phrases if p]
+        if not phrases:
             raise LookupError("Bitte Suchbegriffe angeben.")
-        terms = [f'"{w}"*' if len(w) >= 4 else f'"{w}"' for w in words[:12]]
         rel = self._file(file) if file else None
         path = self.store / "index.sqlite"
         if not path.is_file():
             return "Der Ordner ist noch nicht ausgewertet."
+        limit = max(limit, min(12, 4 * len(phrases)))
         con = _db(path)
         try:
-            rows = []
-            for joiner in (" ", " OR "):  # erst alle Begriffe, sonst irgendeiner
-                sql = ("SELECT datei, art, nr, snippet(seiten, 3, '»', '«', ' … ', 28) FROM seiten WHERE seiten MATCH ?"
-                       + (" AND datei = ?" if rel else "") + " ORDER BY rank LIMIT ?")
-                rows = con.execute(sql, (joiner.join(terms), *([rel] if rel else []), limit)).fetchall()
-                if rows or len(terms) == 1:
-                    break
+            vocab = _Vocabulary(con)
+            lists = []
+            for words in phrases:
+                groups = [word_query(w, vocab) for w in words]
+                found, seen = [], set()
+                for joiner, partly in ((" AND ", False), (" OR ", True)):  # erst alle Wörter, dann einzelne
+                    if partly and (len(groups) == 1 or len(found) >= limit):
+                        break
+                    sql = ("SELECT datei, art, nr, snippet(seiten, 3, '»', '«', ' … ', 28) FROM seiten WHERE seiten "
+                           "MATCH ?" + (" AND datei = ?" if rel else "") + " ORDER BY rank LIMIT ?")
+                    for row in con.execute(sql, (joiner.join(groups), *([rel] if rel else []), limit)):
+                        if row[:3] not in seen:
+                            seen.add(row[:3])
+                            found.append((row, partly))
+                lists.append(found)
+        except sqlite3.OperationalError as e:
+            raise LookupError(f"Suche nicht möglich ({e}) – bitte einfachere Suchwörter.") from None
         finally:
             con.close()
-        if not rows:
-            return f"Keine Treffer für „{query}“" + (f" in {rel}" if rel else "") + "."
-        out = [f"{i}. {d} · {art} {nr}: {' '.join(s.split())}" for i, (d, art, nr, s) in enumerate(rows, 1)]
+        hits, seen = [], set()
+        for rank in range(max(len(found) for found in lists)):  # abwechselnd aus jeder Formulierung
+            for found in lists:
+                if rank < len(found) and found[rank][0][:3] not in seen:
+                    seen.add(found[rank][0][:3])
+                    hits.append(found[rank])
+        hits = hits[:limit]
+        if not hits:
+            return (f"Keine Treffer für „{query}“" + (f" in {rel}" if rel else "") + ". Versuch es mit anderen Wörtern "
+                    "– so, wie sie in den Dokumenten stehen dürften (Fachbegriffe, Synonyme), mehrere mit | getrennt.")
+        out = [f"{i}. {d} · {art} {nr}: {' '.join(s.split())}" + (" (nur einzelne Suchwörter)" if partly else "")
+               for i, ((d, art, nr, s), partly) in enumerate(hits, 1)]
         return "\n".join(out) + "\n(Mit experte_lesen die Seite im Wortlaut lesen.)"
 
     def summary(self, file: str) -> str:

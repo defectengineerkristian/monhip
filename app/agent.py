@@ -267,9 +267,11 @@ TEAM_UPLOAD_TOOLS = [
 ]
 DOC = {"type": "string", "description": "Datei wie in experte_liste (Pfad, Dateiname oder eindeutiger Teil davon)"}
 EXPERT_TOOLS = [  # Experten-Modus: ausgewerteter Dokumentenordner (nur lesend)
-    _tool("experte_suchen", "Durchsucht den vollen Text aller Dokumente des Experten-Ordners und liefert die "
-          "passendsten Stellen mit Datei und Seite. Für jede inhaltliche Frage zuerst suchen.", optional=("datei",),
-          suchbegriffe={"type": "string", "description": "Suchwörter, z. B. 'Kündigungsfrist Mietvertrag'"},
+    _tool("experte_suchen", "Durchsucht den vollen Text aller Dokumente des Experten-Ordners nach Wörtern (keine "
+          "Bedeutungssuche) und liefert die passendsten Stellen mit Datei und Seite. Für jede inhaltliche Frage zuerst "
+          "suchen – mit den Wörtern, die im Dokument stehen dürften (Fachbegriffe, Synonyme), mehrere Formulierungen "
+          "mit | getrennt. Wortformen und Teile zusammengesetzter Wörter findet die Suche selbst.", optional=("datei",),
+          suchbegriffe={"type": "string", "description": "z. B. 'Kündigung | Vertrag beenden | Laufzeit'"},
           datei={"type": "string", "description": "Optional: nur in dieser Datei suchen"}),
     _tool("experte_lesen", "Liest Seiten eines Dokuments im Wortlaut (bei Scans den abgeschriebenen Text), "
           "höchstens 5 Seiten bzw. 12 000 Zeichen je Aufruf.", optional=("von", "bis"), datei=DOC,
@@ -623,7 +625,9 @@ TEAM_PROMPT = (
     "versuche es noch einmal. Sag am Ende kurz, welche Dateien du angelegt oder geändert hast.")
 EXPERT_PROMPT = (
     "Experten-Modus: Du bist Experte für den Dokumentenordner „{name}“ ({count} Dokumente{state}). Beantworte Fragen "
-    "auf Grundlage dieser Dokumente: Suche mit experte_suchen nach den passenden Stellen, lies wichtige Stellen mit "
+    "auf Grundlage dieser Dokumente: Suche mit experte_suchen nach den passenden Stellen – mit den Begriffen, die in "
+    "den Dokumenten stehen dürften, statt mit der Frage selbst (z. B. „Kündigung | Vertrag beenden“ für „Wie komme ich "
+    "aus dem Vertrag raus?“), bei wenigen Treffern mit anderen Begriffen erneut –, lies wichtige Stellen mit "
     "experte_lesen im Wortlaut nach und nenne als Quelle immer Datei und Seite. Für einen Überblick über einzelne "
     "Dokumente gibt es experte_zusammenfassung, für die Liste aller Dokumente experte_liste. Steht etwas nicht in den "
     "Dokumenten, sag das deutlich, statt zu raten.\n\nGrundwissen zum Ordner:\n{overview}")

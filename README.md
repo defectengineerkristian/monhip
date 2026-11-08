@@ -43,10 +43,31 @@ Expert mode makes an entire document folder available as a knowledge source for 
 - search for specific information and read individual pages or sections;
 - pause and resume an analysis, and reanalyze changed files.
 
+The search works with words, not meaning, but it is forgiving. It ignores filler words, finds other word
+forms (“Verträge” finds “Vertrag”) and both directions of German compound words (“Kündigungsfrist” finds
+“Kündigung … Frist”, “Frist” finds “Kündigungsfrist”), and treats “ß” and “ss” alike. It also accepts several
+phrasings at once (“Kündigung | Vertrag beenden”). The model is told to search with the terms the
+documents are likely to use, not with the question itself. Existing analyses benefit without being re-indexed.
+
 Scanned PDFs can be read page by page using a suitable model's vision capabilities.
 The PDF rendering required for this uses Windows features (on Linux: `pdftoppm` from poppler-utils).
 Results are stored separately
 under `chats/experten/`; the source documents remain unchanged.
+
+### See what the AI reads
+
+The **Sources & research** panel on the right (button **Sources** at the top) shows live what the model
+searches and reads:
+- **Web searches:** the results, marked once the model reads them.
+- **Web pages:** exactly the text the model received, following along as it reads further. The page can be
+  opened in your browser.
+- **Expert mode:** document searches with their hits, and the pages the model read, with the search terms
+  highlighted.
+
+Source references in answers such as “Mietvertrag.pdf, Seite 4” become clickable and open that page in the
+panel. For PDFs, a page image is available, and buttons open the file or its folder. The panel opens by
+itself when the model starts researching. Once you close it, it stays closed until you open it again. It is
+built from the tool calls, so it works for saved chats as well and stores nothing extra.
 
 ### Use the AI as an agent
 

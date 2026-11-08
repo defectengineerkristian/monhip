@@ -1493,6 +1493,27 @@ class ChatView:
                 self.t.insert(self._at, tr('      {0:.1f} Tokens/s', tps).replace(".", ","), "footer")
             self.t.insert(self._at, "\n", "footer")
 
+    def link_matches(self, pattern, start: str, on_click, where: set) -> int:
+        """Treffer von pattern (re.Pattern) im Antworttext ab start klickbar machen – nur in Text mit einem der Tags
+        where (z. B. Absätze, Listen, Tabellen; nicht in Werkzeug-Kästen). on_click(match) nach dem Klick. Für
+        Quellenangaben wie „Vertrag.pdf, Seite 4“ (quellen.py)."""
+        try:
+            start = self.t.index(start)
+        except tk.TclError:
+            start = "1.0"
+        text = self.t.get(start, "end-1c")
+        count = 0
+        for m in pattern.finditer(text):
+            a = f"{start}+{self._tk_len(text[:m.start()])}c"
+            if not where & set(self.t.tag_names(a)) or "clickable" in self.t.tag_names(a):
+                continue
+            b = f"{a}+{self._tk_len(m.group(0))}c"
+            n = self._new("action", fn=lambda m=m: on_click(m))
+            for tag in ("link", "clickable", f"act:{n}"):
+                self.t.tag_add(tag, a, b)
+            count += 1
+        return count
+
     def action(self, text: str, callback):
         """Anklickbare Zeile (z. B. „Ältere Nachrichten anzeigen“); callback läuft nach dem Klick."""
         self._ensure()

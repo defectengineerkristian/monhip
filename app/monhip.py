@@ -33,6 +33,7 @@ import llamacpp
 import memory
 import projekt
 import prozesse
+import quellen
 import reminders
 import room as room_net
 import speech
@@ -216,6 +217,8 @@ class App:
         self._build_main()
         self._build_settings()
         self.set_theme(self.cfg.get("theme", "dark"), save=False)
+        self.sources = quellen.SourcePanel(self, before=self.main_frame)
+        self._sources_open = False           # vor dem Wechsel ins Teamwork offen? (danach wieder)
         self.room = RoomMode(self, self.room_side, self.room_view)
         self.refresh_models()
         self.refresh_chat_list()
@@ -312,6 +315,7 @@ class App:
         # große, ganz verdeckte Behälter als tk.Frame: ein ttk.Frame malt bei jedem Zieh-Schritt seine ganze Fläche neu
         main = self.theme.register_frame(tk.Frame(self.root, borderwidth=0, highlightthickness=0))
         main.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.main_frame = main
 
         # ---- Kopfzeile: Chat-Titel links, Modell rechts
         top = ttk.Frame(main, style="Top.TFrame", padding=(18, 10, 14, 8))
@@ -329,6 +333,10 @@ class App:
                                    **icons.opts("play", "accent_fg"))
         self.load_btn.grid(row=0, column=3, padx=(6, 0))
         ttk.Button(top, width=3, command=self.unload_model, **icons.only("stop")).grid(row=0, column=4, padx=(4, 0))
+        # Seitenleiste „Quellen & Recherche“ (quellen.py) – öffnet sich sonst von selbst, wenn die KI recherchiert
+        self.sources_btn = ttk.Button(top, text=tr('Quellen'), command=lambda: self.sources.toggle(),
+                                      **icons.opts("page"))
+        self.sources_btn.grid(row=0, column=5, padx=(10, 0))
         self.status_var = tk.StringVar(value=tr('Kein Modell geladen'))
         self._status_labels = [ttk.Label(top, textvariable=self.status_var, style="Muted.TLabel")]
         self._status_labels[0].grid(row=1, column=2, columnspan=3, sticky="e", pady=(3, 0))
@@ -421,6 +429,11 @@ class App:
         (self.view if room else self.room_view).set_active(False)
         (self.room_side if room else self.chat_side).tkraise()
         (self.room_frame if room else self.chat_frame).tkraise()
+        if room:  # die Seitenleiste gehört zum Chat
+            self._sources_open = self.sources.visible
+            self.sources.hide()
+        elif self._sources_open:
+            self.sources.show()
         self._send_label(self.busy and not room)
         self.update_title()
         self.input.focus_set()
@@ -799,6 +812,8 @@ class App:
                                         border="#0b63c5", fg="#1b1b1b", muted="#5f5f5f")
         if hasattr(self, "room"):
             self.room.refresh_panel()  # Teilnehmerliste nutzt Farben aus dem Design
+        if hasattr(self, "sources"):
+            self.sources.refresh_theme()
         muted = theme.get("muted", "#777777")
         self.chat_tree.tag_configure("group", foreground=muted)
         self._meter_cache.clear()
@@ -969,6 +984,7 @@ class App:
             return
         self.chat_data = None
         self.history = []
+        self.sources.clear()
         self._set_title(tr('Neuer Chat'))
         self._sync_tree_selection()
         self._show_placeholder()
@@ -1005,6 +1021,7 @@ class App:
     def _render_history(self):
         """Gespeicherten Chat anzeigen: Nutzer rechts, Antworten links, Denkprozess/Werkzeuge zugeklappt."""
         self.view.clear()
+        self.sources.load_history(self.history)
         if not self.history:
             self._show_placeholder()
             return
@@ -1032,7 +1049,30 @@ class App:
                     if content and not m.get("tool_calls"):
                         self.view.footer(content)
         self.view.scroll_end()
+        self._link_citations("1.0")
         self._estimate_context()
+
+    def expert_library(self) -> "experte.Library | None":
+        """Dokumente des Experten-Chats (für die Quellen-Seitenleiste) – sonst None."""
+        expert = (self.chat_data or {}).get("experte")
+        return experte.Library(Path(expert["quelle"])) if expert and expert.get("quelle") else None
+
+    def _link_citations(self, start: str):
+        """Quellenangaben in Antworten („Mietvertrag.pdf, Seite 4“) klickbar: zeigen die Seite in der Seitenleiste.
+        Erkannt werden die Dokumente, die in diesem Chat gesucht oder gelesen wurden."""
+        if self.expert_library() is None:
+            return
+        found = quellen.citation_pattern(self.sources.documents())
+        if not found:
+            return
+        pattern, names = found
+
+        def open_source(m):
+            rel = names.get(m.group("name").lower())
+            if rel:
+                self.sources.open_doc(rel, int(m.group("nr")) if m.group("nr") else None)
+
+        self.view.link_matches(pattern, start, open_source, quellen.ANSWER_TAGS)
 
     def _save_chat(self, touch: bool = True):
         if self.chat_data is None:
@@ -2007,6 +2047,10 @@ class App:
         Kontext knapp, fasst context.Window vorher die älteren Nachrichten zusammen (Ereignis „compressed“) – auch noch
         mitten in der Antwort, wenn der Server „Kontext voll“ meldet."""
         self.turn = {"step": 0, "think": None, "thinks": [], "tool": None, "tps": None}
+        asked = next((m.get("_text", m.get("content")) for m in reversed(self.history) if m.get("role") == "user"), "")
+        self.sources.question(asked if isinstance(asked, str) else "")
+        self.view.t.mark_set("quellen:start", "end-1c")  # ab hier: Quellenangaben dieser Antwort (_link_citations)
+        self.view.t.mark_gravity("quellen:start", "left")
         if self.expert_job:  # Auswertung wartet, solange das Modell antwortet (beide teilen es sich)
             self.expert_job.pause_chat.set()
         system = self._system_prompt(agent)
@@ -2634,10 +2678,12 @@ class App:
             name, args = data
             icon, label, detail = describe_call(name, args)
             self.turn["tool"] = view.tool_begin(label, detail, format_args(args), icon)
+            self.sources.tool_call(name, args)
         elif kind == "tool_result":
             if self.turn.get("tool") is not None:
                 view.tool_end(self.turn["tool"], data, result_ok(data))
                 self.turn["tool"] = None
+            self.sources.tool_result(data)
         elif kind == "stats":
             self.turn["tps"] = data
         elif kind == "usage":
@@ -2677,6 +2723,7 @@ class App:
         self._close_think()
         self.view.hide_pending()
         self.view.md_finish()
+        self._link_citations("quellen:start")
         for m in new_messages:  # Bilder aus view_image/take_screenshot zum Chat kopieren, wie angehängte Bilder
             shown = m.pop("_image_files", None)
             if shown and self.chat_data:

@@ -3,9 +3,29 @@
 Was in welcher Version umgesetzt wurde, neueste zuerst. Neues kommt oben unter „Seit vX“ (bis zum nächsten Release),
 immer mit festen Daten (TT.MM.JJJJ).
 
-**Stand:** 05.11.2026 · **neuestes Release:** v1.4.7
+**Stand:** 08.11.2026 · **neuestes Release:** v1.4.7
 
 ---
+
+## Seit v1.4.7
+- 08.11.2026: Seitenleiste „Quellen & Recherche“ (`app/quellen.py`, Knopf „Quellen“ oben rechts): zeigt live, was die
+  KI sucht und liest – Websuche mit Treffern (gelesene markiert), gelesene Seiten mit genau dem Text, den das Modell
+  bekommt (geht beim Weiterlesen mit; „Im Browser öffnen“), im Experten-Modus Dokumentsuchen und gelesene Seiten mit
+  markierten Suchwörtern, bei PDFs Seitenbild, „Öffnen“, „Ordner“. Quellenangaben in Antworten („Mietvertrag.pdf,
+  Seite 4“, „S. 4“) werden klickbar (`ChatView.link_matches`) und öffnen die Seite dort. Gebaut aus den
+  Werkzeugaufrufen – live und beim Öffnen gespeicherter Chats, ohne zusätzliche Daten im Chat; öffnet sich beim
+  Recherchieren selbst, bleibt nach dem Schließen zu, bis man sie wieder öffnet (`quellen_auto`). Bewusst kein
+  eingebauter Browser: Tkinter hat keinen, und ein Browser lüde jede Seite ein zweites Mal (Cookies, Skripte) und
+  zeigte oft etwas anderes als das, was das Modell gelesen hat. Test `tests/test_quellen.py` liest die Formate der
+  Werkzeug-Ergebnisse zurück.
+- 08.11.2026: Expertensuche verzeiht mehr (`experte.Library.search`): Füllwörter zählen nicht mehr (vorher fanden
+  „wie“, „ich“, „den“ beliebige Seiten), Wortformen über abgeschnittene Endungen („Verträge“ → „Vertrag“), Teile
+  zusammengesetzter Wörter in beide Richtungen („Kündigungsfrist“ findet „Kündigung … Frist“, „Frist“ findet
+  „Kündigungsfrist“ – über das Wortverzeichnis des Index, ohne neu zu indizieren), ß/ss, mehrere Formulierungen mit |;
+  Treffer nur mit einzelnen Suchwörtern sind gekennzeichnet. Werkzeugbeschreibung und Experten-Prompt: mit den
+  Begriffen suchen, die in den Dokumenten stehen dürften, statt mit der Frage. 40 000 Seiten / 300 000 Wörter:
+  0,3–0,9 s je Suche. Test `tests/test_experte_suche.py`. `.gitignore` wiederhergestellt (schützt Nutzungsdaten im
+  öffentlichen Repository).
 
 ## v1.4.7 – 05.11.2026
 - 05.11.2026: Jupyter-Notebooks für den Agenten (`app/notebook.py`, Werkzeuggruppe „Jupyter-Notebooks“).

@@ -3,6 +3,16 @@
 Was in welcher Version umgesetzt wurde, neueste zuerst. Neues kommt oben unter „Seit vX“ (bis zum nächsten Release),
 immer mit festen Daten (TT.MM.JJJJ).
 
+**Grundsatz (seit 08.11.2026): Jede Neuerung wird auch für Linux umgesetzt** – nicht nur für Windows. Eine Funktion
+gilt erst als fertig, wenn sie auf beiden Systemen läuft:
+- Systemabhängiges (Programme starten, Pfade, Zwischenablage, Schriften, Benachrichtigungen …) gehört nach
+  `app/plattform.py` bzw. in einen Linux-Zweig daneben – nie nur Windows-APIs, PowerShell oder `.exe`-Pfade.
+- Braucht etwas unter Linux ein Systempaket, steht es in `installer/linux/debian/control` (Depends, Recommends oder
+  Suggests) und in der Paketliste der README.
+- Die Tests laufen bei jedem Push auf Windows und Linux (`.github/workflows/tests.yml`); neue Funktionen bekommen
+  Tests, die auf beiden Systemen laufen.
+- Geht etwas unter Linux nicht oder anders (z. B. Programme bedienen), sagt der Eintrag hier das ausdrücklich.
+
 **Stand:** 08.11.2026 · **neuestes Release:** v1.4.7
 
 ---

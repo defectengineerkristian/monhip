@@ -11,7 +11,7 @@ which is why many locals are called `text`, `text2`, …; [`app.manifest`](app.m
 ## Build
 
 ```sh
-dotnet build installer/windows/Monhip-Setup.csproj -c Release -p:Version=1.4.7
+dotnet build installer/windows/Monhip-Setup.csproj -c Release -p:Version=1.4.8
 ```
 
 Works on Linux, macOS and Windows with the .NET SDK 8 or newer – the .NET Framework reference

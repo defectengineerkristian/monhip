@@ -13,11 +13,11 @@ gilt erst als fertig, wenn sie auf beiden Systemen läuft:
   Tests, die auf beiden Systemen laufen.
 - Geht etwas unter Linux nicht oder anders (z. B. Programme bedienen), sagt der Eintrag hier das ausdrücklich.
 
-**Stand:** 08.11.2026 · **neuestes Release:** v1.4.7
+**Stand:** 08.11.2026 · **neuestes Release:** v1.4.8
 
 ---
 
-## Seit v1.4.7
+## v1.4.8 – 08.11.2026
 - 08.11.2026: Seitenleiste „Quellen & Recherche“ (`app/quellen.py`, Knopf „Quellen“ oben rechts): zeigt live, was die
   KI sucht und liest – Websuche mit Treffern (gelesene markiert), gelesene Seiten mit genau dem Text, den das Modell
   bekommt (geht beim Weiterlesen mit; „Im Browser öffnen“), im Experten-Modus Dokumentsuchen und gelesene Seiten mit

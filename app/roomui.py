@@ -431,7 +431,8 @@ class RoomMode:
         self._bottom = ttk.Frame(side_parent, style="Sidebar.TFrame", padding=(10, 2, 10, 0))
         self._bottom.pack(side=tk.BOTTOM, fill=tk.X)
         self._side.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.panel = ttk.Frame(self._side, style="Sidebar.TFrame", padding=(10, 4, 10, 6))
+        # gleicher Rand wie Chatliste und Galerie: die Einträge stehen in allen drei Bereichen gleich groß an gleicher Stelle
+        self.panel = ttk.Frame(self._side, style="Sidebar.TFrame", padding=(8, 6, 8, 6))
         self._side_item = self._side.create_window(0, 0, window=self.panel, anchor="nw")
         self._side.bind("<Configure>", lambda e: self._side_layout())
         self.panel.bind("<Configure>", lambda e: self._side_layout())

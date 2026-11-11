@@ -20,7 +20,9 @@ SAMPLES = [
     "| A | B |\n|---|---|\n| 1 | **zwei** |\n| 3 | vier |\n\nDanach Text.",
     "Text\n\n---\n\nNach der Linie.\n\n***\n",
     "Emoji 😀😀 am **Anfang 😀** und *Ende 🎉*",
-    "Ein langer Absatz " + "mit **Wechseln** zwischen *Stilen* und `Code` " * 8,
+    # lang genug für viele Stilwechsel; sehr lange Absätze prüft test_long_paragraph_needs_few_inserts (der
+    # Vergleich mit dem vollständigen Neusetzen wächst quadratisch mit der Länge)
+    "Ein langer Absatz " + "mit **Wechseln** zwischen *Stilen* und `Code` " * 3,
 ]
 
 
@@ -70,8 +72,8 @@ class StreamingEqualsFullRedraw(unittest.TestCase):
                         v.t.destroy()
 
     def test_long_paragraph_needs_few_inserts(self):
-        """2 000 Zeichen in Häppchen wie beim Streamen: früher setzte jedes Häppchen den ganzen Absatz neu (über
-        20 000 Einfügungen ins Textfeld), jetzt kommt fast nur das Neue dazu."""
+        """700 Zeichen in Häppchen wie beim Streamen: früher setzte jedes Häppchen den ganzen Absatz neu (über
+        2 000 Einfügungen ins Textfeld, quadratisch mit der Länge), jetzt kommt fast nur das Neue dazu."""
         counts = {}
         for incremental in (False, True):
             view, = self.views(1)
@@ -84,15 +86,15 @@ class StreamingEqualsFullRedraw(unittest.TestCase):
                 return _insert(*args)
 
             view.t.insert = counting
-            text = "Ein Satz mit **fett** und `code`. " * 60
+            text = "Ein Satz mit **fett** und `code`. " * 20
             for i in range(0, len(text), 12):
                 view.md_append(text[i:i + 12])
             view.md_finish()
             counts[incremental] = calls[0]
             self.assertIn("Ein Satz mit fett und code.", view.t.get("1.0", "end"))
             view.t.destroy()
-        self.assertGreater(counts[False], 15_000)
-        self.assertLess(counts[True], counts[False] / 15, counts)
+        self.assertGreater(counts[False], 2_000)
+        self.assertLess(counts[True], counts[False] / 8, counts)
 
 
 if __name__ == "__main__":

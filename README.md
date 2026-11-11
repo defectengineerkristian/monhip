@@ -8,6 +8,8 @@ Teamwork rooms. Everything runs on your own computer.
 
 - **Chat** with streamed answers, saved conversations and image understanding.
 - **Documents and research:** PDFs, Office files and code; web search with sources.
+- **Browser:** a browser in a side panel that you share with the AI – it opens and reads
+  pages, fills in forms, and asks you to handle logins and captchas yourself.
 - **Agent tools:** files and folders, Office documents, Python and shell commands,
   Jupyter notebooks – each action can require confirmation.
 - **Images and 3D:** create or edit images; turn an image or a description into a 3D
@@ -65,6 +67,9 @@ Images and 3D need a graphics card; 16 GB of graphics memory is recommended.
   folder. The Linux package uses `~/.local/share/monhip`.
 - AMD graphics: if Qwen-Image shows color noise, choose **Compatible (slower)** under
   **Settings → Images → Qwen Image: compute mode**.
+- Browser: needs the add-on library pywebview. On Windows, click **Set up browser** in the
+  browser panel; on Linux, run `sudo apt install python3-webview gir1.2-webkit2-4.1`
+  (the browser then opens in its own window).
 - Linux: install `whisper-cli` yourself for speech recognition; controlling other
   applications is only available on Windows.
 - Changes: [development notes (German)](progress/FORTSCHRITT.md).

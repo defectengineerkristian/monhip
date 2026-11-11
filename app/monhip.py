@@ -21,6 +21,8 @@ plattform.DATA_DIR.mkdir(parents=True, exist_ok=True)
 initialize(plattform.DATA_DIR / "config.json")
 
 import bilder
+import browser
+import browserpanel
 import chats
 import context
 import dialogs
@@ -48,7 +50,7 @@ from roomui import RoomMode
 from themes import FAMILY, THEMES, ThemeManager, label_to_key, mix_hex
 from widgets import EditMenu, ModeSwitch, PopupMenu, precise_timer, rounded, scrolled
 
-VERSION = "0.0.1"  # auf GitHub als Release „v0.0.1“ (danach richtet sich das Update im Installer)
+VERSION = "0.0.2"  # auf GitHub als Release „v0.0.2“ (danach richtet sich das Update im Installer)
 TIME_FMT = "%Y-%m-%d %H:%M"  # „_time“ einer Nutzernachricht: ihre Uhrzeit fürs Modell (_api_message)
 APP_DIR = plattform.DATA_DIR  # Daten: neben dem Programm (Code in app/), installiert unter Linux im Benutzerordner
 CONFIG_FILE = APP_DIR / "config.json"
@@ -84,10 +86,13 @@ DEFAULTS = {
     "folders": [],                 # weitere Modellordner
     "extra_models": [],
     "server_exe": "",
-    "ctx": 16384,                  # Kontext in Tokens (Einstellungen → Laden)
+    "ctx": 16384,                  # Kontext in Tokens (Einstellungen → Modelle)
     "ngl": "auto",
     "temperature": 0.7,
     "max_tokens": 4096,
+    # gegen Denkschleifen: Qwen-Modelle wiederholen sonst im Denkprozess endlos Sätze wie „ich rufe jetzt das Werkzeug
+    # auf“ und antworten nie (von Qwen empfohlen; beim Programmieren eher 0)
+    "presence_penalty": 1.5,
     "extra_args": "",
     "vision": True,                # mmproj neben dem Modell mitladen
     "image_tokens": 2048,
@@ -103,6 +108,7 @@ DEFAULTS = {
     "agent_folders": [],
     "agent_confirm": True,
     "web_enabled": True,
+    "web_via_browser": True,       # mit eingerichtetem Browser: das Modell geht nur über ihn ins Netz (sichtbar)
     "brave_key": "",
     "memory_enabled": True,
     "reminders_enabled": True,
@@ -231,6 +237,10 @@ class App:
         self.set_theme(self.cfg.get("theme", "dark"), save=False)
         self.sources = quellen.SourcePanel(self, before=self.main_frame)
         self._sources_open = False           # vor dem Wechsel ins Teamwork offen? (danach wieder)
+        self.browser = browserpanel.BrowserPanel(self, before=self.main_frame,
+                                                 main_need=lambda: self.top_bar.winfo_reqwidth())
+        self.browser_tools = browserpanel.BrowserTools(self.browser)
+        self._browser_open = False
         self.room = RoomMode(self, self.room_side, self.room_view)
         self.refresh_models()
         self.refresh_chat_list()
@@ -332,7 +342,7 @@ class App:
         self.main_frame = main
 
         # ---- Kopfzeile: Chat-Titel links, Modell rechts
-        top = ttk.Frame(main, style="Top.TFrame", padding=(18, 10, 14, 8))
+        top = self.top_bar = ttk.Frame(main, style="Top.TFrame", padding=(18, 10, 14, 8))
         top.pack(side=tk.TOP, fill=tk.X)
         self.title_var = tk.StringVar(value=tr('Neuer Chat'))
         # width=1 + Gewicht: langer Titel wird abgeschnitten, statt die Modellauswahl zu verdrängen
@@ -348,13 +358,19 @@ class App:
         self.load_btn.grid(row=0, column=3, padx=(6, 0))
         ttk.Button(top, width=3, command=self.unload_model, **icons.only("stop")).grid(row=0, column=4, padx=(4, 0))
         # Seitenleiste „Quellen & Recherche“ (quellen.py) – öffnet sich sonst von selbst, wenn die KI recherchiert
-        self.sources_btn = ttk.Button(top, text=tr('Quellen'), command=lambda: self.sources.toggle(),
-                                      **icons.opts("page"))
+        # (nur Symbole – wie „Entladen“ daneben)
+        self.sources_btn = ttk.Button(top, width=3, command=lambda: self.sources.toggle(), **icons.only("page"))
         self.sources_btn.grid(row=0, column=5, padx=(10, 0))
+        # Browser in der Seitenleiste (browserpanel.py) – teilt das Modell mit dem Nutzer (Anmeldung, Captcha)
+        ttk.Button(top, width=3, command=lambda: self.browser.toggle(), **icons.only("globe")).grid(
+            row=0, column=6, padx=(4, 0))
         self.status_var = tk.StringVar(value=tr('Kein Modell geladen'))
         self._status_labels = [ttk.Label(top, textvariable=self.status_var, style="Muted.TLabel")]
-        self._status_labels[0].grid(row=1, column=2, columnspan=3, sticky="e", pady=(3, 0))
-        top.columnconfigure(0, weight=1)
+        # bis unter „Browser“: rechts bündig mit dem letzten Knopf, wie bei den Bildern
+        self._status_labels[0].grid(row=1, column=2, columnspan=5, sticky="e", pady=(3, 0))
+        # wird es eng (z. B. mit dem Browser daneben), werden Titel und Modellauswahl schmaler – nicht die Knöpfe
+        top.columnconfigure(0, weight=3)
+        top.columnconfigure(2, weight=1)
         ttk.Separator(main).pack(side=tk.TOP, fill=tk.X)
 
         # ---- Eingabe (zuerst packen, damit sie beim Verkleinern sichtbar bleibt)
@@ -445,12 +461,16 @@ class App:
         {"chat": self.chat_side, "room": self.room_side, "images": self.image_side}[mode].tkraise()
         if not images:
             (self.room_frame if room else self.chat_frame).tkraise()
-        if mode == "chat":  # die Seitenleiste „Quellen“ gehört zum Chat (beim Wechsel ohne Gleiten)
+        if mode == "chat":  # die Seitenleisten „Quellen“ und „Browser“ gehören zum Chat (beim Wechsel ohne Gleiten)
             if self._sources_open:
                 self.sources.show(animate=False)
+            if self._browser_open:
+                self.browser.show()
         elif before in ("chat", None):
             self._sources_open = self.sources.visible
             self.sources.hide(animate=False)
+            self._browser_open = self.browser.visible
+            self.browser.hide()
         if images:  # eigene Seite über dem ganzen Chatbereich
             self.images.show()
         else:
@@ -575,12 +595,15 @@ class App:
         self.extra_var = tk.StringVar(value=self.cfg["extra_args"])
         self.temp_var = tk.StringVar(value=str(self.cfg["temperature"]))
         self.maxtok_var = tk.StringVar(value=str(self.cfg["max_tokens"]))
+        self.presence_var = tk.StringVar(value=str(self.cfg["presence_penalty"]))
         self.vision_var = tk.BooleanVar(value=self.cfg["vision"])
         self.imgtok_var = tk.StringVar(value=str(self.cfg["image_tokens"]))
         rows = [(tr('Kontext (Tokens)'), self.ctx_var, tr('Mindestens 16384 für Websuche')),
                 (tr('GPU-Layers'), self.ngl_var, tr('„auto“ passt das Modell an den Grafikspeicher an')),
                 (tr('Extra-Argumente'), self.extra_var, tr('z. B. --n-cpu-moe 10 oder -fa on')),
                 (tr('Temperatur'), self.temp_var, tr('niedriger = sachlicher, höher = kreativer')),
+                (tr('Presence Penalty'), self.presence_var,
+                 tr('bremst Wiederholungen – gegen Denkschleifen bei Qwen (empfohlen 1,5; 0 = aus)')),
                 (tr('Max. Antwort-Tokens'), self.maxtok_var, ""),
                 (tr('Max. Tokens pro Bild'), self.imgtok_var, tr('mehr = Details und kleine Schrift besser erkennbar, braucht aber mehr Kontext'))]
         for r, (txt, var, hint) in enumerate(rows, start=7):
@@ -615,8 +638,14 @@ class App:
         self.confirm_var = tk.BooleanVar(value=self.cfg["agent_confirm"])
         self.ws_var = tk.StringVar(value=self.cfg["agent_workspace"])
         self.extra_folders: list[str] = list(self.cfg["agent_folders"])
-        ttk.Checkbutton(t, text=tr('Internetzugriff (Websuche & Seiten lesen)'), variable=self.web_var).grid(
-            row=0, column=0, columnspan=2, sticky="w")
+        web = ttk.Frame(t)
+        web.grid(row=0, column=0, columnspan=2, sticky="w")
+        ttk.Checkbutton(web, text=tr('Internetzugriff (Websuche & Seiten lesen)'), variable=self.web_var).pack(
+            anchor="w")
+        self.web_browser_var = tk.BooleanVar(value=self.cfg["web_via_browser"])
+        ttk.Checkbutton(web, text=tr('Über den Browser in der Seitenleiste – du siehst mit und erledigst Anmeldungen '
+                                     'und Captchas (sonst im Hintergrund)'),
+                        variable=self.web_browser_var).pack(anchor="w", padx=(24, 0), pady=(4, 0))
         ttk.Label(t, text=tr('Brave-API-Key (optional, falls DuckDuckGo blockiert)'), style="Muted.TLabel").grid(
             row=1, column=0, columnspan=2, sticky="w", pady=(6, 2))
         ttk.Entry(t, textvariable=self.brave_var, show="•").grid(row=2, column=0, columnspan=2, sticky="ew")
@@ -1494,13 +1523,13 @@ class App:
         try:
             ctx = int(self.ctx_var.get())
         except ValueError:
-            dialogs.showerror("Monhip", tr('Kontext muss eine Zahl sein (Einstellungen → Laden).'))
+            dialogs.showerror("Monhip", tr('Kontext muss eine Zahl sein (Einstellungen → Modelle).'))
             return
         mmproj = find_mmproj(model) if self.vision_var.get() else None
         try:
             image_tokens = int(self.imgtok_var.get()) if self.imgtok_var.get().strip() else None
         except ValueError:
-            dialogs.showerror("Monhip", tr('„Max. Tokens pro Bild“ muss eine Zahl sein (Einstellungen → Laden).'))
+            dialogs.showerror("Monhip", tr('„Max. Tokens pro Bild“ muss eine Zahl sein (Einstellungen → Modelle).'))
             return
         if not self.images.release():
             dialogs.showinfo("Monhip", tr('Gerade entsteht ein Bild. Bitte warten, bis es fertig ist, oder es im '
@@ -2085,7 +2114,7 @@ class App:
         if pics and self.server.model and not self.server.vision:
             dialogs.showinfo("Monhip", tr(
                 'Das geladene Modell kann keine Bilder ansehen. Dafür muss neben dem Modell eine mmproj-Datei '
-                'liegen und unter Einstellungen → Laden „Bildverständnis laden“ eingeschaltet sein – dann das '
+                'liegen und unter Einstellungen → Modelle „Bildverständnis laden“ eingeschaltet sein – dann das '
                 'Modell neu laden.'))
             return
         prepared = self._prepare_turn()
@@ -2126,9 +2155,10 @@ class App:
             dialogs.showinfo("Monhip", tr('Bitte zuerst oben rechts ein Modell laden.'))
             return None
         try:
-            params = {"temperature": float(self.temp_var.get()), "max_tokens": int(self.maxtok_var.get())}
+            params = self.sampling()
         except ValueError:
-            dialogs.showerror("Monhip", tr('Temperatur / Max. Tokens ungültig (Einstellungen → Laden).'))
+            dialogs.showerror("Monhip", tr('Temperatur, Max. Tokens oder Presence Penalty ungültig (Einstellungen → '
+                                           'Modelle).'))
             return None
 
         if (self.agent_var.get() or self.cmd_var.get()):
@@ -2138,6 +2168,14 @@ class App:
                 dialogs.showerror("Monhip", tr('Arbeitsordner nicht verfügbar: {0}', e))
                 return None
         return params, self._make_agent()
+
+    def sampling(self) -> dict:
+        """Einstellungen für jede Antwort (Chat und Teamwork); ValueError bei Tippfehlern."""
+        params = {"temperature": float(self.temp_var.get().replace(",", ".")), "max_tokens": int(self.maxtok_var.get())}
+        presence = float(self.presence_var.get().replace(",", ".") or 0)
+        if presence:
+            params["presence_penalty"] = presence
+        return params
 
     def _make_agent(self) -> Agent | None:
         """Werkzeuge nach den aktuellen Einstellungen (ohne Prüfungen – die macht _prepare_turn)."""
@@ -2154,7 +2192,9 @@ class App:
                      web_access=web_access, brave_key=self.brave_var.get(), memory=mem, reminders=rem,
                      vision=self.server.vision, screenshot=self._screenshot_from_worker if shots else None,
                      expert=library, expert_start=self._expert_from_worker, git=self.git_var.get(),
-                     groups={g: v.get() for g, v in self.group_vars.items()}, control=control)
+                     groups={g: v.get() for g, v in self.group_vars.items()}, control=control,
+                     browser=self.browser_tools if web_access and browser.available() else None,
+                     browser_only=self.web_browser_var.get())
 
     def _system_prompt(self, agent: Agent | None) -> str:
         system = self.sys_text.get("1.0", tk.END).strip()
@@ -3074,6 +3114,7 @@ class App:
             "image_tokens": self.imgtok_var.get().strip(),
             "temperature": self.temp_var.get(),
             "max_tokens": self.maxtok_var.get(),
+            "presence_penalty": self.presence_var.get(),
             "system_prompt": self.sys_text.get("1.0", tk.END).strip(),
             "think_titles": self.think_title_var.get(),
             "notify_done": self.notify_var.get(),
@@ -3086,6 +3127,7 @@ class App:
             "agent_folders": list(self.extra_folders),
             "agent_confirm": self.confirm_var.get(),
             "web_enabled": self.web_var.get(),
+            "web_via_browser": self.web_browser_var.get(),
             "brave_key": self.brave_var.get().strip(),
             "memory_enabled": self.memory_var.get(),
             "reminders_enabled": self.reminder_var.get(),
@@ -3113,6 +3155,7 @@ class App:
         self.room.ai_stop.set()
         self.room.shutdown()  # Raum verlassen bzw. eigenen Raum schließen (Verlauf bleibt gespeichert)
         prozesse.stop_all()   # Hintergrund-Prozesse des Agenten (Webserver usw.)
+        self.browser.shutdown()
         self.images.shutdown()
         self.server.stop()
         self.root.destroy()

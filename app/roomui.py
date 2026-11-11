@@ -1701,9 +1701,9 @@ class RoomMode:
     def _start_ai(self, trigger: dict, cont: dict | None = None):
         app = self.app
         try:
-            params = {"temperature": float(app.temp_var.get()), "max_tokens": int(app.maxtok_var.get())}
+            params = app.sampling()
         except ValueError:
-            params = {"temperature": 0.7, "max_tokens": 4096}
+            params = {"temperature": 0.7, "max_tokens": 4096, "presence_penalty": 1.5}
         self.ai_busy = True
         self.ai_stop.clear()
         nonce = secrets.token_hex(6)

@@ -445,7 +445,7 @@ class ContextFull(RuntimeError):
         fmt = lambda n: f"{n:,}".replace(",", ".")
         size = f"Die Anfrage braucht {fmt(n_prompt)} Tokens, der Kontext fasst {fmt(n_ctx)}. " if n_prompt else ""
         super().__init__(f"Kontextfenster voll: {size}Weiter komprimieren lässt sich die Unterhaltung nicht – bitte den "
-                         "Kontext erhöhen (Einstellungen → Laden), weniger Werkzeuge einschalten oder einen neuen Chat "
+                         "Kontext erhöhen (Einstellungen → Modelle), weniger Werkzeuge einschalten oder einen neuen Chat "
                          "beginnen.")
 
 

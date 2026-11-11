@@ -48,6 +48,7 @@ def gui_worker():
         import icons
         import images
         import bilder
+        import browser
         import memory
         import reminders
         import room
@@ -102,6 +103,17 @@ def gui_worker():
                               "fits": max(f.winfo_reqwidth() for f in app.settings_tabs.values()) <= pane}
             app.close_settings()
             app.set_theme("dark", save=False)
+            # Seitenleiste „Browser“ ohne pywebview: Hinweis und „Browser einrichten“, nichts wird gestartet
+            with mock.patch.object(browser, "available", return_value=False):
+                app.browser.show()
+                yield
+                report["browser"] = {"shown": bool(app.browser.outer.winfo_ismapped()),
+                                     "setup": bool(app.browser.install_btn.winfo_ismapped()),
+                                     "header": app.top_bar.winfo_width() >= app.top_bar.winfo_reqwidth() or
+                                               app.main_frame.winfo_width() < app.top_bar.winfo_reqwidth()}
+                app.browser.hide()
+                yield
+                report["browser"]["hidden"] = not app.browser.outer.winfo_ismapped()
             # Chat: Markdown, Code, Werkzeuge, Gedankengang
             v = app.view
             v.clear()
@@ -343,6 +355,8 @@ class GuiSmoke(unittest.TestCase):
         self.assertEqual(report["errors"], [], result.stderr)
         self.assertTrue(report["connected"], report)
         self.assertTrue(report["wheel_scrolled"], "Mausrad scrollt den Chat nicht")
+        self.assertEqual(report["browser"], {"shown": True, "setup": sys.platform == "win32", "header": True,
+                                             "hidden": True}, report["browser"])
         self.assertEqual({k: v for k, v in report["tabs_flush"].items()
                           if not v["fits"] or (v["end"] != v["width"] and not v["native"])}, {},
                          "Einstellungen: Seite passt nicht ins Fenster oder Reiter enden nicht bündig mit dem Rahmen")

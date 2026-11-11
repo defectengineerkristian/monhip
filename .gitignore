@@ -18,3 +18,6 @@ __pycache__/
 
 # Bilder (Bereich „Bilder“, erzeugte Bilder und Galerie)
 /bilder/
+
+# Browser in der Seitenleiste: Anmeldungen und Cookies
+/browser/

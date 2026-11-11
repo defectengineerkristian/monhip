@@ -1,0 +1,94 @@
+# Installer für jedes Release: hängt die fertigen Dateien aus installer/ (Monhip-Setup.exe und monhip_<Version>_all.deb,
+# auf dem Entwicklungsrechner gebaut) samt SHA-256 an das Release. Vorher: Tag gegen VERSION prüfen, das .deb auf
+# Ubuntu 24.04 installieren, starten und wieder entfernen. Fester Name, damit .../releases/latest/download/Monhip-Setup.exe
+# immer den neuesten Installer liefert. Nachträglich: Actions → „Installer ans Release“ → Run workflow → Tag.
+name: Installer ans Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release-Tag (z. B. v1.6.1)"
+        required: true
+
+permissions:
+  contents: write  # Dateien an das Release hängen
+
+concurrency:
+  group: release-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  installer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - name: Stand des Releases holen
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Tag, Version und Dateien prüfen
+        run: |
+          version=$(sed -n 's/^VERSION = "\([^"]*\)".*/\1/p' app/monhip.py | head -n 1)
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::Release-Tag $TAG passt nicht zu VERSION = \"$version\" in app/monhip.py."
+            exit 1
+          fi
+          for f in installer/Monhip-Setup.exe "installer/monhip_${version}_all.deb"; do
+            if [ ! -f "$f" ]; then
+              echo "::error::$f fehlt – vor dem Release bauen und committen."
+              exit 1
+            fi
+          done
+          if ! file installer/Monhip-Setup.exe | grep -q "Mono/.Net assembly"; then
+            echo "::error::installer/Monhip-Setup.exe ist kein .NET-Programm."
+            exit 1
+          fi
+          if [ "$(dpkg-deb -f "installer/monhip_${version}_all.deb" Version)" != "$version" ]; then
+            echo "::error::Das .deb hat eine andere Version als app/monhip.py."
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Paket installieren und starten
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends xvfb xauth
+          sudo apt-get install -y -q "./installer/monhip_${VERSION}_all.deb"
+          set +e
+          xvfb-run -a timeout 20 monhip > monhip.log 2>&1
+          code=$?
+          set -e
+          cat monhip.log
+          # 124 = nach 20 s noch am Laufen (von timeout beendet) – alles andere heißt: vorzeitig beendet
+          if [ "$code" -ne 124 ] || grep -q "Traceback" monhip.log; then
+            echo "::error::Monhip aus dem Paket ist nicht sauber gestartet (Code $code)."
+            exit 1
+          fi
+          test -d "$HOME/.local/share/monhip"
+          sudo apt-get remove -y -q monhip
+          test ! -e /opt/monhip
+
+      - name: An das Release hängen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist
+          cp installer/Monhip-Setup.exe "installer/monhip_${VERSION}_all.deb" dist/
+          cd dist
+          sha256sum Monhip-Setup.exe > Monhip-Setup.exe.sha256
+          sha256sum "monhip_${VERSION}_all.deb" > "monhip_${VERSION}_all.deb.sha256"
+          gh release upload "$TAG" Monhip-Setup.exe Monhip-Setup.exe.sha256 "monhip_${VERSION}_all.deb" \
+            "monhip_${VERSION}_all.deb.sha256" --clobber --repo "$GITHUB_REPOSITORY"
+          {
+            echo "### Installer für $TAG"
+            echo
+            echo '```'
+            cat ./*.sha256
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

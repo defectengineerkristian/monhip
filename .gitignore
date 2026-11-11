@@ -1,0 +1,20 @@
+__pycache__/
+*.pyc
+/dist/
+# Installer: im Repository nur die fertigen Dateien – Quellen und Bauskripte bleiben auf dem Entwicklungsrechner
+/installer/*
+!/installer/Monhip-Setup.exe
+!/installer/monhip_*_all.deb
+
+# Nutzungsdaten (siehe README) – nie mit hochladen
+/config.json
+/modelle/
+/server/
+/chats/
+/checkpoints/
+/raeume/
+/gedaechtnis.json
+/erinnerungen.json
+
+# Bilder (Bereich „Bilder“, erzeugte Bilder und Galerie)
+/bilder/

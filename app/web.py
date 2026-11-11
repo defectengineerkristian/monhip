@@ -1,0 +1,340 @@
+"""Internetzugriff: Websuche (DuckDuckGo ohne Schlüssel, optional Brave-API) und Seitenabruf als Text."""
+
+import http.client
+import ipaddress
+import json
+import os
+import re
+import socket
+import threading
+import time
+import urllib.parse
+import urllib.request
+import zlib
+from html.parser import HTMLParser
+from pathlib import Path
+
+UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/130.0 Safari/537.36")
+
+
+PAGE_MAX = 5 * 1024 * 1024       # so viel wird von einer Seite gelesen (gepackt)
+UNPACKED_MAX = 10 * 1024 * 1024  # … und höchstens so viel entpackt (eine „Gzip-Bombe“ wird sonst viele GB groß)
+_NAT64 = ipaddress.ip_network("64:ff9b::/96")
+
+
+def _blocked(address: str) -> bool:
+    """Liegt die Adresse nicht öffentlich im Internet? Eigenes Netz, Loopback, Link-Local, reservierte Bereiche, auch
+    100.64.0.0/10 (Tailscale, Carrier-NAT) und IPv4 in IPv6 verpackt (::ffff:127.0.0.1, 64:ff9b::7f00:1)."""
+    ip = ipaddress.ip_address(address)
+    if ip.version == 6:
+        if ip.ipv4_mapped:
+            ip = ip.ipv4_mapped
+        elif ip in _NAT64:
+            ip = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+    return not ip.is_global or ip.is_multicast
+
+
+def _guarded_connect(address, *args, **kwargs):
+    """socket.create_connection, aber nur zu öffentlichen Adressen. Geprüft wird die Adresse, mit der die Verbindung
+    wirklich zustande kam – noch bevor etwas gesendet wird. _check_public allein ließe „DNS-Rebinding“ durch: Der Name
+    zeigt beim Prüfen ins Internet und beim Verbinden einen Augenblick später auf 127.0.0.1 oder den Router."""
+    sock = socket.create_connection(address, *args, **kwargs)
+    try:
+        if _blocked(sock.getpeername()[0]):
+            raise PermissionError(f"Zugriff auf lokale/private Adresse blockiert: {address[0]}")
+    except BaseException:
+        sock.close()
+        raise
+    return sock
+
+
+def _guarded(connection_class, req):
+    """Verbindungsklasse für urllib, die nur zu öffentlichen Adressen verbindet – außer über einen Proxy aus der
+    Umgebung: Mit dem verbindet sich urllib selbst, das Ziel erreicht erst der Proxy."""
+    def make(*args, **kwargs):
+        conn = connection_class(*args, **kwargs)
+        if not req.has_proxy() and not getattr(req, "_tunnel_host", None):
+            conn._create_connection = _guarded_connect
+        return conn
+    return make
+
+
+class _PublicHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, req):
+        return self.do_open(_guarded(http.client.HTTPConnection, req), req)
+
+
+class _PublicHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_guarded(http.client.HTTPSConnection, req), req, context=self._context)
+
+
+class _SafeRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _check_public(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_opener = urllib.request.build_opener(_SafeRedirect, _PublicHTTPHandler, _PublicHTTPSHandler)
+
+
+def _gunzip(raw: bytes, limit: int = UNPACKED_MAX) -> bytes:
+    """gzip entpacken, aber höchstens limit Bytes – auch abgeschnittene Daten (PAGE_MAX) gehen, statt zu scheitern."""
+    try:
+        return zlib.decompressobj(16 + zlib.MAX_WBITS).decompress(raw, limit)
+    except zlib.error as e:
+        raise ValueError(f"Die Seite ist fehlerhaft gepackt ({e}).") from None
+
+
+def _get(url: str, data: bytes | None = None, headers: dict | None = None, timeout=20):
+    h = {"User-Agent": UA, "Accept-Language": "de-DE,de;q=0.9,en;q=0.8", "Accept-Encoding": "gzip"}
+    h.update(headers or {})
+    with _opener.open(urllib.request.Request(url, data=data, headers=h), timeout=timeout) as r:
+        raw = r.read(PAGE_MAX)
+        if r.headers.get("Content-Encoding") == "gzip":
+            raw = _gunzip(raw)
+        charset = r.headers.get_content_charset() or "utf-8"
+        return raw.decode(charset, "replace"), r.headers.get_content_type(), r.geturl()
+
+
+# ---------------------------------------------------------------- Suche
+
+class _DDGParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.results, self._field = [], None
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        cls = a.get("class", "")
+        if tag == "a" and "result__a" in cls:
+            self.results.append({"title": "", "url": _unwrap(a.get("href", "")), "snippet": ""})
+            self._field = "title"
+        elif "result__snippet" in cls and self.results:
+            self._field = "snippet"
+
+    def handle_endtag(self, tag):
+        if tag in ("a", "div", "td"):
+            self._field = None
+
+    def handle_data(self, data):
+        if self._field and self.results:
+            self.results[-1][self._field] += data
+
+
+def _unwrap(href: str) -> str:
+    if "uddg=" in href:
+        return urllib.parse.unquote(urllib.parse.parse_qs(urllib.parse.urlparse(href).query)["uddg"][0])
+    return "https:" + href if href.startswith("//") else href
+
+
+def search_duckduckgo(query: str, n: int = 8) -> list[dict]:
+    html, _, _ = _get("https://html.duckduckgo.com/html/",
+                      data=urllib.parse.urlencode({"q": query, "kl": "de-de"}).encode())
+    p = _DDGParser()
+    p.feed(html)
+    out = [r for r in p.results if r["url"].startswith("http") and "duckduckgo.com/y.js" not in r["url"]]
+    if not out and ("anomaly" in html.lower() or "captcha" in html.lower()):
+        raise RuntimeError("DuckDuckGo blockiert gerade automatische Anfragen. Später erneut versuchen "
+                           "oder einen Brave-Search-API-Schlüssel eintragen.")
+    return out[:n]
+
+
+def search_brave(query: str, api_key: str, n: int = 8) -> list[dict]:
+    url = "https://api.search.brave.com/res/v1/web/search?" + urllib.parse.urlencode(
+        {"q": query, "count": n, "search_lang": "de"})
+    body, _, _ = _get(url, headers={"Accept": "application/json", "X-Subscription-Token": api_key})
+    items = json.loads(body).get("web", {}).get("results", [])
+    return [{"title": i.get("title", ""), "url": i.get("url", ""),
+             "snippet": re.sub(r"<[^>]+>", "", i.get("description", ""))} for i in items[:n]]
+
+
+def search(query: str, brave_key: str = "", n: int = 8) -> str:
+    results = search_brave(query, brave_key, n) if brave_key else search_duckduckgo(query, n)
+    if not results:
+        return "Keine Treffer."
+    return "\n\n".join(f"[{i}] {r['title'].strip()}\n{r['url']}\n{' '.join(r['snippet'].split())}"
+                       for i, r in enumerate(results, 1))
+
+
+# ---------------------------------------------------------------- Seitenabruf
+
+class _TextExtractor(HTMLParser):
+    SKIP = {"script", "style", "noscript", "svg", "nav", "footer", "header", "form", "aside", "iframe"}
+    BLOCK = {"p", "div", "br", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "section", "article", "table"}
+
+    def __init__(self):
+        super().__init__()
+        self.parts, self.skip, self.title, self._in_title = [], 0, "", False
+
+    def handle_starttag(self, tag, attrs):
+        if tag in self.SKIP:
+            self.skip += 1
+        elif tag == "title":
+            self._in_title = True
+        elif tag in self.BLOCK:
+            self.parts.append("\n")
+        if tag in ("h1", "h2", "h3"):
+            self.parts.append("## ")
+
+    def handle_endtag(self, tag):
+        if tag in self.SKIP and self.skip:
+            self.skip -= 1
+        elif tag == "title":
+            self._in_title = False
+        elif tag in self.BLOCK:
+            self.parts.append("\n")
+
+    def handle_data(self, data):
+        if self._in_title:
+            self.title += data
+        elif not self.skip:
+            self.parts.append(data)
+
+
+def _check_public(url: str):
+    """Verhindert, dass Webseiten das Modell auf Geräte im eigenen Netzwerk lenken."""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise ValueError("Nur http(s)-Adressen sind erlaubt.")
+    for info in socket.getaddrinfo(parsed.hostname, None):
+        if _blocked(info[4][0]):
+            raise PermissionError(f"Zugriff auf lokale/private Adresse blockiert: {parsed.hostname}")
+
+
+def html_to_text(html: str) -> tuple[str, str]:
+    """(Titel, lesbarer Text) einer HTML-Seite – ohne Skripte, Menüs und Fußzeilen."""
+    p = _TextExtractor()
+    p.feed(html)
+    return " ".join(p.title.split()), tidy("".join(p.parts))
+
+
+def tidy(text: str) -> str:
+    lines = [" ".join(l.split()) for l in text.splitlines()]
+    lines = [l for l in lines if l != "##"]
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+
+CACHE_SECS, CACHE_MAX = 600, 8
+_pages: dict[str, tuple[float, str, str, str]] = {}  # URL → (Zeit, Quelle, Titel, Text): Weiterlesen ohne Neuladen
+_pages_lock = threading.Lock()                       # Chat und eigene KI im Raum können gleichzeitig abrufen
+
+
+def _page(url: str) -> tuple[str, str, str]:
+    """(Quelle nach Weiterleitungen, Titel, Text) einer Seite – 10 Minuten zwischengespeichert."""
+    with _pages_lock:
+        hit = _pages.get(url)
+    if hit and time.time() - hit[0] < CACHE_SECS:
+        return hit[1:]
+    _check_public(url)
+    body, ctype, final = _get(url)
+    if "html" in ctype:
+        title, text = html_to_text(body)
+    elif ctype.startswith("text/") or "json" in ctype or "xml" in ctype:
+        text, title = tidy(body), ""
+    else:
+        raise ValueError(f"Inhaltstyp {ctype} kann nicht als Text gelesen werden.")
+    with _pages_lock:
+        _pages[url] = (time.time(), final, title, text)
+        while len(_pages) > CACHE_MAX:
+            _pages.pop(next(iter(_pages)))
+    return final, title, text
+
+
+def fetch(url: str, max_chars: int = 8000, start: int = 0) -> str:
+    """Text einer Seite ab Zeichen start, höchstens max_chars – geschnitten an einem Zeilen- bzw. Wortende; der
+    Hinweis am Ende nennt den nächsten start."""
+    final, title, text = _page(url)
+    total = len(text)
+    start = max(0, min(int(start), total))
+    end = min(total, start + max_chars)
+    if end < total:
+        cut = text.rfind("\n", start + max_chars // 2, end)
+        if cut < 0:
+            cut = text.rfind(" ", start + max_chars // 2, end)
+        if cut > 0:
+            end = cut + 1
+    head = f"Quelle: {final}\nTitel: {title}\n\n"
+    if start == 0 and end == total:
+        return head + text
+    more = f" – weiter mit start={end}" if end < total else " – Ende der Seite"
+    return head + text[start:end].rstrip() + f"\n…(Zeichen {start}–{end} von {total}{more})"
+
+
+# ---------------------------------------------------------------- Dateien herunterladen (Agent-Werkzeug download_file)
+
+_BAD_NAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_DEVICES = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
+
+
+def file_name(raw: str) -> str:
+    """Dateiname aus einer URL bzw. Content-Disposition: ohne Pfad, ohne verbotene Zeichen und Gerätenamen."""
+    name = _BAD_NAME.sub("_", urllib.parse.unquote(raw or "").replace("\\", "/").rsplit("/", 1)[-1]).strip(" .")
+    if not name or name.split(".")[0].upper() in _DEVICES:
+        name = "download" + (f"_{name}" if name else "")
+    return name[:150]
+
+
+def download_info(url: str) -> dict:
+    """Vorab (ohne Inhalt): Dateiname und Größe. Manche Server kennen HEAD nicht – dann Name aus der URL."""
+    _check_public(url)
+    info = {"url": url, "name": file_name(urllib.parse.urlparse(url).path), "size": None, "type": ""}
+    try:
+        req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": UA})
+        with _opener.open(req, timeout=15) as r:
+            info["url"] = r.geturl()
+            info["name"] = file_name(r.headers.get_filename() or urllib.parse.urlparse(r.geturl()).path)
+            length = r.headers.get("Content-Length")
+            info["size"] = int(length) if length and length.isdigit() else None
+            info["type"] = r.headers.get_content_type()
+    except (OSError, ValueError):
+        pass
+    return info
+
+
+def download(url: str, target, max_bytes: int) -> tuple[int, str, str]:
+    """Lädt url nach target – erst nach <target>.part, fertig umbenannt. Gibt (Bytes, Inhaltsart, Endadresse)."""
+    _check_public(url)
+    target = Path(target)
+    part = target.with_name(target.name + ".part")
+    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept-Language": "de-DE,de;q=0.9,en;q=0.8"})
+    try:
+        with _opener.open(req, timeout=30) as r:
+            length = r.headers.get("Content-Length")
+            if length and length.isdigit() and int(length) > max_bytes:
+                raise ValueError(f"Die Datei ist zu groß ({int(length) // 1048576} MB, höchstens "
+                                 f"{max_bytes // 1048576} MB).")
+            n = 0
+            with open(part, "wb") as f:
+                while chunk := r.read(1 << 16):
+                    n += len(chunk)
+                    if n > max_bytes:
+                        raise ValueError(f"Die Datei ist größer als {max_bytes // 1048576} MB – abgebrochen.")
+                    f.write(chunk)
+            ctype, final = r.headers.get_content_type(), r.geturl()
+        os.replace(part, target)
+    finally:
+        part.unlink(missing_ok=True)
+    mark_from_internet(target, final)
+    return n, ctype, final
+
+
+def mark_from_internet(path, url: str = ""):
+    """Windows-Markierung „aus dem Internet“ (Zone.Identifier): SmartScreen und Office warnen dann beim Öffnen –
+    wie bei Downloads aus dem Browser. Auf FAT/exFAT-Laufwerken nicht möglich (dann ohne). Unter Linux gibt es
+    das nicht (dort entstünde nur eine Datei „…:Zone.Identifier“); die Herkunft steht wie bei Browsern im
+    erweiterten Attribut user.xdg.origin.url."""
+    if os.name != "nt":
+        try:
+            if url:
+                os.setxattr(path, "user.xdg.origin.url", url.encode("utf-8", "replace"))
+        except (OSError, AttributeError):
+            pass
+        return
+    try:
+        with open(f"{path}:Zone.Identifier", "wb") as f:
+            host = f"HostUrl={url}\r\n".encode("utf-8", "replace") if url else b""
+            f.write(b"[ZoneTransfer]\r\nZoneId=3\r\n" + host)
+    except OSError:
+        pass

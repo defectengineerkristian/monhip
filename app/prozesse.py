@@ -88,6 +88,14 @@ class Prozess:
             text, skipped = text[-READ_CHARS:], True
         return ("…(ältere Ausgabe ausgelassen)\n" if skipped else "") + text
 
+    def tail(self, chars: int = 6000) -> str:
+        """Das Ende der Ausgabe zum Ansehen (Fenster „Hintergrund-Prozesse“) – ändert nicht, was das Modell als neu
+        liest (read_new)."""
+        with self._cond:
+            data = bytes(self._buf[-chars * 4:])
+        text = data.decode("utf-8", "replace").replace("\r\n", "\n").replace("\r", "\n").strip()
+        return text[-chars:]
+
     def stop(self):
         if self.running():
             plattform.kill_tree(self.proc)  # samt allen Programmen, die der Befehl gestartet hat (node unter npm)
@@ -119,6 +127,16 @@ def get(nr) -> Prozess:
         return _procs[int(str(nr).lstrip("#[").rstrip("]"))]
     except (KeyError, ValueError):
         raise ProzessError(f"Einen Prozess [{nr}] gibt es nicht.\n{listing()}") from None
+
+
+def items() -> list[Prozess]:
+    """Alle Prozesse dieser Sitzung, auch beendete (Fenster „Hintergrund-Prozesse“)."""
+    return list(_procs.values())
+
+
+def running() -> list[Prozess]:
+    """Die gerade laufenden Prozesse (für die Anzeige unter der Eingabe)."""
+    return [p for p in items() if p.running()]
 
 
 def listing() -> str:

@@ -71,6 +71,16 @@ def store_for(source: Path) -> Path:
     return chats.CHAT_DIR / "experten" / f"{name}-{key}"
 
 
+def delete(source: Path) -> bool:
+    """Auswertung eines Ordners (Zusammenfassungen, Überblick, Suchindex) in den Papierkorb – die Dokumente selbst
+    bleiben unverändert. False = es gab keine."""
+    store = store_for(source)
+    if not store.exists():
+        return False
+    plattform.recycle(store)
+    return True
+
+
 def find_documents(source: Path) -> list[Path]:
     """Alle lesbaren Dokumente unter source (ohne versteckte und Programm-Ordner), sortiert."""
     found = []

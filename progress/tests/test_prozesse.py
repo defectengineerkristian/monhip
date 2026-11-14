@@ -69,6 +69,23 @@ class Prozesse(unittest.TestCase):
             pz.get(99)
         assert "Hintergrund-Prozesse" in str(cm.exception)
 
+    def test_window_lists_processes_and_shows_output_without_consuming_it(self):
+        """Fenster „Hintergrund-Prozesse“: laufende zählen, beendete stehen weiter in der Liste; das Ansehen der
+        Ausgabe (tail) ändert nicht, was das Modell als neu liest."""
+        a = pz.start(py("print('eins', flush=True); import time; time.sleep(30)"), cwd, "läuft")
+        b = pz.start(py("print('zwei')"), cwd, "kurz")
+        b.wait_end(10)
+        for _ in range(100):  # bis die erste Zeile da ist
+            if a.tail():
+                break
+            time.sleep(0.05)
+        assert a.tail() == "eins"
+        assert a in pz.running() and b not in pz.running() and {a, b} <= set(pz.items())
+        assert b.tail() == "zwei"
+        assert b.read_new() == "zwei", "tail hat nichts als gelesen markiert"
+        a.stop()
+        assert a not in pz.running()
+
     def test_stop_all_when_the_app_closes(self):
         x = pz.start(py("import time; time.sleep(30)"), cwd, "läuft noch")
         pz.stop_all()

@@ -61,10 +61,9 @@ ROOM_MODES = {"all": (False, False, False),      # Alles erlauben: keine Rückfr
               "strict": (True, True, True)}      # Strikt: Rückfrage vor jeder Aktion, auch Lesen und Websuche
 
 ROOM_PROMPT = """Du bist „{ai}“, die KI von {owner}, in einem gemeinsamen Gruppenchat namens „{room}“. Dort \
-schreiben mehrere Menschen und ihre KIs; jede KI läuft auf dem Rechner ihres Besitzers mit dessen Modell.
-
-Teilnehmer:
-{people}
+schreiben mehrere Menschen und ihre KIs; jede KI läuft auf dem Rechner ihres Besitzers mit dessen Modell. Wer im \
+Raum ist, die offenen Aufgaben und dein Arbeitsstand stehen immer aktuell im Block „[Stand im Raum …]“ direkt vor der \
+neuesten Nachricht – er ist keine Nachricht eines Teilnehmers.
 
 Nachrichten anderer stehen im Format „[Name]: Text“. Du wurdest gerade angesprochen: Antworte auf die letzte \
 Nachricht – direkt und hilfreich, ohne deinen eigenen Namen voranzustellen. Wenn eine andere KI für etwas besser \
@@ -84,9 +83,7 @@ danach als erledigt (aufgabe_erledigt, mit kurzem Ergebnis). Größere Vorhaben 
 - Teamstand: Setze mit status_setzen eine kurze Zeile, woran du gerade arbeitest – die anderen sehen sie.
 - Andere KIs: Mit ki_fragen fragst du eine andere KI mitten in deiner Arbeit (z. B. zwischen Werkzeugschritten) und \
 arbeitest mit ihrer Antwort weiter; auf @Name am Ende deiner Nachricht wartest du ebenso. Sprichst du eine KI an \
-(ki_fragen oder @Name), schreib knapp und strukturiert: Auftrag, gewünschtes Ergebnis, Format – ohne Floskeln.{files}
-Aufgaben:
-{tasks}"""
+(ki_fragen oder @Name), schreib knapp und strukturiert: Auftrag, gewünschtes Ergebnis, Format – ohne Floskeln.{files}"""
 FILES_RULE = {  # Ergebnisse als Datei statt als langer Text (spart allen KIs Kontext)
     "project": "\n- Lange Ergebnisse (mehr als etwa eine Bildschirmseite) schreibst du als Datei in den Projektordner "
                "(projekt_write) und nennst im Chat nur den Pfad und eine kurze Zusammenfassung.",
@@ -95,10 +92,20 @@ FILES_RULE = {  # Ergebnisse als Datei statt als langer Text (spart allen KIs Ko
 }
 ASK_TIMEOUT = 600      # so lange wartet ki_fragen höchstens auf die Antwort der anderen KI (Sekunden)
 
-NOTES_PROMPT = """Dein Arbeitsstand in diesem Raum – liegt nur auf dem Rechner von {owner}, nur du siehst ihn. Halte ihn \
-mit arbeitsstand_speichern aktuell, wenn sich etwas Wichtiges ändert (erledigt, als Nächstes, offene Fragen); jedes \
-Speichern ersetzt den bisherigen:
-{text}"""
+NOTES_PROMPT = """Dein Arbeitsstand in diesem Raum liegt nur auf dem Rechner von {owner}, nur du siehst ihn (er steht \
+im „Stand im Raum“). Halte ihn mit arbeitsstand_speichern aktuell, wenn sich etwas Wichtiges ändert (erledigt, als \
+Nächstes, offene Fragen); jedes Speichern ersetzt den bisherigen."""
+
+# Was sich im Raum laufend ändert (Teilnehmer, Aufgaben, Arbeitsstand), steht nicht im System-Prompt, sondern vor der
+# neuesten Nachricht: So bleibt der Anfang des Prompts gleich und llama.cpp muss den Verlauf nicht neu einlesen.
+STATE_PROMPT = """[Stand im Raum – automatisch eingefügt, keine Nachricht eines Teilnehmers]
+Teilnehmer:
+{people}
+Aufgaben:
+{tasks}
+Dein Arbeitsstand:
+{notes}
+[Ende des Stands]"""
 
 
 def _merge_roles(msgs: list) -> list:
@@ -1717,7 +1724,7 @@ class RoomMode:
         agent = self._agent(trigger, chain)
         system = self._system_prompt(agent)
         auto = bool(app.compress_var.get())  # „Ältere Unterhaltung automatisch zusammenfassen“ gilt auch hier
-        history = self._context(trigger["id"], auto)
+        history = self._with_state(self._context(trigger["id"], auto))
         client = self.client
         self._bg(lambda: client.update_member(busy=True))
         self.refresh_panel()
@@ -1778,28 +1785,44 @@ class RoomMode:
                      images=image_model)  # bild_erzeugen/bild_bearbeiten; image_fn setzt _ai_worker
 
     def _system_prompt(self, agent) -> str:
+        """Nur, was sich selten ändert – Teilnehmer, Aufgaben und Arbeitsstand setzt _with_state vor die neueste
+        Nachricht (Prompt-Zwischenspeicher von llama.cpp)."""
         me, info = self.me, self.info
+        text = ROOM_PROMPT.format(ai=me["ai"], owner=me["name"], room=info["room"])
+        if (self.main.get("text") or "").strip():  # steht im System-Prompt, wird also nie mit zusammengefasst
+            text += "\n\n" + MAIN_PROMPT.format(text=self.main["text"].strip())
+        files = ("project" if agent and "projekt_write" in agent._allowed else
+                 "share" if agent and "datei_teilen" in agent._allowed else "")
+        text += "\n\n" + COLLAB_PROMPT.format(files=FILES_RULE.get(files, ""))
+        text += "\n\n" + NOTES_PROMPT.format(owner=me["name"])
+        own = self.app.sys_text.get("1.0", tk.END).strip()
+        text += ("\n\n" + own if own else "") + "\n\n" + date_line()  # ohne Uhrzeit – die steht an jeder Nachricht
+        if agent:
+            text += "\n\n" + agent.system_prompt()
+        return text + "\n\n" + ROOM_SCREEN_PROMPT
+
+    def _state_text(self) -> str:
+        """Was sich im Raum laufend ändert: Teilnehmer (Modell, online, Teamstand), Aufgaben, eigener Arbeitsstand."""
         people = []
         for m in self.members.values():
             state = m.get("model") if m.get("ai_ready") else "kein Modell geladen"
             people.append(f"- {m['name']} (Mensch), KI: @{m['ai']} – {state}"
                           + ("" if m.get("online") else " (offline)")
                           + (f" – Stand: {m['status']}" if m.get("status") else ""))
-        text = ROOM_PROMPT.format(ai=me["ai"], owner=me["name"], room=info["room"], people="\n".join(people))
-        if (self.main.get("text") or "").strip():  # steht im System-Prompt, wird also nie mit zusammengefasst
-            text += "\n\n" + MAIN_PROMPT.format(text=self.main["text"].strip())
-        files = ("project" if agent and "projekt_write" in agent._allowed else
-                 "share" if agent and "datei_teilen" in agent._allowed else "")
         done = sum(1 for t in self.tasks if t.get("status") == "erledigt")
         tasks = (_tasks_text(self.tasks) or "(keine offenen)") + (
             f"\n({done} erledigt – aufgaben_liste zeigt sie)" if done else "")
-        text += "\n\n" + COLLAB_PROMPT.format(files=FILES_RULE.get(files, ""), tasks=tasks)
-        text += "\n\n" + NOTES_PROMPT.format(owner=me["name"], text=self.notes or "(noch leer)")
-        own = self.app.sys_text.get("1.0", tk.END).strip()
-        text += ("\n\n" + own if own else "") + "\n\n" + date_line()  # ohne Uhrzeit – die steht an jeder Nachricht
-        if agent:
-            text += "\n\n" + agent.system_prompt()
-        return text + "\n\n" + ROOM_SCREEN_PROMPT
+        return STATE_PROMPT.format(people="\n".join(people) or "(niemand)", tasks=tasks,
+                                   notes=(self.notes or "").strip() or "(noch leer)")
+
+    def _with_state(self, history: list[dict]) -> list[dict]:
+        """Stand im Raum vor die neueste Nachricht setzen (nur für diese Anfrage – gespeichert wird er nie). Steht er
+        dort statt im System-Prompt, liest llama.cpp nach einer Änderung nur das Ende neu statt des ganzen Verlaufs.
+        Die Zahl der Nachrichten bleibt gleich (context.Window rechnet mit der letzten als Auslöser)."""
+        if history and history[-1].get("role") == "user" and isinstance(history[-1].get("content"), str):
+            last = history[-1]
+            history = history[:-1] + [dict(last, content=self._state_text() + "\n\n" + last["content"])]
+        return history
 
     def _context(self, trigger_id: str | None, auto: bool) -> list[dict]:
         """Gruppenchat → Nachrichten für das eigene Modell: eigene KI = assistant, alle anderen = user; „_ids“ =
@@ -2196,7 +2219,7 @@ class RoomMode:
         self._ctx_gen += 1
         gen = self._ctx_gen
         agent = self._agent({"kind": "human", "name": self.me.get("name", "")})
-        history = self._context(None, bool(app.compress_var.get()))
+        history = self._with_state(self._context(None, bool(app.compress_var.get())))
         start, summary = context.latest_summary(history)
         msgs = [{"role": "system", "content": context.with_summary(self._system_prompt(agent), summary)}]
         msgs += [dict(m, _image_files=[""] * len(m["_room_images"])) if m.get("_room_images") else m  # nur gezählt

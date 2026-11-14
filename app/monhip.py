@@ -24,6 +24,7 @@ import bilder
 import browser
 import browserpanel
 import chats
+import checkpoints
 import context
 import dialogs
 import documents
@@ -250,6 +251,7 @@ class App:
         root.after(300, lambda: filedrop.enable_drop(root, self._on_drop))
         self.root.after(50, self._poll_events)
         self.root.after(3000, self._check_reminders)  # auch verpasste vom letzten Mal
+        self.root.after(2000, self._poll_processes)   # „N Hintergrund-Prozesse laufen“ unter der Eingabe
         self.theme.present(root, fade_ms=220)
 
     # ================================================================ Threads
@@ -382,6 +384,10 @@ class App:
         self.ctx_bar.pack(side=tk.RIGHT, padx=(8, 0))
         self.ctx_text = tk.StringVar()
         ttk.Label(meter, textvariable=self.ctx_text, style="Muted.TLabel", font=(FAMILY, 8)).pack(side=tk.RIGHT)
+        # laufende Hintergrund-Prozesse des Agenten (prozess_starten) – nur sichtbar, wenn einer läuft
+        self.proc_link = ttk.Label(meter, style="Muted.TLabel", font=(FAMILY, 8, "underline"), cursor="hand2")
+        self.proc_link.bind("<Button-1>", lambda e: self.open_processes())
+        self._proc_count, self.proc_win = 0, None
         # Experten-Modus (nur im Chat): Häkchen, Fortschritt der Auswertung, „Pausieren · Stoppen“ bzw. „Fortsetzen“
         self.expert_bar = ttk.Frame(meter)
         self.expert_bar.pack(side=tk.LEFT)
@@ -1180,7 +1186,9 @@ class App:
                         self.view.tool_static(label, detail, format_args(fn.get("arguments", "")), res,
                                               result_ok(res), icon)
                     if content and not m.get("tool_calls"):
-                        self.view.footer(content)
+                        self.view.footer(content, undo=self._undo_fn(m))
+                    elif self._undo_fn(m):
+                        self.view.undo_link(self._undo_fn(m))
         self.view.scroll_end()
         self._link_citations("1.0")
         self._estimate_context()
@@ -1715,6 +1723,112 @@ class App:
             self._fill_memory()
         self.root.after(15_000, self._check_reminders)
 
+    # ---------------------------------------------------------------- Hintergrund-Prozesse (prozesse.py)
+
+    def _poll_processes(self):
+        """Alle 2 s: „2 Hintergrund-Prozesse laufen“ unter der Eingabe (rechts, vor der Kontextanzeige)."""
+        n = len(prozesse.running())
+        if n != self._proc_count:
+            self._proc_count = n
+            if n:
+                self.proc_link.configure(text=tr('{0} Hintergrund-Prozess läuft', n) if n == 1
+                                         else tr('{0} Hintergrund-Prozesse laufen', n))
+                if not self.proc_link.winfo_ismapped():
+                    self.proc_link.pack(side=tk.RIGHT, padx=(0, 16))
+            else:
+                self.proc_link.pack_forget()
+        self.root.after(2000, self._poll_processes)
+
+    def open_processes(self):
+        """Fenster mit allen Hintergrund-Prozessen dieser Sitzung: Stand, Ende der Ausgabe, „Stoppen“."""
+        if self.proc_win and self.proc_win.winfo_exists():
+            self.proc_win.lift()
+            return
+        win = self.proc_win = dialogs.window(tr('Hintergrund-Prozesse'), self.root, resizable=True)
+        win.minsize(round(560 * self.ui_scale), round(360 * self.ui_scale))
+        body = ttk.Frame(win, padding=12)
+        body.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(body, text=tr('Programme, die die KI im Hintergrund gestartet hat (z. B. ein Webserver). Sie enden '
+                                'spätestens mit Monhip.'), style="Muted.TLabel").pack(anchor="w")
+        lf, lst = self._listbox(body, height=5)
+        lf.pack(fill=tk.X, pady=(6, 8))
+        ttk.Label(body, text=tr('Ausgabe (das Neueste unten)')).pack(anchor="w")
+        of, out = scrolled(body, wrap=tk.WORD, height=14, font=(plattform.MONO_FONT, 9), padx=8, pady=6)
+        of.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
+        self.theme.register_text(out)
+        out.configure(state=tk.DISABLED)
+        bf = ttk.Frame(body)
+        bf.pack(fill=tk.X, pady=(10, 0))
+        ttk.Button(bf, text=tr('Schließen'), command=win.destroy).pack(side=tk.RIGHT)
+        stop_btn = ttk.Button(bf, text=tr('Stoppen'), **icons.opts("stop"))
+        stop_btn.pack(side=tk.LEFT)
+        state = {"items": [], "shown": None, "follow": True}
+        # erst nach dem Einblenden hat das Feld seine Höhe – dann (und bei jeder Größenänderung) ans Ende
+        out.bind("<Configure>", lambda e: out.see(tk.END) if state["follow"] else None)
+
+        def selected():
+            sel = lst.curselection()
+            return state["items"][sel[0]] if sel and sel[0] < len(state["items"]) else None
+
+        def update():
+            if not win.winfo_exists():
+                return
+            items = list(reversed(prozesse.items()))  # neueste zuerst
+            keep = selected()
+            if not items:
+                lines = [tr('(keine Hintergrund-Prozesse)')]
+            else:
+                lines = []
+                for p in items:
+                    rc = p.proc.poll()
+                    status = tr('läuft') if rc is None else tr('beendet (Exit-Code {0})', rc)
+                    lines.append(f"[{p.nr}] {p.name}  ·  {status}  ·  {p.cwd}")
+            if lines != list(lst.get(0, tk.END)):
+                lst.delete(0, tk.END)
+                for line in lines:
+                    lst.insert(tk.END, line)
+            state["items"] = items
+            pick = keep if keep in items else (items[0] if items else None)
+            if pick:
+                i = items.index(pick)
+                if lst.curselection() != (i,):
+                    lst.selection_clear(0, tk.END)
+                    lst.selection_set(i)
+            text = pick.tail() if pick else ""
+            if (pick, text) != state["shown"]:
+                new_pick = not state["shown"] or state["shown"][0] is not pick
+                if out.winfo_ismapped():  # folgt dem Ende, solange man nicht selbst hochgescrollt hat
+                    state["follow"] = new_pick or out.yview()[1] >= 0.999
+                top = out.yview()[0]
+                state["shown"] = (pick, text)
+                out.configure(state=tk.NORMAL)
+                out.delete("1.0", tk.END)
+                out.insert("1.0", text or (tr('(noch keine Ausgabe)') if pick else ""))
+                out.configure(state=tk.DISABLED)
+                if state["follow"]:
+                    out.see(tk.END)
+                else:
+                    out.yview_moveto(top)
+            stop_btn.state(["!disabled"] if pick and pick.running() else ["disabled"])
+
+        def tick():
+            if win.winfo_exists():
+                update()
+                win.after(1000, tick)
+
+        def stop():
+            p = selected()
+            if p and p.running() and dialogs.askyesno(
+                    tr('Hintergrund-Prozesse'), tr('„{0}“ stoppen (samt allen Programmen, die er gestartet hat)?',
+                                                  p.name), parent=win):
+                self.background(p.stop, lambda _r, _e: None)
+
+        stop_btn.configure(command=stop)
+        lst.bind("<<ListboxSelect>>", lambda e: update())
+        win.bind("<Escape>", lambda e: win.destroy())
+        tick()
+        dialogs.present(win, self.root, size=(round(820 * self.ui_scale), round(520 * self.ui_scale)))
+
     def in_front(self) -> bool:
         """Hat Monhip gerade den Tastaturfokus (auch in einem eigenen Dialog) und ist nicht minimiert?"""
         try:
@@ -2216,7 +2330,8 @@ class App:
         """Lässt das Modell auf den Verlauf antworten (im Hintergrund-Thread; Ergebnis kommt als „done“). Wird der
         Kontext knapp, fasst context.Window vorher die älteren Nachrichten zusammen (Ereignis „compressed“) – auch noch
         mitten in der Antwort, wenn der Server „Kontext voll“ meldet."""
-        self.turn = {"step": 0, "think": None, "thinks": [], "tool": None, "tps": None, "t0": time.monotonic()}
+        self.turn = {"step": 0, "think": None, "thinks": [], "tool": None, "tps": None, "t0": time.monotonic(),
+                     "agent": agent}  # agent.checkpoint: alter Stand der Dateien („Rückgängig“ unter der Antwort)
         asked = next((m.get("_text", m.get("content")) for m in reversed(self.history) if m.get("role") == "user"), "")
         self.sources.question(asked if isinstance(asked, str) else "")
         self.view.t.mark_set("quellen:start", "end-1c")  # ab hier: Quellenangaben dieser Antwort (_link_citations)
@@ -2490,6 +2605,35 @@ class App:
                 st['ok'] if st else 0,
                 st['dateien'] if st and st['dateien'] else '…'))
             self._expert_link(tr('Fortsetzen'), self._start_expert_job)
+        if st:
+            self._expert_link(tr('Auswertung löschen'), self._expert_delete)
+
+    def _expert_delete(self):
+        """Auswertung des Experten-Chats in den Papierkorb (Zusammenfassungen, Überblick, Suchindex) – die Dokumente
+        bleiben, wie sie sind. Danach ist der Chat wieder ein normaler Chat."""
+        cfg = (self.chat_data or {}).get("experte")
+        if not cfg or self.expert_job:
+            return
+        if self.busy:
+            dialogs.showinfo(tr('Experten-Modus'), tr('Bitte warten, bis die laufende Antwort fertig ist.'))
+            return
+        folder = Path(cfg["quelle"])
+        if not dialogs.askyesno(tr('Auswertung löschen'), tr(
+                'Die Auswertung von „{0}“ löschen?\n\nZusammenfassungen, Überblick und Suchindex kommen in den '
+                'Papierkorb – die Dokumente im Ordner bleiben unverändert. Der Experten-Modus dieses Chats endet.',
+                folder.name), parent=self.root):
+            return
+        self.chat_data.pop("experte", None)
+        self._save_chat(touch=False)
+        if self.view.is_placeholder:
+            self._show_placeholder()
+        self._update_expert_row()
+
+        def done(_r, err):
+            if err:
+                dialogs.showerror(tr('Auswertung löschen'), tr('Die Auswertung ließ sich nicht löschen: {0}', err))
+
+        self.background(lambda: experte.delete(folder), done)
 
     def _expert_link(self, text: str, command):
         link = ttk.Label(self.expert_links, text=text, style="Muted.TLabel", font=(FAMILY, 8, "underline"),
@@ -2610,6 +2754,49 @@ class App:
             rounded(c, self._meter_cache, 0, 0, max(h, w * frac), h, h // 2, color, track)
 
     # ---------------------------------------------------------------- Bearbeiten, Kopieren, Zitieren
+
+    def _undo_fn(self, msg: dict):
+        """Klick auf „Rückgängig“ unter einer Antwort – None, wenn sie keine Dateien geändert hat, schon
+        zurückgenommen ist oder ihr Checkpoint nicht mehr existiert (es bleiben nur die letzten checkpoints.KEEP)."""
+        nr = msg.get("_checkpoint")
+        if not nr or msg.get("_checkpoint_undone") or not (checkpoints.DIR / str(nr) / "stand.json").is_file():
+            return None
+        return lambda: self._undo_answer(msg)
+
+    def _undo_answer(self, msg: dict):
+        """Datei-Änderungen einer Antwort rückgängig machen (wie checkpoint_zurueck, aber per Klick). Der jetzige Stand
+        wird vorher selbst als Checkpoint gesichert – das Modell kann ihn mit checkpoint_zurueck zurückholen."""
+        title = tr('Änderungen rückgängig machen?')
+        if self.busy:
+            dialogs.showinfo(title, tr('Bitte warten, bis die laufende Antwort fertig ist (oder „Stopp“).'))
+            return
+        if msg.get("_checkpoint_undone"):
+            dialogs.showinfo(title, tr('Die Datei-Änderungen dieser Antwort sind schon rückgängig gemacht.'))
+            return
+        nr = msg.get("_checkpoint")
+        try:
+            data = checkpoints.load(nr)
+        except checkpoints.CheckpointError:
+            dialogs.showinfo(title, tr('Den alten Stand dieser Antwort gibt es nicht mehr – Monhip hebt nur die '
+                                       'letzten {0} auf.', checkpoints.KEEP))
+            return
+        if not dialogs.askyesno(title, tr('Diesen Stand wiederherstellen:\n\n{0}',
+                                          checkpoints.describe(data, max_paths=20, ui=True)), parent=self.root):
+            return
+        chat = self.chat_data
+
+        def done(lines, err):
+            if err:
+                dialogs.showerror(title, tr('Wiederherstellen fehlgeschlagen: {0}', err))
+                return
+            msg["_checkpoint_undone"] = True
+            if chat is not None and chat is self.chat_data:
+                self._save_chat(touch=False)
+                self.view.note(tr('Datei-Änderungen dieser Antwort rückgängig gemacht:') + "\n" + "\n".join(lines))
+            elif chat is not None:
+                chats.save(chat, touch=False)
+
+        self.background(lambda: checkpoints.restore(nr, plattform.recycle, before=checkpoints.Checkpoint()), done)
 
     def _msg_actions(self, index: int) -> dict:
         """„Kopieren“/„Bearbeiten“ unter der eigenen Nachricht Nummer index im Verlauf – und „‹ 2/3 ›“, wenn es
@@ -2925,8 +3112,13 @@ class App:
             self.view.note(tr('[gestoppt]'))
         last = assistants[-1] if assistants else None
         answered = bool(last and last.get("content") and not last.get("tool_calls"))
+        cp = getattr(self.turn.get("agent"), "checkpoint", None)
+        if last and cp and cp.nr and cp.entries:  # Dateien geändert → „Rückgängig“ unter der Antwort
+            last["_checkpoint"] = cp.nr
         if answered:
-            self.view.footer(last["content"], self.turn.get("tps"))
+            self.view.footer(last["content"], self.turn.get("tps"), undo=self._undo_fn(last))
+        elif last and last.get("_checkpoint"):
+            self.view.undo_link(self._undo_fn(last))
         self._set_busy(False)
         self._save_chat()
         if not self.stop_event.is_set():  # selbst gestoppt: dann ist man ohnehin da

@@ -1483,15 +1483,32 @@ class ChatView:
 
     # ---------------------------------------------------------------- Sonstiges
 
-    def footer(self, raw: str, tps: float | None = None):
-        """Zeile unter einer fertigen Antwort: „Kopieren“ (Markdown-Text) und ggf. Tokens pro Sekunde."""
+    def footer(self, raw: str, tps: float | None = None, undo=None):
+        """Zeile unter einer fertigen Antwort: „Kopieren“ (Markdown-Text), ggf. „Rückgängig“ (undo() macht die
+        Datei-Änderungen dieser Antwort rückgängig) und ggf. Tokens pro Sekunde."""
         self.md_finish()
         n = self._new("copy", text=raw)
         with self._edit():
             self._put(self._at, self._copy_label(), ("footer", "clickable", f"cpy:{n}"))
+            if undo:
+                self.undo_link(undo, inline=True)
             if tps:
                 self.t.insert(self._at, tr('      {0:.1f} Tokens/s', tps).replace(".", ","), "footer")
             self.t.insert(self._at, "\n", "footer")
+
+    def undo_link(self, undo, inline: bool = False):
+        """„Rückgängig“ mit Icon: in der Fußzeile (inline) oder als eigene Zeile, wenn eine Antwort Dateien geändert
+        hat, aber ohne Text endete (z. B. gestoppt)."""
+        if not inline:
+            self._ensure()
+            self.md_finish()
+        n = self._new("action", fn=undo)
+        with self._edit():
+            if inline:
+                self.t.insert(self._at, "      ", "footer")
+            self._put(self._at, self._icon("undo") + [(tr('Rückgängig'), ())], ("footer", "clickable", f"act:{n}"))
+            if not inline:
+                self.t.insert(self._at, "\n", "footer")
 
     def link_matches(self, pattern, start: str, on_click, where: set) -> int:
         """Treffer von pattern (re.Pattern) im Antworttext ab start klickbar machen – nur in Text mit einem der Tags

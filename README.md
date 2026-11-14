@@ -50,17 +50,6 @@ sudo apt install python3 python3-tk python3-pil xdg-utils pciutils libvulkan1 me
 3. Images and 3D models: missing engines and model files are offered for download the
    first time you use them.
 
-## Models
-
-| Model | Download | License |
-| --- | --- | --- |
-| Qwen3.8-27B / Qwen3.8-Flash-Next (chat) | 16 GB / 63 GB | see model page |
-| Qwen-Image 2.1 Turbo (images, default) | 14 GB | Qwen Research License – non-commercial only |
-| FLUX.2 [klein] 4B (images) | 5–9 GB | Apache 2.0 |
-| TRELLIS.2 (3D) | 6–16.5 GB | MIT; DINOv3 license (Meta) |
-
-Images and 3D need a graphics card; 16 GB of graphics memory is recommended.
-
 ## Notes
 
 - Data (settings, chats, models) is stored next to the app; set `MONHIP_DATA` to use another

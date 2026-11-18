@@ -35,19 +35,25 @@ import icons
 import images
 import llamacpp
 import memory
-import projekt
+import teamwork_projekt as projekt
 import prozesse
+import hoerbuch
+import hoerbuchtext
+import pdftext
+import pdfwerk
 import quellen
+import rechenstand
 import reminders
-import room as room_net
+import teamwork_netz as room_net
 import sdcpp
-import speech
-from agent import (TOOL_GROUPS, Agent, date_line, describe_call, format_args, off_hint, result_ok, run_conversation,
-                   time_label, tool_budget)
+import spracherkennung as speech
+import sprachausgabe
+from agent import (TOOL_GROUPS, Agent, ToolError, date_line, describe_call, format_args, off_hint, result_ok,
+                   run_conversation, time_label, tool_budget)
 from backend import (CATALOG, LlamaServer, catalog_files, find_mmproj, find_models, link_files, model_name,
                      model_size, thinking_title)
 from chatview import ChatView
-from roomui import RoomMode
+from teamwork import RoomMode
 from themes import FAMILY, THEMES, ThemeManager, label_to_key, mix_hex
 from widgets import EditMenu, ModeSwitch, PopupMenu, precise_timer, rounded, scrolled
 
@@ -101,6 +107,7 @@ DEFAULTS = {
     "think_titles": True,
     "notify_done": True,           # Desktop-Benachrichtigung, wenn etwas fertig ist und Monhip im Hintergrund liegt
     "auto_compress": True,         # ältere Unterhaltung zusammenfassen, wenn der Kontext knapp wird
+    "kv_save": True,               # Rechenstand langer Chats speichern (rechenstand.py)
     "agent_enabled": False,        # Dateien & Ordner
     "agent_commands": True,        # PowerShell & Python
     "git_enabled": False,          # Git & GitHub (nur zusammen mit Dateien & Ordner)
@@ -110,13 +117,16 @@ DEFAULTS = {
     "agent_confirm": True,
     "web_enabled": True,
     "web_via_browser": True,       # mit eingerichtetem Browser: das Modell geht nur über ihn ins Netz (sichtbar)
-    "brave_key": "",
     "memory_enabled": True,
     "reminders_enabled": True,
     "screenshots_enabled": False,
     "control_enabled": False,       # Programme bedienen (steuerung.py) – aus, bis der Nutzer es einschaltet
     "speech_model": speech.DEFAULT_MODEL,
     "speech_language": "de",
+    "tts_voice": "",               # Stimme fürs Vorlesen (sprachausgabe.VOICES); leer = passend zur Oberfläche
+    "tts_speed": "normal",         # slow | normal | fast
+    "tts_auto": False,             # jede Antwort gleich vorlesen (im Gesprächsmodus immer)
+    "audiobook_voice": hoerbuch.DEFAULT_VOICE,  # Stimme für hoerbuch_erstellen (hoerbuch.VOICES)
     "last_model": "",
     "theme": "dark",
     # Teamwork
@@ -130,6 +140,8 @@ DEFAULTS = {
     "image_format": "square",      # bilder.FORMATS
     "image_count": 1,
     "image_unload": "ask",         # Sprachmodell für Bilder entladen: ask (nachfragen) | auto
+    "upscale_model": "photo",      # hochskalieren.UPSCALERS: photo | art
+    "upscale_factor": 4,           # hochskalieren.FACTORS
 }
 
 
@@ -171,10 +183,17 @@ class App:
         self._chat_title = tr('Neuer Chat')
         self.events: queue.Queue = queue.Queue()
         self.server = LlamaServer(lambda t: self.events.put(("log", t)))
+        self.server.slot_dir = rechenstand.DIR if self.cfg.get("kv_save", True) else None
+        self._kv_chat: str | None = None   # dieser Chat liegt gerade auf Platz rechenstand.SLOT des Servers
+        self._kv_lock = threading.Lock()    # Speichern/Wiederherstellen und Senden nie gleichzeitig
         self.servers = llamacpp.find_llama_servers()
         self._downloads: dict[str, threading.Event] = {}  # laufende Downloads → Abbruch-Signal
         self.recorder = speech.Recorder()
         self._transcribing = False
+        self.speaker = sprachausgabe.Speaker(on_error=lambda text: self.ui(self._tts_error, text),
+                                             log=lambda t: self.events.put(("log", t)))
+        self.talk_mode = False   # Gesprächsmodus: Diktat geht gleich ab, die Antwort wird vorgelesen
+        self._tts_live = False   # die laufende Antwort wird schon beim Entstehen vorgelesen
         self.background(images.cleanup_temp)
         self.models: list[Path] = []
         self.sel_model: Path | None = None
@@ -409,6 +428,10 @@ class App:
         self.mic_btn = ttk.Button(inp, style="Attach.TButton", width=2, command=self.toggle_dictation,
                                   **icons.only("mic", size=18))
         self.mic_btn.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8))
+        # Gesprächsmodus (nur im Chat): Mikrofon an → sprechen → Mikrofon aus schickt ab → die Antwort wird vorgelesen
+        self.talk_btn = ttk.Button(inp, style="Attach.TButton", width=2, command=self.toggle_talk,
+                                   **icons.only("headset", size=18))
+        self.talk_btn.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8))
         field = ttk.Frame(inp, style="Input.TFrame")  # zeichnet Fläche und runden Rand um das Textfeld
         field.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.input = tk.Text(field, height=2, width=1, wrap=tk.WORD, font=(FAMILY, 11), padx=8, pady=4)
@@ -482,6 +505,12 @@ class App:
         else:
             self.images.hide()
         self._send_label(self.busy and mode == "chat")
+        if mode == "chat":  # Gesprächsmodus nur im Chat
+            if not self.talk_btn.winfo_manager():
+                self.talk_btn.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8), after=self.mic_btn)
+        else:
+            self._end_talk()
+            self.talk_btn.pack_forget()
         self.update_title()
         (self.images.prompt if images else self.input).focus_set()
 
@@ -622,8 +651,14 @@ class App:
         ttk.Checkbutton(t, text=tr('Bildverständnis laden (mmproj-Datei im Ordner des Modells, ca. 1 GB Grafikspeicher)'),
                         variable=self.vision_var).grid(row=r, column=0, columnspan=3, sticky="w", pady=(8, 0))
         self.compress_var = tk.BooleanVar(value=self.cfg["auto_compress"])
-        ttk.Checkbutton(t, text=tr('Ältere Unterhaltung automatisch zusammenfassen, wenn der Kontext knapp wird'),
-                        variable=self.compress_var).grid(row=r + 1, column=0, columnspan=3, sticky="w", pady=(4, 0))
+        self.kv_var = tk.BooleanVar(value=self.cfg["kv_save"])
+        opts = ttk.Frame(t)
+        opts.grid(row=r + 1, column=0, columnspan=3, sticky="w", pady=(4, 0))
+        ttk.Checkbutton(opts, text=tr('Ältere Unterhaltung automatisch zusammenfassen, wenn der Kontext knapp wird'),
+                        variable=self.compress_var).pack(anchor="w")
+        ttk.Checkbutton(opts, text=tr('Rechenstand langer Chats speichern – sie öffnen sich danach ohne neues Einlesen '
+                                      '(braucht Speicherplatz, wirkt ab dem nächsten Laden)'),
+                        variable=self.kv_var, command=self._kv_toggled).pack(anchor="w", pady=(4, 0))
         ttk.Separator(t).grid(row=r + 2, column=0, columnspan=3, sticky="ew", pady=12)
 
         ttk.Label(t, text=tr('System-Prompt – wird jeder Unterhaltung als Anweisung vorangestellt:')).grid(
@@ -637,7 +672,6 @@ class App:
         # ---- Werkzeuge
         t = tabs["tools"]
         self.web_var = tk.BooleanVar(value=self.cfg["web_enabled"])
-        self.brave_var = tk.StringVar(value=self.cfg["brave_key"])
         self.agent_var = tk.BooleanVar(value=self.cfg["agent_enabled"])
         self.cmd_var = tk.BooleanVar(value=self.cfg["agent_commands"])
         self.git_var = tk.BooleanVar(value=self.cfg["git_enabled"])
@@ -652,9 +686,6 @@ class App:
         ttk.Checkbutton(web, text=tr('Über den Browser in der Seitenleiste – du siehst mit und erledigst Anmeldungen '
                                      'und Captchas (sonst im Hintergrund)'),
                         variable=self.web_browser_var).pack(anchor="w", padx=(24, 0), pady=(4, 0))
-        ttk.Label(t, text=tr('Brave-API-Key (optional, falls DuckDuckGo blockiert)'), style="Muted.TLabel").grid(
-            row=1, column=0, columnspan=2, sticky="w", pady=(6, 2))
-        ttk.Entry(t, textvariable=self.brave_var, show="•").grid(row=2, column=0, columnspan=2, sticky="ew")
         ttk.Separator(t).grid(row=3, column=0, columnspan=2, sticky="ew", pady=12)
         self.screen_var = tk.BooleanVar(value=self.cfg["screenshots_enabled"])
         ttk.Checkbutton(t, text=tr(
@@ -772,6 +803,59 @@ class App:
             combo = ttk.Combobox(t, textvariable=var, values=values, state="readonly", width=48)
             combo.grid(row=r, column=1, sticky="w", pady=3)
             self.theme.register_combo(combo)
+        # ---- Sprachausgabe (Piper): Vorlesen und Gesprächsmodus
+        ttk.Separator(t).grid(row=6, column=0, columnspan=2, sticky="ew", pady=14)
+        ttk.Label(t, text=tr('Sprachausgabe'), style="Title.TLabel").grid(
+            row=7, column=0, columnspan=2, sticky="w", pady=(0, 12))
+        self.tts_btn = ttk.Button(t, text=tr('Sprachausgabe herunterladen / aktualisieren'), command=self.download_tts)
+        self.tts_btn.grid(row=8, column=0, columnspan=2, sticky="w")
+        voice = sprachausgabe.voice_key(self.cfg["tts_voice"], self.cfg["ui_language"])
+        self.tts_status = tk.StringVar(value=sprachausgabe.describe(voice))
+        ttk.Label(t, textvariable=self.tts_status, style="Muted.TLabel", wraplength=wrap).grid(
+            row=9, column=0, columnspan=2, sticky="w", pady=(2, 12))
+        speeds = sprachausgabe.speed_labels()
+        self.tts_voice_var = tk.StringVar(value=sprachausgabe.VOICES[voice]["label"])
+        self.tts_speed_var = tk.StringVar(value=speeds.get(self.cfg["tts_speed"], speeds["normal"]))
+        for r, (label, var, values) in enumerate((
+                (tr('Stimme'), self.tts_voice_var, [v["label"] for v in sprachausgabe.VOICES.values()]),
+                (tr('Tempo'), self.tts_speed_var, list(speeds.values()))), 10):
+            ttk.Label(t, text=label).grid(row=r, column=0, sticky="w", padx=(0, 12), pady=3)
+            combo = ttk.Combobox(t, textvariable=var, values=values, state="readonly", width=48)
+            combo.grid(row=r, column=1, sticky="w", pady=3)
+            self.theme.register_combo(combo)
+            combo.bind("<<ComboboxSelected>>", lambda e: self.tts_status.set(sprachausgabe.describe(self._tts_voice())))
+        self.tts_auto_var = tk.BooleanVar(value=self.cfg["tts_auto"])
+        ttk.Checkbutton(t, text=tr('Antworten automatisch vorlesen'), variable=self.tts_auto_var).grid(
+            row=12, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ttk.Label(t, text=tr(
+            'Unter jeder Antwort steht „Vorlesen“. Im Gesprächsmodus (Kopfhörer neben dem Mikrofon) geht das Gesagte '
+            'gleich ab, und die Antwort wird vorgelesen. Die Sprachausgabe läuft auf dem Prozessor und braucht keinen '
+            'Grafikspeicher.'), style="Muted.TLabel", wraplength=wrap).grid(
+            row=13, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        # ---- Hörbuch (Qwen3-TTS über audio.cpp): Werkzeug hoerbuch_erstellen
+        ttk.Separator(t).grid(row=14, column=0, columnspan=2, sticky="ew", pady=14)
+        ttk.Label(t, text=tr('Hörbuch'), style="Title.TLabel").grid(
+            row=15, column=0, columnspan=2, sticky="w", pady=(0, 12))
+        self.audiobook_btn = ttk.Button(t, text=tr('Hörbuch-Stimme herunterladen / aktualisieren'),
+                                        command=self.download_audiobook)
+        self.audiobook_btn.grid(row=16, column=0, columnspan=2, sticky="w")
+        book_voice = hoerbuch.voice_key(self.cfg["audiobook_voice"])
+        self.audiobook_status = tk.StringVar(value=hoerbuch.describe(book_voice))
+        ttk.Label(t, textvariable=self.audiobook_status, style="Muted.TLabel", wraplength=wrap).grid(
+            row=17, column=0, columnspan=2, sticky="w", pady=(2, 12))
+        self.audiobook_voice_var = tk.StringVar(value=hoerbuch.VOICES[book_voice]["label"])
+        ttk.Label(t, text=tr('Stimme')).grid(row=18, column=0, sticky="w", padx=(0, 12), pady=3)
+        combo = ttk.Combobox(t, textvariable=self.audiobook_voice_var, state="readonly", width=48,
+                             values=[v["label"] for v in hoerbuch.VOICES.values()])
+        combo.grid(row=18, column=1, sticky="w", pady=3)
+        combo.bind("<<ComboboxSelected>>",
+                   lambda e: self.audiobook_status.set(hoerbuch.describe(self._audiobook_voice())))
+        self.theme.register_combo(combo)
+        ttk.Label(t, text=tr(
+            'Im Chat: „Mach aus der PDF ein Hörbuch“ – Monhip lässt Seitenzahlen, Kopfzeilen, Fußnoten und '
+            'Verzeichnisse weg und speichert eine MP3 je Kapitel neben der PDF. Die Stimme läuft auf der Grafikkarte; '
+            'das Sprachmodell wird dafür entladen und danach wieder geladen.'), style="Muted.TLabel",
+                  wraplength=wrap).grid(row=19, column=0, columnspan=2, sticky="w", pady=(4, 0))
         t.columnconfigure(1, weight=1)
 
         # ---- Bilder (stable-diffusion.cpp)
@@ -1109,6 +1193,14 @@ class App:
         if self.expert_job and self._expert_job_chat == chat_id:  # Auswertung dieses Chats anhalten
             self.expert_job.stop_event.set()
         chats.delete(chat_id)
+        if self._kv_chat == chat_id:
+            self._kv_chat = None
+
+        def erase():  # nach einem evtl. noch laufenden Speichern
+            with self._kv_lock:
+                rechenstand.erase(chat_id)
+
+        threading.Thread(target=erase, daemon=True).start()
         if is_current:
             self.chat_data = None
             self.new_chat()
@@ -1121,6 +1213,8 @@ class App:
             self.set_mode("chat")
         if self.busy:
             return
+        self.speaker.stop()
+        self._kv_leave()
         self.chat_data = None
         self.history = []
         self.sources.clear()
@@ -1137,11 +1231,17 @@ class App:
             dialogs.showerror("Monhip", tr('Der Chat konnte nicht geladen werden.'))
             self.refresh_chat_list()
             return
+        self.speaker.stop()
+        same = data.get("id") == (self.chat_data or {}).get("id")
+        if not same:
+            self._kv_leave()
         self.chat_data = data
         self.history = data.get("messages", [])
         self._set_title(data.get("title", "Chat"))
         self._render_history()
         self._update_expert_row()
+        if not same:
+            self._kv_enter()
         self.input.focus_set()
 
     def _show_placeholder(self):
@@ -1186,7 +1286,7 @@ class App:
                         self.view.tool_static(label, detail, format_args(fn.get("arguments", "")), res,
                                               result_ok(res), icon)
                     if content and not m.get("tool_calls"):
-                        self.view.footer(content, undo=self._undo_fn(m))
+                        self.view.footer(content, undo=self._undo_fn(m), speak=self.read_aloud)
                     elif self._undo_fn(m):
                         self.view.undo_link(self._undo_fn(m))
         self.view.scroll_end()
@@ -1551,7 +1651,10 @@ class App:
         self._set_load_buttons(tk.DISABLED)
         self._set_status(tr('Lade {0} …', model_name(model)))
 
+        pending = self._kv_pending()  # Rechenstand des offenen Chats sichern, bevor das alte Modell geht
+
         def work():
+            self._kv_save(pending)
             self.images.stop_server()  # Grafikspeicher des Bildmodells frei, bevor llama-server ihn verteilt
             self.server.start(server, model, ctx, ngl, extra, cancel, mmproj=mmproj, image_tokens=image_tokens)
 
@@ -1576,14 +1679,16 @@ class App:
         self.room.model_changed()
         self.images.model_changed()
         self._estimate_context()
+        self._kv_enter()
 
     def unload_model(self):
         self.load_cancel.set()
         self.stop_event.set()
         if self.expert_job:  # ohne Modell geht die Auswertung nicht weiter („Fortsetzen“ nach dem Laden)
             self.expert_job.stop_event.set()
+        pending = None if self.busy else self._kv_pending()
         self.server.model = None
-        threading.Thread(target=self.server.stop, daemon=True).start()
+        threading.Thread(target=lambda: (self._kv_save(pending), self.server.stop()), daemon=True).start()
         self._set_status(tr('Kein Modell geladen'))
         self._set_load_buttons(tk.NORMAL)
         if self.view.is_placeholder:
@@ -1591,6 +1696,55 @@ class App:
         self.room.model_changed()
         self.images.model_changed()
         self._estimate_context()
+
+    # ---------------------------------------------------------------- Rechenstand langer Chats (rechenstand.py)
+
+    def _kv_toggled(self):
+        self.server.slot_dir = rechenstand.DIR if self.kv_var.get() else None
+
+    def _kv_pending(self) -> tuple[str, int] | None:
+        """(Chat, Tokens), dessen Stand auf dem festen Platz liegt und beim Verlassen gespeichert werden soll – nur im
+        Tk-Thread; danach gilt der Platz als frei."""
+        chat_id, self._kv_chat = self._kv_chat, None
+        used = self._ctx[0] or 0
+        if not (chat_id and self.kv_var.get() and used >= rechenstand.MIN_TOKENS):
+            return None
+        return chat_id, used
+
+    def _kv_save(self, pending: tuple[str, int] | None):
+        """Rechenstand speichern (blockiert – im Hintergrund oder beim Beenden)."""
+        if pending and self.server.is_running():
+            with self._kv_lock:
+                n = rechenstand.save(self.server, *pending)
+            if n:
+                self.events.put(("log", tr('Rechenstand des Chats gespeichert ({0} Tokens).\n', n)))
+
+    def _kv_leave(self):
+        """Chat wird verlassen (anderer oder neuer Chat): seinen Rechenstand im Hintergrund speichern."""
+        pending = None if self.busy else self._kv_pending()
+        if pending:
+            threading.Thread(target=self._kv_save, args=(pending,), daemon=True).start()
+
+    def _kv_enter(self):
+        """Chat geöffnet bzw. Modell geladen: gespeicherten Rechenstand im Hintergrund wiederherstellen – das nächste
+        Senden wartet darauf."""
+        chat_id = (self.chat_data or {}).get("id")
+        server = self.server
+        if not (chat_id and self.kv_var.get() and server.is_running() and server.model) or self._kv_chat == chat_id:
+            return
+
+        def work():
+            with self._kv_lock:
+                n = rechenstand.restore(server, chat_id)
+            if n:
+                self.ui(self._kv_restored, chat_id, n)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _kv_restored(self, chat_id: str, n: int):
+        if (self.chat_data or {}).get("id") == chat_id:
+            self._kv_chat = chat_id
+        self._append_log(tr('Rechenstand des Chats wiederhergestellt ({0} Tokens).\n', n))
 
     # ---------------------------------------------------------------- Kontextgröße
 
@@ -1884,9 +2038,11 @@ class App:
         return model, speech.LANGUAGES.get(self.speech_lang_var.get(), "de")
 
     def toggle_dictation(self):
-        """Mikrofon: Aufnahme starten – beim zweiten Klick beenden, abschreiben (im Thread) und ins Eingabefeld setzen."""
+        """Mikrofon: Aufnahme starten – beim zweiten Klick beenden, abschreiben (im Thread) und ins Eingabefeld setzen
+        (im Gesprächsmodus gleich abschicken). Liest Monhip gerade vor, hört es damit auf."""
         if self._transcribing:
             return
+        self.speaker.stop()  # nicht die eigene Stimme aufnehmen
         model, language = self._speech_settings()
         if self.recorder.active:
             try:
@@ -1942,11 +2098,16 @@ class App:
             return
         spoken = " ".join(text.split())
         if not spoken:
+            if self.talk_mode:  # im Gespräch kein Dialog – einfach noch einmal versuchen
+                self.view.note(tr('Nichts verstanden – zum Sprechen noch einmal aufs Mikrofon klicken.'))
+                return
             dialogs.showinfo(tr('Spracherkennung'), tr('Es wurde nichts erkannt. War das Mikrofon an (und nicht stumm)?'))
             return
         before = self.input.get("insert-1c", "insert")
         self.input.insert("insert", (" " if before and not before.isspace() else "") + spoken)
         self.input.focus_set()
+        if self.talk_mode and self.mode == "chat" and not self.busy:
+            self.send()
 
     def download_speech(self, confirm=True):
         model = self._speech_settings()[0]
@@ -1970,6 +2131,252 @@ class App:
 
         self._download_flow(self.speech_btn, self.speech_status, lambda: speech.plan(model), offer, speech.install,
                             finished, confirm)
+
+    # ---------------------------------------------------------------- Sprachausgabe (Piper) und Gesprächsmodus
+
+    def _tts_voice(self) -> str:
+        """Gewählte Stimme (Schlüssel in sprachausgabe.VOICES) – nur im Tk-Thread lesen."""
+        key = next((k for k, v in sprachausgabe.VOICES.items() if v["label"] == self.tts_voice_var.get()),
+                   self.cfg.get("tts_voice"))
+        return sprachausgabe.voice_key(key, self.cfg.get("ui_language", "de"))
+
+    def _tts_speed_key(self) -> str:
+        return next((k for k, v in sprachausgabe.speed_labels().items() if v == self.tts_speed_var.get()), "normal")
+
+    def read_aloud(self, text: str):
+        """„Vorlesen“ unter einer Antwort: liest sie vor – ein zweiter Klick, während sie noch läuft, beendet es."""
+        if self.speaker.active and self.speaker.tag == text:
+            self.speaker.stop()
+            return
+        voice = self._tts_voice()
+        if not sprachausgabe.ready(voice):
+            if dialogs.askyesno(tr('Sprachausgabe'), tr(
+                    'Zum Vorlesen wird die Sprachausgabe (Piper und eine Stimme) gebraucht. Sie läuft komplett auf '
+                    'deinem PC.\n\nJetzt herunterladen (einmalig, etwa 20–135 MB je nach Stimme)?')):
+                self.open_settings("speech")
+                self.download_tts(confirm=False)
+            return
+        self.speaker.say(text, voice, sprachausgabe.speed_value(self._tts_speed_key()), tag=text)
+
+    def _start_live_tts(self):
+        """Zu Beginn einer Antwort: im Gesprächsmodus oder mit „Antworten automatisch vorlesen“ schon mitlesen,
+        während sie entsteht."""
+        self._tts_live = False
+        if not (self.talk_mode or self.tts_auto_var.get()):
+            return
+        voice = self._tts_voice()
+        if sprachausgabe.ready(voice):
+            self.speaker.start(voice, sprachausgabe.speed_value(self._tts_speed_key()), tag="live")
+            self._tts_live = True
+
+    def _end_live_tts(self, text: str | None):
+        """Antwort fertig: den Rest vorlesen (bzw. nach „Stopp“ abbrechen); text = die Antwort für „Vorlesen“."""
+        if not self._tts_live:
+            return
+        self._tts_live = False
+        if self.stop_event.is_set():
+            self.speaker.stop()
+            return
+        self.speaker.finish()
+        if text and self.speaker.active:
+            self.speaker.tag = text  # „Vorlesen“ unter genau dieser Antwort hält es an
+
+    def _tts_error(self, text: str):
+        self._tts_live = False
+        dialogs.showerror(tr('Sprachausgabe'), text)
+
+    def toggle_talk(self):
+        """Gesprächsmodus an/aus. An: gleich zuhören; ein Klick aufs Mikrofon schickt das Gesagte ab, die Antwort wird
+        vorgelesen, und mit dem nächsten Klick aufs Mikrofon geht es weiter."""
+        if self.talk_mode:
+            self._end_talk()
+            return
+        model, voice = self._speech_settings()[0], self._tts_voice()
+        missing = [name for name, ok in ((tr('Spracherkennung (etwa 0,5–1,5 GB)'), speech.ready(model)),
+                                         (tr('Sprachausgabe (etwa 20–135 MB)'), sprachausgabe.ready(voice))) if not ok]
+        if missing:
+            if dialogs.askyesno(tr('Gesprächsmodus'), tr(
+                    'Für den Gesprächsmodus fehlt noch: {0}. Beides läuft komplett auf deinem PC.\n\nJetzt '
+                    'herunterladen?', ", ".join(missing))):
+                self.open_settings("speech")
+                if not speech.ready(model):
+                    self.download_speech(confirm=False)
+                if not sprachausgabe.ready(voice):
+                    self.download_tts(confirm=False)
+            return
+        self.talk_mode = True
+        self.talk_btn.configure(**icons.only("headset", "accent", size=18))
+        self.view.note(tr('Gesprächsmodus: Sprich einfach – ein Klick aufs Mikrofon schickt ab, die Antwort wird '
+                          'vorgelesen. Der Kopfhörer-Knopf beendet ihn.'))
+        if not (self.recorder.active or self._transcribing or self.busy):
+            self.toggle_dictation()
+
+    def _end_talk(self):
+        if not self.talk_mode:
+            return
+        self.talk_mode = False
+        self.talk_btn.configure(**icons.only("headset", size=18))
+        if self.recorder.active:
+            self.recorder.cancel()
+            self.mic_btn.configure(width=2, **icons.only("mic", size=18))
+        self.speaker.stop()
+
+    def download_tts(self, confirm=True):
+        voice = self._tts_voice()
+
+        def offer(plan):
+            if not plan["program"] and not plan["weights"]:
+                self.tts_status.set(tr('Alles aktuell: {0}', sprachausgabe.describe(voice)))
+                return None
+            parts = []
+            if plan["program"]:
+                parts.append(f"Piper {plan['tag']}: {plan['program'][0][2] / 1024 ** 2:.0f} MB")
+            if plan["weights"]:
+                parts.append(tr('Stimme {0}: {1:.0f} MB', sprachausgabe.VOICES[voice]["label"],
+                                sum(w[2] for w in plan["weights"]) / 1024 ** 2))
+            return (tr('Sprachausgabe herunterladen'), "\n".join(parts)
+                    + tr('\n\nZusammen {0:.0f} MB – jetzt herunterladen?', plan['size'] / 1024 ** 2), tr('Sprachausgabe'))
+
+        def finished(plan, _):
+            self.tts_status.set(tr('Installiert: {0} – „Vorlesen“ steht unter jeder Antwort.',
+                                   sprachausgabe.describe(voice)))
+
+        self._download_flow(self.tts_btn, self.tts_status, lambda: sprachausgabe.plan(voice), offer,
+                            sprachausgabe.install, finished, confirm)
+
+    # ---------------------------------------------------------------- Hörbuch (hoerbuch.py, hoerbuchtext.py)
+
+    def _audiobook_voice(self) -> str:
+        key = next((k for k, v in hoerbuch.VOICES.items() if v["label"] == self.audiobook_voice_var.get()),
+                   self.cfg.get("audiobook_voice"))
+        return hoerbuch.voice_key(key)
+
+    def download_audiobook(self, confirm=True):
+        voice = self._audiobook_voice()
+
+        def offer(plan):
+            if not (plan["program"] or plan["nvidia"] or plan["ffmpeg"] or plan["weights"]):
+                self.audiobook_status.set(tr('Alles aktuell: {0}', hoerbuch.describe(voice)))
+                return None
+            mb = lambda n: n / 1024 ** 2  # noqa: E731
+            parts = []
+            if plan["program"]:
+                parts.append(f"audio.cpp {plan['tag']} ({plan['kind']}): {mb(plan['program'][0][2]):.0f} MB")
+            if plan["nvidia"]:
+                parts.append(tr('NVIDIA-Bibliotheken (cuFFT …): {0:.0f} MB', mb(sum(x[2] for x in plan["nvidia"]))))
+            if plan["ffmpeg"]:
+                parts.append(tr('ffmpeg (MP3): {0:.0f} MB', mb(plan["ffmpeg"][2])))
+            for name, _url, size, _dest, _sha in plan["weights"]:
+                parts.append(tr('Sprachmodell {0}: {1:.1f} GB', name, size / 1e9))
+            return (tr('Hörbuch-Stimme herunterladen'), (tr('Grafikkarte: {0}\n', plan['gpu']) if plan['gpu'] else "")
+                    + "\n".join(parts) + tr('\n\nZusammen {0:.1f} GB – jetzt herunterladen?', plan['size'] / 1e9)
+                    + "\n\n" + hoerbuch.LICENSE, tr('Hörbuch-Stimme'))
+
+        def finished(plan, _):
+            self.audiobook_status.set(tr('Installiert: {0} – im Chat z. B. „Mach aus der PDF ein Hörbuch“.',
+                                         hoerbuch.describe(voice)))
+
+        self._download_flow(self.audiobook_btn, self.audiobook_status, lambda: hoerbuch.plan(voice), offer,
+                            hoerbuch.install, finished, confirm)
+
+    def _audiobook_job(self, window, url: dict, voice: str):
+        """Werkzeug hoerbuch_erstellen (läuft im Thread der Antwort): PDF aufbereiten, nachfragen, bei zu wenig
+        Grafikspeicher den Verlauf zusammenfassen und das Sprachmodell entladen, Hörbuch erzeugen, das Sprachmodell
+        mit denselben Einstellungen wieder laden (auch nach Stopp oder Fehler) – danach antwortet es weiter."""
+        put = lambda k, t: self.events.put((k, t))  # noqa: E731
+
+        def run(src: Path, kapitel: str, seiten: str, target: Path, vorschau: bool, ok) -> str:
+            try:
+                pages = pdftext.extract_lines(src.read_bytes())
+                first = 1
+                if seiten.strip():
+                    pick = pdfwerk.auswahl(seiten, len(pages))
+                    pages, first = [pages[i] for i in pick], (pick[0] + 1 if pick else 1)
+                language = hoerbuchtext.detect_language(pages)
+                book = hoerbuchtext.prepare(pages, language, first_page=first)
+                chosen = hoerbuchtext.select(book["chapters"], kapitel) if book["chapters"] else []
+            except (pdftext.PDFError, ValueError) as e:
+                raise ToolError(str(e)) from None
+            if book["chars"] < 200 or not chosen:
+                raise ToolError("In der PDF steht kaum lesbarer Text – vermutlich ist sie eingescannt. Daraus lässt "
+                                "sich so kein Hörbuch machen.")
+            book["title"] = book["title"] or src.stem
+            if vorschau:
+                return hoerbuchtext.overview(book, chosen, language)
+            if not hoerbuch.ready(voice):
+                raise ToolError("Die Hörbuch-Stimme ist auf diesem Rechner noch nicht eingerichtet. Bitte den Nutzer, "
+                                "sie unter Einstellungen → Sprache → Hörbuch mit „Herunterladen“ einzurichten "
+                                "(einmalig etwa 3–4 GB) – danach geht es.")
+            chars = sum(len(p) for i in chosen for p in book["chapters"][i]["paragraphs"])
+            fast = hoerbuch.backend_of(hoerbuch.find_cli()) == "cuda"
+            work = hoerbuchtext.duration_text(chars * (0.25 if fast else 2.0), language)
+            llm = self.server
+            swap = bool(llm.is_running() and llm.model) and (
+                (free := sdcpp.free_vram_mib()) is None or free < hoerbuch.NEED_MIB)
+            question = tr('„{0}“: {1} von {2} Kapiteln, {3} Hördauer.\nDas Erzeugen dauert {4}.\nZiel: {5}',
+                          book["title"], len(chosen), len(book["chapters"]),
+                          hoerbuchtext.duration_text(chars, language), work, target)
+            if swap:
+                question += "\n\n" + tr('Das Sprachmodell wird dafür entladen, der Chat zusammengefasst – danach wird '
+                                         'es wieder geladen und macht weiter.')
+            if not ok(tr('Hörbuch erstellen?'), question):
+                return "Vom Nutzer abgelehnt."
+            started, last, compressed, reload_error = time.monotonic(), llm.last if swap else None, False, None
+            self.images.stop_server()  # ein geladenes Bildmodell gibt seinen Grafikspeicher frei
+            if swap:
+                put("progress", tr('Fasse den bisherigen Chat zusammen …'))
+                compressed = bool(window.compress_now())
+                if self.stop_event.is_set():
+                    return "Abgebrochen."
+                put("progress", tr('Entlade das Sprachmodell für das Hörbuch …'))
+                self.ui(self._set_status, tr('Sprachmodell entladen – nach dem Hörbuch wird es wieder geladen …'))
+                llm.stop()
+            names = {"total": len(chosen)}
+
+            def progress(done, total, nr, title):
+                pct = int(done * 100 / max(1, total))
+                put("progress", tr('Hörbuch: {0} % · Kapitel {1} – {2}', pct, nr, title))
+
+            result, failure = None, None
+            try:
+                result = hoerbuch.render(book, chosen, target, voice, language, self.stop_event, progress,
+                                         lambda t: self.events.put(("log", t)))
+            except hoerbuch.Cancelled:
+                failure = "cancel"
+            except (RuntimeError, OSError) as e:
+                failure = str(e)
+            finally:
+                if swap:
+                    put("progress", tr('Lade das Sprachmodell wieder …'))
+                    self.ui(self._set_status, tr('Lade {0} wieder …', model_name(last["model"])))
+                    try:
+                        llm.restart(threading.Event(), last)
+                        url["base"] = window.base_url = llm.base_url
+                        self.ui(self._loaded, last["model"], threading.Event(), None)
+                    except Exception as e:  # die Antwort scheitert dann beim nächsten Schritt mit dieser Meldung
+                        reload_error = str(e)
+                        self.ui(self._set_status, tr('Laden fehlgeschlagen – Details unter Einstellungen → Server-Log'))
+            note = ""
+            if swap:
+                note = (" Dein Sprachmodell war dafür entladen"
+                        + (" – der Verlauf davor ist jetzt zusammengefasst" if compressed else "") + ".")
+            if reload_error:
+                note += f" Das Sprachmodell ließ sich danach nicht wieder laden: {reload_error}"
+            done_files = sorted(target.glob("*.mp3")) if target.is_dir() else []
+            if failure == "cancel":
+                return (f"Abgebrochen. {len(done_files)} fertige Kapitel liegen in {target}; ein neuer Aufruf macht "
+                        "mit den fehlenden weiter." + note)
+            if failure:
+                raise ToolError(f"Hörbuch fehlgeschlagen: {failure}.{note}")
+            self.ui(self.notify_done, tr('Hörbuch fertig'), book["title"], started)
+            minutes = round(result["seconds"] / 60)
+            files = ", ".join(f.name for f in result["files"][:8]) + (" …" if len(result["files"]) > 8 else "")
+            skipped = (f" {result['skipped']} Kapitel waren schon fertig und wurden übersprungen."
+                       if result["skipped"] else "")
+            return (f"Hörbuch „{book['title']}“ fertig: {len(result['files'])} von {names['total']} Kapiteln als MP3 "
+                    f"in {target} ({minutes // 60} h {minutes % 60} min Hördauer). Dateien: {files}.{skipped}{note}")
+
+        return run
 
     # ================================================================ Anhänge (Dokumente)
 
@@ -2303,12 +2710,12 @@ class App:
             return None
         return Agent(self._confirm_from_worker, files=files, commands=commands, workspace=self.ws_var.get(),
                      folders=self.extra_folders, confirm_actions=self.confirm_var.get(),
-                     web_access=web_access, brave_key=self.brave_var.get(), memory=mem, reminders=rem,
+                     web_access=web_access, memory=mem, reminders=rem,
                      vision=self.server.vision, screenshot=self._screenshot_from_worker if shots else None,
                      expert=library, expert_start=self._expert_from_worker, git=self.git_var.get(),
                      groups={g: v.get() for g, v in self.group_vars.items()}, control=control,
                      browser=self.browser_tools if web_access and browser.available() else None,
-                     browser_only=self.web_browser_var.get())
+                     browser_only=self.web_browser_var.get(), audiobook=files)
 
     def _system_prompt(self, agent: Agent | None) -> str:
         system = self.sys_text.get("1.0", tk.END).strip()
@@ -2332,6 +2739,7 @@ class App:
         mitten in der Antwort, wenn der Server „Kontext voll“ meldet."""
         self.turn = {"step": 0, "think": None, "thinks": [], "tool": None, "tps": None, "t0": time.monotonic(),
                      "agent": agent}  # agent.checkpoint: alter Stand der Dateien („Rückgängig“ unter der Antwort)
+        self._start_live_tts()
         asked = next((m.get("_text", m.get("content")) for m in reversed(self.history) if m.get("role") == "user"), "")
         self.sources.question(asked if isinstance(asked, str) else "")
         self.view.t.mark_set("quellen:start", "end-1c")  # ab hier: Quellenangaben dieser Antwort (_link_citations)
@@ -2352,7 +2760,15 @@ class App:
         window = context.Window(base_url, system, history, api_msgs, tools, n_ctx, params.get("max_tokens") or 0,
                                 image_tokens, self.stop_event, put, auto, budget)
 
+        if self.kv_var.get():  # der Chat bleibt auf einem festen Platz – dessen Stand lässt sich speichern
+            params = {**params, "id_slot": rechenstand.SLOT}
+        url = {"base": base_url}  # Sprachmodell nach einem Hörbuch neu geladen → anderer Port
+        if agent and "hoerbuch_erstellen" in agent._allowed:
+            agent.audiobook_fn = self._audiobook_job(window, url, self._audiobook_voice())
+
         def work():
+            with self._kv_lock:  # ein Wiederherstellen des Rechenstands abwarten
+                pass
             try:
                 messages = window.begin()  # fasst vor dem Senden zusammen, wenn der Verlauf zu voll ist
             except Exception as e:  # z. B. Server beim Zählen nicht erreichbar – dann eben ohne Zusammenfassen
@@ -2365,7 +2781,7 @@ class App:
             try:
                 # meldet der Server mitten in der Antwort „Kontext voll“, komprimiert window und der Schritt
                 # wird wiederholt – die KI macht von selbst weiter
-                run_conversation(base_url, messages, params, agent, self.stop_event, put, budget=budget,
+                run_conversation(lambda: url["base"], messages, params, agent, self.stop_event, put, budget=budget,
                                  prepare=window.prepare, on_overflow=window.overflow)
             except Exception as e:
                 put("error", error_text(e))
@@ -2928,7 +3344,7 @@ class App:
     # ================================================================ Event-Schleife
 
     STREAM_EVENTS = {"assistant_start", "reasoning", "content", "tool_call", "tool_result", "stats", "info",
-                     "error", "confirm", "done", "usage", "compress", "compressed", "context_full"}
+                     "error", "confirm", "done", "usage", "compress", "compressed", "context_full", "progress"}
 
     def _poll_events(self):
         """Ereignisse aus den Threads abholen. Die nächste Runde wird zuerst geplant, damit es auch weitergeht,
@@ -3020,6 +3436,8 @@ class App:
     def _on_content(self, data: str):
         self._close_think()
         self.view.md_append(data)
+        if self._tts_live:
+            self.speaker.feed(data)
 
     def _close_think(self):
         n = self.turn.get("think")
@@ -3032,6 +3450,8 @@ class App:
         view = self.view
         if kind == "assistant_start":
             self._close_think()
+            if self._tts_live:  # neuer Antwortteil (nach Werkzeugen): der vorige ist zu Ende
+                self.speaker.flush()
             view.md_finish()
             self.turn["step"] = self.turn.get("step", 0) + 1
             view.show_pending()
@@ -3058,6 +3478,9 @@ class App:
         elif kind == "compress":
             view.hide_pending()
             view.show_pending(tr('Fasse ältere Unterhaltung zusammen …'))
+        elif kind == "progress":  # langes Werkzeug (Hörbuch): Stand unter dem Werkzeug-Block
+            view.hide_pending()
+            view.show_pending(data)
         elif kind == "compressed":  # Zusammenfassung an die erste vollständige Nachricht hängen (wird gespeichert)
             index, summary, count = data
             if 0 <= index < len(self.history):
@@ -3116,9 +3539,12 @@ class App:
         if last and cp and cp.nr and cp.entries:  # Dateien geändert → „Rückgängig“ unter der Antwort
             last["_checkpoint"] = cp.nr
         if answered:
-            self.view.footer(last["content"], self.turn.get("tps"), undo=self._undo_fn(last))
+            self.view.footer(last["content"], self.turn.get("tps"), undo=self._undo_fn(last), speak=self.read_aloud)
         elif last and last.get("_checkpoint"):
             self.view.undo_link(self._undo_fn(last))
+        self._end_live_tts(last["content"] if answered else None)
+        if self.chat_data and not self.turn.get("failed"):
+            self._kv_chat = self.chat_data["id"]  # sein Stand liegt jetzt auf Platz rechenstand.SLOT
         self._set_busy(False)
         self._save_chat()
         if not self.stop_event.is_set():  # selbst gestoppt: dann ist man ohnehin da
@@ -3311,6 +3737,7 @@ class App:
             "think_titles": self.think_title_var.get(),
             "notify_done": self.notify_var.get(),
             "auto_compress": self.compress_var.get(),
+            "kv_save": self.kv_var.get(),
             "agent_enabled": self.agent_var.get(),
             "agent_commands": self.cmd_var.get(),
             "git_enabled": self.git_var.get(),
@@ -3320,13 +3747,16 @@ class App:
             "agent_confirm": self.confirm_var.get(),
             "web_enabled": self.web_var.get(),
             "web_via_browser": self.web_browser_var.get(),
-            "brave_key": self.brave_var.get().strip(),
             "memory_enabled": self.memory_var.get(),
             "reminders_enabled": self.reminder_var.get(),
             "screenshots_enabled": self.screen_var.get(),
             "control_enabled": self.control_var.get(),
             "speech_model": self._speech_settings()[0],
             "speech_language": self._speech_settings()[1],
+            "tts_voice": self._tts_voice(),
+            "tts_speed": self._tts_speed_key(),
+            "tts_auto": self.tts_auto_var.get(),
+            "audiobook_voice": self._audiobook_voice(),
             "theme": self.theme.key,
             **(self.images.settings() if hasattr(self, "images") else {}),
         })
@@ -3344,6 +3774,9 @@ class App:
         for cancel in self._downloads.values():
             cancel.set()
         self.recorder.cancel()
+        self.speaker.shutdown()
+        if not self.busy:  # Rechenstand des offenen Chats sichern – das Fenster ist schon weg
+            self._kv_save(self._kv_pending())
         self.room.ai_stop.set()
         self.room.shutdown()  # Raum verlassen bzw. eigenen Raum schließen (Verlauf bleibt gespeichert)
         prozesse.stop_all()   # Hintergrund-Prozesse des Agenten (Webserver usw.)

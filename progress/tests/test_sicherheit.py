@@ -26,7 +26,7 @@ import downloads  # noqa: E402
 import galerie  # noqa: E402
 import images  # noqa: E402
 import plattform  # noqa: E402
-import room  # noqa: E402
+import teamwork_netz as room  # noqa: E402
 import web  # noqa: E402
 
 
@@ -110,7 +110,7 @@ class GuestPaths(unittest.TestCase):
             self.assertFalse(room.valid_file_id(bad), bad)
 
     def test_cache_paths_refuse_foreign_ids(self):
-        import roomui
+        import teamwork as roomui
         with self.assertRaises(ValueError):
             roomui.RoomMode._cache_path({"id": "../../../AppData/x", "name": "a.bat"})
         with self.assertRaises(ValueError):

@@ -1,10 +1,12 @@
-"""Bereich „Bilder“ – der dritte Modus neben Chat und Teamwork, mit drei Unterbereichen in der Seitenleiste:
+"""Bereich „Bilder“ – der dritte Modus neben Chat und Teamwork, mit vier Unterbereichen in der Seitenleiste:
 „Bild erstellen“ (aus einer Beschreibung), „Bild bearbeiten“ (ein eigenes Bild auswählen, hineinziehen oder mit
-Strg+V einfügen und beschreiben, was sich daran ändern soll) und „3D-Modell“ (aus einem Bild ein 3D-Modell mit Farben,
-trellis.py; ansehen im Browser und als STL für den 3D-Druck, modell3d.py). Darunter die Galerie der bisherigen Bilder
+Strg+V einfügen und beschreiben, was sich daran ändern soll), „Bilder hochskalieren“ (Real-ESRGAN, 2× oder 4×,
+hochskalieren.py) und „3D-Modell“ (aus einem Bild ein 3D-Modell mit Farben, trellis.py; ansehen im Browser und als
+STL für den 3D-Druck, modell3d.py). Darunter die Galerie der bisherigen Bilder
 und 3D-Modelle (galerie.py).
 
-Oben rechts wie im Chat: Bildmodell wählen (sdcpp.MODELS), „Modell laden“ und Entladen. Ein Bildmodell besteht aus
+Oben rechts wie im Chat: Bildmodell wählen (sdcpp.MODELS) und „Modell laden“ (einen eigenen Entladen-Knopf gibt es
+bewusst nicht: Abbrechen geht über „Generieren“, und ein Sprachmodell zu laden gibt den Speicher frei). Ein Bildmodell besteht aus
 mehreren Dateien (Bildmodell, Textverständnis, VAE …); fehlen welche oder die Bild-Engine, fragt Monhip und lädt sie
 vor dem Laden herunter – Fortschritt unten auf der Seite.
 
@@ -39,6 +41,7 @@ import backend
 import dialogs
 import filedrop
 import galerie
+import hochskalieren
 import icons
 import images
 import modell3d
@@ -177,8 +180,9 @@ class ImageMode:
                                         lambda: app.cfg.get("image_qwen_compatibility", "auto"))
         self.busy = False
         self.stop_event = threading.Event()
-        self.mode = "create"                       # Unterbereich: "create" (Bild erstellen), "edit" (bearbeiten), "3d"
-        self._drafts = {"create": "", "edit": "", "3d": ""}  # Beschreibung je Unterbereich (beim Wechsel aufgehoben)
+        # Unterbereich: "create" (Bild erstellen), "edit" (bearbeiten), "upscale" (hochskalieren), "3d"
+        self.mode = "create"
+        self._drafts = {"create": "", "edit": "", "upscale": "", "3d": ""}  # Beschreibung je Unterbereich
         self.source: dict | None = None            # Vorlage (Bearbeiten, 3D-Modell): path, png, thumb, w, h, name
         self._source_img: tk.PhotoImage | None = None
         self.shown: dict | None = None             # Bild in der großen Vorschau (Galerie-Eintrag)
@@ -197,11 +201,11 @@ class ImageMode:
         self._listed = False                       # Galerie erst beim ersten Zeigen füllen (schneller Start)
         self._ctx_item: dict | None = None
         self._t0 = 0.0
-        self._phase = ""                           # "download", "load" (Bildmodell laden), "run" bzw. "run3d" (rechnen)
+        self._phase = ""                           # "download", "load" (Bildmodell laden), "run", "run3d", "upscale"
         self._stage: dict = {}                     # Stand beim 3D-Modell (trellis.parse_progress)
         self._chain = False                        # 3D-Modell aus einer Beschreibung: erst Bild, dann 3D
         self._prefix = ""                          # … davor in der Statuszeile: „Teil 1 von 2 (Bild)“ usw.
-        self._dl_kind = "image"                    # was gerade heruntergeladen wird: "image" bzw. "3d"
+        self._dl_kind = "image"                    # was gerade heruntergeladen wird: "image", "upscale" bzw. "3d"
         self._steps = (0, 1, 1)                    # (erledigte Schritte, alle Schritte, Anzahl Bilder)
         self._tick_after = None
         self._checking = False                     # sucht gerade, was fürs Bildmodell fehlt
@@ -224,6 +228,9 @@ class ImageMode:
         self.edit_btn = ttk.Button(top, text=tr('Bild bearbeiten'), style="Sidebar.TButton",
                                    command=lambda: self.set_mode("edit"), **icons.opts("edit", lower=1))
         self.edit_btn.pack(fill=tk.X)
+        self.upscale_btn = ttk.Button(top, text=tr('Bilder hochskalieren'), style="Sidebar.TButton",
+                                      command=lambda: self.set_mode("upscale"), **icons.opts("zoom", lower=1))
+        self.upscale_btn.pack(fill=tk.X)
         self.model3d_btn = ttk.Button(top, text=tr('3D-Modell'), style="Sidebar.TButton",
                                       command=lambda: self.set_mode("3d"), **icons.opts("refresh", lower=1))
         self.model3d_btn.pack(fill=tk.X)
@@ -248,7 +255,7 @@ class ImageMode:
 
         menu = PopupMenu(self.app.root, self.s)
         for label, cmd in ((tr('Öffnen'), self.open_file), (tr('Bearbeiten'), self.edit_item),
-                           (tr('In 3D umwandeln'), self.to_3d),
+                           (tr('In 3D umwandeln'), self.to_3d), (tr('Hochskalieren'), self.to_upscale),
                            (tr('Im Ordner zeigen'), self.show_in_folder), (tr('Kopieren'), self.copy),
                            (tr('Speichern unter…'), self.save_as), (tr('Beschreibung übernehmen'), self.reuse_prompt),
                            (tr('Löschen'), self.delete)):
@@ -284,8 +291,6 @@ class ImageMode:
         self.load_btn = ttk.Button(top, text=tr('Modell laden'), style="Accent.TButton", command=self.load,
                                    **icons.opts("play", "accent_fg"))
         self.load_btn.grid(row=0, column=3, padx=(6, 0))
-        self.unload_btn = ttk.Button(top, width=3, command=self.unload, **icons.only("stop"))
-        self.unload_btn.grid(row=0, column=4, padx=(4, 0))
         ttk.Button(top, text=tr('Einrichten'), command=lambda: self.app.open_settings("images"),
                    **icons.opts("settings")).grid(row=0, column=5, padx=(10, 0))
         self.engine_var = tk.StringVar()
@@ -321,6 +326,13 @@ class ImageMode:
         for value, label in (("image", tr('Aus einem Bild')), ("text", tr('Aus einer Beschreibung'))):
             ttk.Radiobutton(self.from_frame, text=label, value=value, variable=self.from_var,
                             command=self._on_from).pack(side=tk.LEFT, padx=(0, 12))
+        self.factor_var = tk.StringVar(value=f"{cfg.get('upscale_factor', 4)}×"
+                                       if cfg.get("upscale_factor") in hochskalieren.FACTORS else "4×")
+        self.factor_label = ttk.Label(opts, text=tr('Vergrößern'))
+        self.factor_combo = ttk.Combobox(opts, textvariable=self.factor_var, state="readonly", width=4,
+                                         values=[f"{f}×" for f in hochskalieren.FACTORS])
+        self.factor_combo.bind("<<ComboboxSelected>>", lambda e: self._update_source_row())
+        theme.register_combo(self.factor_combo)
         self.res_label = ttk.Label(opts, text=tr('Feinheit'))
         self.res_combo = ttk.Combobox(opts, textvariable=self.res_var, values=list(resolution_labels().values()),
                                       state="readonly", width=14)
@@ -395,8 +407,7 @@ class ImageMode:
         self.canvas.bind("<Configure>", lambda e: self._redraw(schedule_hq=True))
         self.canvas.bind("<Double-Button-1>", lambda e: self.open_file(self.shown))
         self.canvas.bind("<<Paste>>", self._on_paste)
-        self.canvas.bind("<Button-1>", lambda e: self.canvas.focus_set()
-                         if self.mode == "3d" and self.from_var.get() == "image" else None)
+        self.canvas.bind("<Button-1>", lambda e: self.canvas.focus_set() if self._no_prompt() else None)
         self.setup_btn = ttk.Button(self.canvas, text=tr('Jetzt einrichten'), style="Accent.TButton",
                                     command=self.load, **icons.opts("download", "accent_fg"))
         self.choose_btn = ttk.Button(self.canvas, text=tr('Bild auswählen…'), style="Accent.TButton",
@@ -419,11 +430,16 @@ class ImageMode:
         self.page.place_forget()
 
     def focus(self):
-        # beim 3D-Modell aus einem Bild gibt es keine Beschreibung: die Vorschau nimmt Strg+V für ein Bild entgegen
-        (self.canvas if self.mode == "3d" and self.from_var.get() == "image" else self.prompt).focus_set()
+        # ohne Beschreibung (3D-Modell aus einem Bild, Hochskalieren): die Vorschau nimmt Strg+V für ein Bild entgegen
+        (self.canvas if self._no_prompt() else self.prompt).focus_set()
+
+    def _no_prompt(self) -> bool:
+        """Unterbereich ohne Beschreibung: Hochskalieren und 3D-Modell aus einem Bild."""
+        return self.mode == "upscale" or (self.mode == "3d" and self.from_var.get() == "image")
 
     def set_mode(self, mode: str, fresh: bool = False):
-        """Unterbereich wechseln: „create“ (Bild erstellen), „edit“ (Bild bearbeiten) bzw. „3d“ (3D-Modell). fresh: ein
+        """Unterbereich wechseln: „create“ (Bild erstellen), „edit“ (Bild bearbeiten), „upscale“ (Bilder hochskalieren)
+        bzw. „3d“ (3D-Modell). fresh: ein
         erneuter Klick auf „Bild erstellen“ beginnt ein neues Bild (leere Vorschau und Beschreibung)."""
         if mode != self.mode and self.busy:
             self._set_status(tr('Bitte warten, bis das Bild fertig ist – oder es mit „Stopp“ abbrechen.'))
@@ -438,7 +454,7 @@ class ImageMode:
         self._apply_mode()
         if changed:
             self.tree.selection_remove(self.tree.selection())
-            if (mode == "edit" or (mode == "3d" and self.from_var.get() == "image")) and self.source:
+            if (mode in ("edit", "upscale") or (mode == "3d" and self.from_var.get() == "image")) and self.source:
                 self.show_source()
             else:
                 self.show_image(None)
@@ -451,12 +467,14 @@ class ImageMode:
         """Seitenleiste, Titel und Bedienelemente passend zum Unterbereich. Beim Bearbeiten richtet sich das Format
         nach der Vorlage; beim 3D-Modell gibt es keine Beschreibung, dafür die Feinheit, und oben die Variante von
         TRELLIS.2 statt des Bildmodells (geladen wird es erst fürs Erzeugen – kein „Modell laden“)."""
-        edit, mode3d = self.mode == "edit", self.mode == "3d"
+        edit, mode3d, upscale = self.mode == "edit", self.mode == "3d", self.mode == "upscale"
         from_text = mode3d and self.from_var.get() == "text"  # 3D-Modell aus einer Beschreibung
-        for btn, key in ((self.create_btn, "create"), (self.edit_btn, "edit"), (self.model3d_btn, "3d")):
+        for btn, key in ((self.create_btn, "create"), (self.edit_btn, "edit"), (self.upscale_btn, "upscale"),
+                         (self.model3d_btn, "3d")):
             btn.state(["selected" if key == self.mode else "!selected"])
-        self.title_var.set({"edit": tr('Bild bearbeiten'), "3d": tr('3D-Modell')}.get(self.mode, tr('Bild erstellen')))
-        if mode3d and not from_text:
+        self.title_var.set({"edit": tr('Bild bearbeiten'), "upscale": tr('Bilder hochskalieren'),
+                            "3d": tr('3D-Modell')}.get(self.mode, tr('Bild erstellen')))
+        if self._no_prompt():
             self._inp.pack_forget()
             self.improve_btn.pack_forget()
         else:
@@ -465,9 +483,12 @@ class ImageMode:
             if not self.improve_btn.winfo_manager():
                 self.improve_btn.pack(side=tk.RIGHT, padx=(0, 8))
         for w in (self.format_label, self.format_combo, self.count_label, self.count_combo, self.from_frame,
-                  self.res_label, self.res_combo):
+                  self.res_label, self.res_combo, self.factor_label, self.factor_combo):
             w.pack_forget()
-        if mode3d:
+        if upscale:
+            self.factor_label.pack(side=tk.LEFT)
+            self.factor_combo.pack(side=tk.LEFT, padx=(6, 14))
+        elif mode3d:
             self.from_frame.pack(side=tk.LEFT, padx=(0, 6))
             self.res_label.pack(side=tk.LEFT)
             self.res_combo.pack(side=tk.LEFT, padx=(6, 14))
@@ -478,15 +499,16 @@ class ImageMode:
             self.count_label.pack(side=tk.LEFT)
             self.count_combo.pack(side=tk.LEFT, padx=(6, 14))
         self.source_row.pack_forget()
-        if edit or (mode3d and not from_text):
-            self.source_row.pack(side=tk.BOTTOM, fill=tk.X, after=self._opts if mode3d else self._inp)
-        if mode3d:
+        if edit or upscale or (mode3d and not from_text):
+            self.source_row.pack(side=tk.BOTTOM, fill=tk.X, after=self._inp if edit else self._opts)
+        if upscale:
             self.load_btn.grid_remove()
-            self.unload_btn.grid_remove()
+            self.pick.configure(values=[u["name"] for u in hochskalieren.UPSCALERS.values()])
+        elif mode3d:
+            self.load_btn.grid_remove()
             self.pick.configure(values=[v["name"] for v in trellis.VARIANTS.values()])
         else:
             self.load_btn.grid()
-            self.unload_btn.grid()
             self.pick.configure(values=[m["name"] for m in sdcpp.MODELS.values()])
         self.gen_btn.configure(text=self._gen_text())
         self.update_engine()
@@ -505,7 +527,17 @@ class ImageMode:
     def _gen_text(self) -> str:
         if self.busy:
             return tr('Stopp')
-        return tr('3D-Modell erzeugen') if self.mode == "3d" else tr('Generieren')
+        return {"3d": tr('3D-Modell erzeugen'), "upscale": tr('Hochskalieren')}.get(self.mode, tr('Generieren'))
+
+    def upscaler_key(self) -> str:
+        return hochskalieren.key(self.app.cfg.get("upscale_model"))
+
+    def _factor(self) -> int:
+        try:
+            factor = int(self.factor_var.get().rstrip("×"))
+        except ValueError:
+            factor = 4
+        return factor if factor in hochskalieren.FACTORS else 4
 
     def variant_key(self) -> str:
         return trellis.variant_key(self.app.cfg.get("model3d_variant"))
@@ -705,7 +737,9 @@ class ImageMode:
             self.info_var.set("  ·  ".join(p for p in parts if p))
         elif item:
             parts = []
-            if item.get("source"):
+            if item.get("upscaled"):
+                parts.append(tr('hochskaliert {0}×', item["upscaled"]))
+            elif item.get("source"):
                 parts.append(tr('bearbeitet'))
             if item.get("width"):
                 parts.append(f"{item['width']} × {item['height']}")
@@ -749,7 +783,7 @@ class ImageMode:
         if self.mode == "3d":
             text = None
             button = self.choose_btn if self.from_var.get() != "text" else None
-        elif self.mode == "edit":
+        elif self.mode in ("edit", "upscale"):
             text, button = None, self.choose_btn
         elif sdcpp.ready(key):
             text = None
@@ -815,8 +849,12 @@ class ImageMode:
     # ================================================================ Vorlage zum Bearbeiten
 
     def choose_source(self):
+        upscale = self.mode == "upscale"  # hochskaliert werden meist Bilder aus der Galerie: dort beginnen
+        if upscale:
+            self.gallery.dir.mkdir(parents=True, exist_ok=True)
         path = filedialog.askopenfilename(
-            title=tr('Bild zum Bearbeiten auswählen'), parent=self.app.root,
+            title=tr('Bild zum Hochskalieren auswählen') if upscale else tr('Bild zum Bearbeiten auswählen'),
+            parent=self.app.root, **({"initialdir": str(self.gallery.dir)} if upscale else {}),
             filetypes=[(tr('Bilder'), "*.png *.jpg *.jpeg *.bmp *.gif"), (tr('Alle Dateien'), "*.*")])
         if path:
             self.set_source(Path(path))
@@ -853,10 +891,15 @@ class ImageMode:
         if item:
             self.set_source(self.gallery.path(item), name=item.get("prompt"), mode="3d")
 
+    def to_upscale(self, item: dict | None):
+        """Ein Bild der Galerie hochskalieren: wird zur Vorlage im Unterbereich „Bilder hochskalieren“."""
+        if item:
+            self.set_source(self.gallery.path(item), name=item.get("prompt"), mode="upscale")
+
     def set_source(self, path: Path, name: str | None = None, mode: str | None = None):
         """Vorlage übernehmen: als PNG (höchstens SOURCE_MAX Pixel lang) und kleines Vorschaubild in den Temp-Ordner,
-        dann in den Unterbereich mode wechseln – ohne Angabe bleibt „3D-Modell“ und „Bild erstellen“ wird zu „Bild
-        bearbeiten“ – und sie groß zeigen."""
+        dann in den Unterbereich mode wechseln – ohne Angabe bleiben „3D-Modell“ und „Bilder hochskalieren“, und „Bild
+        erstellen“ wird zu „Bild bearbeiten“ – und sie groß zeigen."""
         if self.busy:
             self._set_status(tr('Bitte warten, bis das Bild fertig ist – oder es mit „Stopp“ abbrechen.'))
             return
@@ -888,7 +931,7 @@ class ImageMode:
             except tk.TclError:
                 self._source_img = None
             self._set_status("")
-            target = mode or ("3d" if self.mode == "3d" else "edit")
+            target = mode or (self.mode if self.mode in ("3d", "upscale") else "edit")
             if target == "3d" and self.from_var.get() != "image":  # ein Bild gewählt: 3D-Modell aus diesem Bild
                 self.from_var.set("image")
                 self.app.cfg["model3d_from"] = "image"
@@ -917,6 +960,10 @@ class ImageMode:
             if self.mode == "3d":
                 self.source_var.set(tr('{0}  ·  wird freigestellt und als 3D-Modell nachgebildet  ·  zum Vergrößern '
                                        'anklicken', src["name"]))
+            elif self.mode == "upscale":
+                w, h = hochskalieren.result_size(src["w"], src["h"], self._factor())
+                self.source_var.set(tr('{0}  ·  {1} × {2} → {3} × {4}  ·  zum Vergrößern anklicken', src["name"],
+                                       src["w"], src["h"], w, h))
             else:
                 self.source_var.set(tr('{0}  ·  Ergebnis {1} × {2}  ·  zum Vergrößern anklicken', src["name"], w, h))
             if not self.source_clear.winfo_manager():
@@ -933,6 +980,12 @@ class ImageMode:
         return sdcpp.model_key(self.app.cfg.get("image_model"))
 
     def _on_pick(self, _e=None):
+        if self.mode == "upscale":
+            self.app.cfg["upscale_model"] = next((k for k, u in hochskalieren.UPSCALERS.items()
+                                                  if u["name"] == self.pick_var.get()), hochskalieren.DEFAULT)
+            self.app.save_config()
+            self.update_engine()
+            return
         if self.mode == "3d":
             self.app.cfg["model3d_variant"] = next((k for k, v in trellis.VARIANTS.items()
                                                     if v["name"] == self.pick_var.get()), trellis.DEFAULT_VARIANT)
@@ -951,6 +1004,19 @@ class ImageMode:
         """Stand des Bildmodells unter der Auswahl (wie „Geladen: …“ im Chat) – beim 3D-Modell der von TRELLIS.2."""
         if hasattr(self, "engine3d_status"):
             self.engine3d_status.set(trellis.describe(self.variant_key()))
+        if self.mode == "upscale":
+            up = self.upscaler_key()
+            name = hochskalieren.UPSCALERS[up]["name"]
+            if self.pick_var.get() != name:
+                self.pick_var.set(name)
+            if self.busy and self._phase == "download":
+                text = tr('Lade {0} herunter …', name)
+            elif self.busy:
+                text = tr('Skaliere mit {0} …', name)
+            else:
+                text = hochskalieren.describe(up)
+            self.engine_var.set(text)
+            return
         if self.mode == "3d":
             variant = self.variant_key()
             name = trellis.VARIANTS[variant]["name"]
@@ -1000,21 +1066,6 @@ class ImageMode:
     def load(self):
         """„Modell laden“: fehlende Dateien herunterladen (mit Rückfrage), dann das Bildmodell laden."""
         self._run(self.model_key(), None)
-
-    def unload(self):
-        """Bildmodell entladen – bricht auch einen laufenden Download, das Laden oder ein Bild ab."""
-        if self.busy:
-            self.stop_event.set()
-        if not self.server.is_running():
-            self.update_engine()
-            return
-
-        def work():
-            self.server.stop()
-            self.app.ui(self.update_engine)
-            self.app.ui(self._set_status, tr('Bildmodell entladen – der Grafikspeicher ist wieder frei.'))
-
-        threading.Thread(target=work, daemon=True).start()
 
     def _run(self, key: str, job: dict | None, since: float | None = None):
         """Bildmodell bereitmachen (herunterladen, laden) und – mit job – Bilder erzeugen bzw. bearbeiten. since: Beginn
@@ -1183,6 +1234,9 @@ class ImageMode:
         if self.mode == "3d":
             self._generate_3d()
             return
+        if self.mode == "upscale":
+            self._generate_upscale()
+            return
         prompt = self.prompt.get("1.0", tk.END).strip()
         edit = self.mode == "edit"
         if edit and not self.source:
@@ -1235,7 +1289,7 @@ class ImageMode:
         if self._chain:  # 3D-Modell aus einer Beschreibung: zwei Teile
             self._prefix = (tr('Teil 1 von 2 (Bild)') if phase in ("load", "run") else tr('Teil 2 von 2 (3D-Modell)')
                             if phase == "run3d" else "") + "  ·  "
-        if phase in ("run", "download", "run3d"):
+        if phase in ("run", "download", "run3d", "upscale"):
             self.progress.stop()
             self.progress.configure(mode="determinate")
             self.glide.set(0, animate=False)
@@ -1243,7 +1297,7 @@ class ImageMode:
             self.glide.stop()
             self.progress.configure(mode="indeterminate")
             self.progress.start(15)
-        self._t0 = time.time() if phase in ("load", "run3d") else self._t0
+        self._t0 = time.time() if phase in ("load", "run3d", "upscale") else self._t0
         self.update_engine()
         self._tick(once=True)
 
@@ -1270,6 +1324,11 @@ class ImageMode:
             else:
                 text = tr('Starte die 3D-Engine …')
             return text + "  ·  " + clock(secs) + "  ·  " + tr('dauert meist 3–8 Minuten')
+        if self._phase == "upscale":
+            done, total, _count = self._steps
+            if not done:
+                return tr('Starte die Bild-Engine … {0} s', secs)
+            return tr('Kachel {0} von {1}  ·  {2}', done, total, clock(secs))
         if self._phase == "load":
             return tr('Lade das Bildmodell … {0} s (beim ersten Mal bis zu einer Minute)', secs)
         if self._phase == "run" and self._steps[0] == 0:  # vor dem ersten Schritt: Beschreibung/Vorlage einlesen
@@ -1292,6 +1351,9 @@ class ImageMode:
         if self._dl_kind == "3d":
             self._set_status(tr('Lade die 3D-Engine und das Modell herunter … {0:.0f} % ({1:.1f} von {2:.1f} GB)  ·  '
                                 '„Stopp“ bricht ab', pct, done / 1e9, total / 1e9))
+        elif self._dl_kind == "upscale":
+            self._set_status(tr('Lade das Hochskalier-Modell herunter … {0:.0f} % ({1:.0f} von {2:.0f} MB)  ·  '
+                                '„Stopp“ bricht ab', pct, done / 2 ** 20, total / 2 ** 20))
         else:
             self._set_status(tr('Lade das Bildmodell herunter … {0:.0f} % ({1:.1f} von {2:.1f} GB)  ·  „Stopp“ bricht '
                                 'ab', pct, done / 1e9, total / 1e9))
@@ -1343,6 +1405,174 @@ class ImageMode:
         secs = items[0].get("seconds")
         self._set_status(tr('Fertig – {0} s je Bild. Gespeichert in der Galerie.', secs) if len(items) == 1 else
                          tr('Fertig – {0} Bilder, je {1} s. Gespeichert in der Galerie.', len(items), secs))
+
+    # ================================================================ Bilder hochskalieren (hochskalieren.py)
+
+    def _generate_upscale(self):
+        """„Hochskalieren“: fehlt die Bild-Engine oder das Modell, erst nachfragen und herunterladen."""
+        if not self.source:
+            self._set_status(tr('Bitte zuerst das Bild auswählen, das hochskaliert werden soll.'))
+            self.choose_source()
+            return
+        up, begun = self.upscaler_key(), time.monotonic()
+        self.app.cfg["upscale_factor"] = self._factor()
+        if hochskalieren.ready(up):
+            self._run_upscale(up, begun)
+        else:
+            self._offer_download_upscale(up, lambda: self._run_upscale(up, begun))
+
+    def _offer_download_upscale(self, up: str, then):
+        """Fehlendes fürs Hochskalieren (ggf. Bild-Engine, Modell) suchen, nachfragen, herunterladen – Fortschritt unten
+        auf der Seite, „Stopp“ bricht ab. Danach then()."""
+        name = hochskalieren.UPSCALERS[up]["name"]
+        self._checking, self._dl_kind = True, "upscale"
+        self.gen_btn.configure(state=tk.DISABLED)
+        self._set_status(tr('Prüfe, was für {0} noch fehlt …', name))
+
+        def planned(plan, err):
+            self._checking = False
+            self.gen_btn.configure(state=tk.NORMAL)
+            if err:
+                self._set_status(tr('Suche fehlgeschlagen: {0}', err))
+                dialogs.showerror(tr('Bilder hochskalieren'), tr('Suche fehlgeschlagen: {0}', err))
+                return
+            parts = []
+            if plan.get("program"):
+                parts.append(f"stable-diffusion.cpp {plan['tag']} ({plan['kind']}): "
+                             f"{sum(x[2] for x in plan['program']) / 1024 ** 2:.0f} MB")
+            if plan.get("runtime"):
+                parts.append(tr('AMD-ROCm-Laufzeit {0} für deine Grafikkarte: {1:.1f} GB',
+                                plan["runtime"]["version"], plan["runtime"]["size"] / 1e9))
+            for fname, _url, size, _dest, _sha in plan["weights"]:
+                parts.append(tr('Modelldatei {0}: {1:.0f} MB', fname, size / 2 ** 20))
+            if not parts:
+                if hochskalieren.ready(up):
+                    then()
+                return
+            text = (tr('Zum Hochskalieren mit {0} fehlt noch:\n\n', name) + "\n".join(parts)
+                    + tr('\n\nZusammen {0:.0f} MB – jetzt herunterladen?', plan["size"] / 2 ** 20)
+                    + "\n\n" + hochskalieren.LICENSE)
+            if not dialogs.askyesno(tr('Hochskalier-Modell herunterladen'), text):
+                self._set_status(tr('Download abgebrochen.'))
+                return
+            stop = self.stop_event = threading.Event()
+            self._set_busy(True)
+            self._set_phase("download")
+            begun = time.monotonic()
+            self.app.background(
+                lambda: hochskalieren.install(plan, lambda d, n: self.app.ui(self._on_download, d, n), stop),
+                lambda _r, error: downloaded(error, stop, begun))
+
+        def downloaded(error, stop, begun):
+            self._set_busy(False)
+            self.update_engine()
+            self._redraw()
+            if error:
+                self._set_status(tr('Download abgebrochen.') if stop.is_set() else
+                                 tr('Download fehlgeschlagen: {0}', error))
+                if not stop.is_set():
+                    self.app.notify_done(tr('Download fehlgeschlagen'), name, begun)
+                    dialogs.showerror(tr('Bilder hochskalieren'), tr('Download fehlgeschlagen: {0}', error))
+                return
+            then()
+
+        self.app.background(lambda: hochskalieren.plan(up), planned)
+
+    def _free_vram_upscale(self) -> bool | None:
+        """Grafikspeicher fürs Hochskalieren (etwa 1 GB): Reicht er nicht, wird zuerst das eigene Bildmodell beendet
+        und – nur wenn auch das nicht genügt – das Sprachmodell entladen (nach Rückfrage wie beim Bild). True = das
+        Bildmodell beenden, False = trotzdem so (oder ohne NVIDIA: unbekannt), None = abbrechen."""
+        app, need = self.app, hochskalieren.NEED_MIB
+        free = sdcpp.free_vram_mib()
+        if free is None or free >= need:
+            return False
+        image_mib = sdcpp.need_vram_mib(self.server.model) - sdcpp.COMPUTE_MIB if self.server.model else 0
+        if self.server.is_running() and free + image_mib >= need:
+            return True
+        if not (app.server.is_running() and app.server.model):
+            return self.server.is_running()
+        if app.busy or app.room.ai_busy:
+            dialogs.showinfo(tr('Bilder hochskalieren'), tr(
+                'Das Sprachmodell antwortet gerade und belegt den Grafikspeicher. Bitte warten, bis die Antwort fertig '
+                'ist, oder sie stoppen.'))
+            return None
+        name = model_name(app.server.model)
+        if app.cfg.get("image_unload") != "auto":
+            ok, remember = dialogs.ask_with_option(
+                tr('Grafikspeicher freimachen'),
+                tr('Das Sprachmodell „{0}“ belegt den Grafikspeicher, den das Hochskalieren braucht. Es wird dafür '
+                   'entladen – im Chat lässt es sich danach mit „Modell laden“ wieder laden.', name),
+                tr('Nicht mehr fragen – künftig automatisch entladen'),
+                yes=tr('Entladen und fortfahren'), no=tr('Abbrechen'))
+            if not ok:
+                return None
+            if remember:
+                app.cfg["image_unload"] = "auto"
+                if hasattr(self, "ask_var"):
+                    self.ask_var.set(False)
+                app.save_config()
+        if app.expert_job:
+            app.expert_job.stop_event.set()
+        app.unload_model()
+        return self.server.is_running()
+
+    def _run_upscale(self, up: str, begun: float):
+        if self.busy or not self.source:
+            return
+        stop_image = self._free_vram_upscale()
+        if stop_image is None:
+            return
+        src, factor = dict(self.source), self._factor()
+        stop = self.stop_event = threading.Event()
+        self._set_busy(True)
+        self._set_phase("upscale")
+        chat, log = self.app.server, (lambda t: self.app.events.put(("log", t)))
+
+        def work():
+            if stop_image:
+                self.server.stop()  # Bildmodell aus dem Grafikspeicher
+                self.app.ui(self.update_engine)
+            deadline = time.time() + 30  # entladenes Sprachmodell: warten, bis sein Speicher frei ist
+            while chat.proc is not None and chat.proc.poll() is None and time.time() < deadline:
+                time.sleep(0.2)
+            images.TEMP_DIR.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix="hochskalieren-", dir=images.TEMP_DIR) as folder:
+                out, t0 = Path(folder) / "ergebnis.png", time.time()
+                w, h = hochskalieren.upscale(
+                    up, src["png"], out, factor, stop, lambda d, n: self.app.ui(self._on_upscale_progress, d, n), log,
+                    on_cpu=lambda: self.app.ui(self._set_status, tr(
+                        'Auf der Grafikkarte ging es nicht – rechne über den Prozessor (dauert deutlich länger) …')))
+                info = {"prompt": src["name"] or src["path"].name, "width": w, "height": h,
+                        "model": hochskalieren.UPSCALERS[up]["name"], "seconds": round(time.time() - t0, 1),
+                        "upscaled": factor, "source": src["path"].name}
+                return self.gallery.add(out.read_bytes(), info)
+
+        self.app.background(work, lambda item, err: self._finished_upscale(item, err, stop, begun))
+
+    def _on_upscale_progress(self, done: int, total: int):
+        if not self.busy or self._phase != "upscale":
+            return
+        self._steps = (done, total, 1)
+        self.glide.set(done, maximum=max(1, total))
+        self._tick(once=True)
+
+    def _finished_upscale(self, item, err, stop: threading.Event, begun: float):
+        self._set_busy(False)
+        self.update_engine()
+        if err:
+            if stop.is_set():
+                self._set_status(tr('Abgebrochen.'))
+            else:
+                self._set_status(tr('Fehler: {0}', err))
+                self.app.notify_done(tr('Hochskalieren fehlgeschlagen'), str(err), begun)
+                dialogs.showerror(tr('Bilder hochskalieren'), err)
+            self._redraw()
+            return
+        self.refresh_list(select=item["file"])
+        self.show_image(item)
+        self._set_status(tr('Fertig nach {0} – {1} × {2} Pixel, gespeichert in der Galerie.',
+                            clock(round(item.get("seconds") or 0)), item["width"], item["height"]))
+        self.app.notify_done(tr('Bild hochskaliert'), item.get("prompt") or "", begun)
 
     # ================================================================ 3D-Modell (trellis.py)
 
@@ -1911,7 +2141,7 @@ class ImageMode:
     def settings(self) -> dict:
         """Für save_config: was im Reiter eingestellt ist."""
         out = {"image_format": self._format(), "image_count": int(self.count_choice.get() or 1),
-               "model3d_res": self._res(), "model3d_from": self.from_var.get()}
+               "model3d_res": self._res(), "model3d_from": self.from_var.get(), "upscale_factor": self._factor()}
         if hasattr(self, "ask_var"):
             out["image_unload"] = "ask" if self.ask_var.get() else "auto"
         if hasattr(self, "compatibility_var"):

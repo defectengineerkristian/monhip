@@ -36,7 +36,7 @@ import ordnen
 import pdfsatz
 import pdfwerk
 import plattform
-import projects
+import projektvorlagen as projects
 import prozesse
 import rechner
 import reminders
@@ -459,6 +459,22 @@ MEDIA_TOOLS = [  # mit Dateizugriff, Gruppe „media“: PDFs und Bilder bearbei
           drehen={"type": "integer", "description": "90, 180 oder 270 (im Uhrzeigersinn)"}),
 ]
 
+AUDIOBOOK_TOOLS = [  # Chat mit Dateizugriff, Gruppe „media“: Hörbuch aus einer PDF (hoerbuchtext.py, hoerbuch.py)
+    _tool("hoerbuch_erstellen", "Macht aus einer PDF ein Hörbuch – eine MP3 je Kapitel, mit einer natürlichen Stimme "
+          "auf diesem Rechner. Seitenzahlen, Kopf- und Fußzeilen, Inhaltsverzeichnis, Fußnoten, Bildunterschriften "
+          "und Literaturverzeichnis werden weggelassen. Vor dem Erzeugen fragt Monhip den Nutzer selbst (Kapitel, "
+          "Dauer, Ordner). Das Erzeugen dauert etwa ein Fünftel der Hördauer; dein Sprachmodell wird dafür evtl. "
+          "entladen und der Verlauf zusammengefasst – danach machst du normal weiter.",
+          optional=("kapitel", "seiten", "ziel", "vorschau"),
+          path={"type": "string", "description": "Die PDF-Datei"},
+          kapitel={"type": "string", "description": "Nur diese Kapitel, z. B. '1-3,5' (Nummern aus der Vorschau; "
+                   "Standard: alle)"},
+          seiten={"type": "string", "description": "Nur diese Seiten der PDF, z. B. '12-240' (Standard: alle)"},
+          ziel={"type": "string", "description": "Ordner für die MP3s (Standard: neben der PDF)"},
+          vorschau={"type": "boolean", "description": "Nur die Übersicht (Kapitel, Dauer, was weggelassen wird) – "
+                    "nur wenn der Nutzer ausdrücklich erst eine Übersicht will; sonst weglassen"}),
+]
+
 NOTEBOOK_TOOLS = [  # mit Dateizugriff, Gruppe „notebooks“: Jupyter-Notebooks (notebook.py)
     _tool("notebook_lesen", "Liest ein Jupyter-Notebook (.ipynb): jede Zelle mit Nummer, Typ und Inhalt, dazu ihre "
           "Ausgaben (gekürzt) und Fehler. Abbildungen (Diagramme, Bilder) bekommst du als Bild angehängt, wenn du "
@@ -501,7 +517,8 @@ CONFIRMS_ITSELF = frozenset({
     "create_excel_workbook", "create_presentation", "create_pdf", "run_command", "run_python", "projekt_write",
     "projekt_edit", "projekt_delete", "projekt_upload", "datei_teilen", "dateien_ordnen", "bilder_bearbeiten",
     "checkpoint_zurueck", "prozess_starten", "download_file", "clipboard_read", "clipboard_write",
-    "fenster_bedienen", "notebook_anlegen", "notebook_ausfuehren", "bild_erzeugen", "bild_bearbeiten"})
+    "fenster_bedienen", "notebook_anlegen", "notebook_ausfuehren", "bild_erzeugen", "bild_bearbeiten",
+    "hoerbuch_erstellen"})
 
 # Werkzeuggruppen, die man in den Einstellungen abschalten kann (jede kostet bei jeder Anfrage Kontext) – nur zusammen
 # mit ihrer Voraussetzung (Dateien, Befehle, Internet) aktiv; Agent(groups={name: False}) schaltet ab, Standard an
@@ -542,7 +559,7 @@ LABELS = {
     "fenster_bedienen": tr('Fenster bedienen'), "notebook_lesen": tr('Notebook lesen'),
     "notebook_zelle": tr('Notebook ändern'), "notebook_anlegen": tr('Notebook anlegen'),
     "notebook_ausfuehren": tr('Notebook ausführen'), "bild_erzeugen": tr('Bild erzeugen'),
-    "bild_bearbeiten": tr('Bild bearbeiten'),
+    "bild_bearbeiten": tr('Bild bearbeiten'), "hoerbuch_erstellen": tr('Hörbuch erstellen'),
 }
 ICONS = {"web_search": "🌐", "fetch_url": "🌐", "browser_oeffnen": "🌐", "browser_lesen": "🌐", "browser_klicken": "🌐",
          "browser_eingeben": "🌐", "browser_nutzer_fragen": "🌐", "search_files": "⌕", "write_file": "✎", "edit_file": "✎",
@@ -556,7 +573,8 @@ ICONS = {"web_search": "🌐", "fetch_url": "🌐", "browser_oeffnen": "🌐", "
          "pdf_bearbeiten": "✎", "bilder_bearbeiten": "▣", "rechnen": "=", "download_file": "⬇",
          "clipboard_read": "📋", "clipboard_write": "📋", "fenster_liste": "▣", "fenster_bedienen": "⌨",
          "notebook_lesen": "📓", "notebook_zelle": "✎", "notebook_anlegen": "📓", "notebook_ausfuehren": "❯",
-         "bild_erzeugen": "▣", "bild_bearbeiten": "▣"}  # Experten-Modus sonst ohne Bildzeichen
+         "bild_erzeugen": "▣", "bild_bearbeiten": "▣", "hoerbuch_erstellen": "🎧"}  # Experten-Modus sonst ohne
+# Bildzeichen
 
 FILE_PROMPT = (
     "Du arbeitest auf dem {system}-PC des Nutzers.\n"
@@ -606,6 +624,10 @@ ORGANIZE_PROMPT = (
     "freigibt.")
 
 MEDIA_PROMPT = "PDFs bearbeitest du mit pdf_bearbeiten, viele Bilder mit bilder_bearbeiten (beide legen neue Dateien an)."
+AUDIOBOOK_PROMPT = ("Hörbuch, Vorlesen oder Audio aus einer PDF: IMMER hoerbuch_erstellen – keine eigenen Skripte, keine "
+                    "Pakete installieren, keine Online-Stimmen. Ruf es gleich ohne vorschau auf: Monhip zeigt dem Nutzer "
+                    "vor dem Erzeugen selbst Kapitel, Dauer und Ordner zur Bestätigung. vorschau=true nur, wenn er "
+                    "ausdrücklich erst eine Übersicht möchte.")
 
 NOTEBOOK_PROMPT = (
     "Jupyter-Notebooks (.ipynb) liest du mit notebook_lesen und änderst sie mit notebook_zelle bzw. legst sie mit "
@@ -1016,12 +1038,13 @@ def match_edit(text: str, old_text: str, new_text: str) -> tuple[str, str]:
 
 class Agent:
     def __init__(self, confirm, files: bool = False, commands: bool = False, workspace: str = "",
-                 folders=(), confirm_actions: bool = True, web_access: bool = False, brave_key: str = "",
+                 folders=(), confirm_actions: bool = True, web_access: bool = False,
                  cmd_timeout: int = 120, memory: bool = False, reminders: bool = False, vision: bool = False,
                  screenshot=None, team=None, team_write: bool = False, team_info: dict | None = None,
                  share_files: bool = False, expert=None, expert_start=None, notes=None, room=None,
                  git: bool = False, always_ask: bool = True, ask_every: bool = False, groups: dict | None = None,
-                 control: bool = False, images: str = "", browser=None, browser_only: bool = False):
+                 control: bool = False, images: str = "", browser=None, browser_only: bool = False,
+                 audiobook: bool = False):
         self.confirm = confirm              # confirm(titel, text) -> "yes" | "no" | "all", blockiert bis Antwort
         # Werkzeuggruppen (TOOL_GROUPS) – abgeschaltete stehen weder in den Werkzeugen noch im System-Prompt
         self.groups = {g: bool((groups or {}).get(g, True)) for g in TOOL_GROUPS}
@@ -1041,6 +1064,9 @@ class Agent:
         # anzahl, format, bild) -> Meldung erzeugt bzw. bearbeitet und teilt – setzt RoomMode._ai_worker
         self.images = images
         self.image_fn = None
+        # Chat: audiobook → Werkzeug hoerbuch_erstellen; audiobook_fn(pdf, kapitel, seiten, ziel, vorschau, ok) ->
+        # Meldung (Modellwechsel und Erzeugen, monhip._audiobook_job) – setzt monhip._launch_turn
+        self.audiobook_fn = None
         # Experten-Modus: expert = experte.Library des Chats (lesend); expert_start(ordner, schwerpunkt) -> Meldung
         # macht den Chat zum Experten-Chat (nur ohne expert und mit Dateizugriff)
         self.expert, self.expert_start = expert, expert_start
@@ -1077,7 +1103,6 @@ class Agent:
                     self.roots.append(r)
         self.confirm_actions = confirm_actions
         self.allow_all = False
-        self.brave_key = brave_key.strip()
         self.cmd_timeout = cmd_timeout
         self.stop: threading.Event | None = None  # setzt run_conversation – Befehle enden dann sofort (_run)
         g = self.groups
@@ -1087,6 +1112,7 @@ class Agent:
                       + (OFFICE_TOOLS if files and g["office"] else [])
                       + (ORGANIZE_TOOLS if files and g["organize"] else [])
                       + (MEDIA_TOOLS if files and g["media"] else [])
+                      + (AUDIOBOOK_TOOLS if audiobook and files and g["media"] else [])
                       + (NOTEBOOK_TOOLS if files and g["notebooks"] else [])
                       + (NOTEBOOK_RUN_TOOLS if files and commands and g["notebooks"] else [])
                       + (CMD_TOOLS if commands else []) + (PROCESS_TOOLS if commands and g["processes"] else [])
@@ -1121,7 +1147,8 @@ class Agent:
         if self.files:
             parts += [p for p, tool in ((OFFICE_PROMPT, "create_pdf"), (PROJECT_PROMPT, "create_project"),
                                         (CHECKPOINT_PROMPT, "checkpoint_zurueck"), (ORGANIZE_PROMPT, "dateien_ordnen"),
-                                        (MEDIA_PROMPT, "pdf_bearbeiten")) if tool in on]
+                                        (MEDIA_PROMPT, "pdf_bearbeiten"), (AUDIOBOOK_PROMPT, "hoerbuch_erstellen"))
+                      if tool in on]
             if "notebook_lesen" in on:
                 parts.append(NOTEBOOK_PROMPT.format(
                     run=NOTEBOOK_RUN_PROMPT if "notebook_ausfuehren" in on else ""))
@@ -1575,7 +1602,7 @@ class Agent:
         return self.browser.ask_user(nachricht, self.stop)
 
     def tool_web_search(self, query):
-        return web.search(query, self.brave_key)
+        return web.search(query)
 
     def tool_fetch_url(self, url, start=0):
         return web.fetch(url, start=int(start or 0))
@@ -2068,6 +2095,19 @@ class Agent:
             self._sichern(dst)  # neue Dateien – bei einem neuen Zielordner schon durch ihn abgedeckt
         done, errors = bildwerk.run(jobs, opts)
         return bildwerk.summary(done, errors, target)
+
+    def tool_hoerbuch_erstellen(self, path, kapitel="", seiten="", ziel="", vorschau=False):
+        src = self._path(path)
+        if not src.is_file():
+            raise FileNotFoundError(f"{src} gibt es nicht.")
+        if src.suffix.lower() != ".pdf":
+            raise ToolError("Hörbücher gehen nur aus PDF-Dateien.")
+        if not self.audiobook_fn:
+            raise ToolError("Hörbücher gibt es nur im Chat.")
+        target = self._path(ziel) if ziel else self._path(src.parent / f"{src.stem} (Hörbuch)")
+        if target.exists() and not target.is_dir():
+            raise ToolError(f"{target} ist eine Datei – ziel muss ein Ordner sein.")
+        return self.audiobook_fn(src, str(kapitel or ""), str(seiten or ""), target, bool(vorschau), self._ok)
 
     # ------------------------------------------------------------ Arbeitsplan
 

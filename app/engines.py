@@ -55,8 +55,8 @@ def find_program(base: Path, folder_re: re.Pattern, exe: str, order=newest_build
 def install(p: dict, base: Path, exe: str, folder_re: re.Pattern, progress, cancel, done: int = 0,
             check=None) -> int:
     """Lädt, was ein plan() aufzählt: die Programm-Zips p["program"] nach p["target"] (ältere derselben Art fliegen
-    raus), dann die Modelldateien p["weights"] = [(name, url, größe, ziel)] einzeln über .part-Dateien (nach einem
-    Verbindungsabbruch geht es dort weiter). done = schon geladene Bytes (Fortschritt über alles); check(p) prüft das
+    raus), dann die Modelldateien p["weights"] = [(name, url, größe, ziel)] – auf Wunsch mit SHA-256 als fünftem
+    Element – einzeln über .part-Dateien (nach einem Verbindungsabbruch geht es dort weiter). done = schon geladene Bytes (Fortschritt über alles); check(p) prüft das
     entpackte Programm, bevor ältere weichen (Fehler: abbrechen, die alte Fassung bleibt). → bis dahin geladene Bytes."""
     total = p["size"]
     if p.get("program"):
@@ -67,6 +67,6 @@ def install(p: dict, base: Path, exe: str, folder_re: re.Pattern, progress, canc
         check(p)
     if p.get("program"):
         downloads.remove_older(p["target"], folder_re)
-    for _name, url, _size, dest in p.get("weights") or []:
-        done = downloads.fetch_one(url, dest, progress, cancel, done, total)
+    for _name, url, _size, dest, *digest in p.get("weights") or []:
+        done = downloads.fetch_one(url, dest, progress, cancel, done, total, sha256=digest[0] if digest else None)
     return done

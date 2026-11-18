@@ -51,8 +51,8 @@ def gui_worker():
         import browser
         import memory
         import reminders
-        import room
-        import roomui
+        import teamwork_netz as room
+        import teamwork as roomui
         import themes
         import tkinter as tk
 

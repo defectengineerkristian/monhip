@@ -83,7 +83,7 @@ class InApp(unittest.TestCase):
         import checkpoints
         import images
         import memory
-        import roomui
+        import teamwork as roomui
         import tkinter as tk
         monhip.APP_DIR, monhip.CONFIG_FILE, monhip.MODEL_DIR = data, config_file, data / "modelle"
         chats.CHAT_DIR = data / "chats"

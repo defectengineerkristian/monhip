@@ -1483,13 +1483,18 @@ class ChatView:
 
     # ---------------------------------------------------------------- Sonstiges
 
-    def footer(self, raw: str, tps: float | None = None, undo=None):
-        """Zeile unter einer fertigen Antwort: „Kopieren“ (Markdown-Text), ggf. „Rückgängig“ (undo() macht die
-        Datei-Änderungen dieser Antwort rückgängig) und ggf. Tokens pro Sekunde."""
+    def footer(self, raw: str, tps: float | None = None, undo=None, speak=None):
+        """Zeile unter einer fertigen Antwort: „Kopieren“ (Markdown-Text), ggf. „Vorlesen“ (speak(raw) – startet bzw.
+        beendet das Vorlesen), ggf. „Rückgängig“ (undo() macht die Datei-Änderungen dieser Antwort rückgängig) und ggf.
+        Tokens pro Sekunde."""
         self.md_finish()
         n = self._new("copy", text=raw)
         with self._edit():
             self._put(self._at, self._copy_label(), ("footer", "clickable", f"cpy:{n}"))
+            if speak:
+                k = self._new("action", fn=lambda: speak(raw))
+                self.t.insert(self._at, "      ", "footer")
+                self._put(self._at, self._icon("speaker") + [(tr('Vorlesen'), ())], ("footer", "clickable", f"act:{k}"))
             if undo:
                 self.undo_link(undo, inline=True)
             if tps:

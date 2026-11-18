@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "app"))
 
 import agent
 import i18n
-import room
+import teamwork_netz as room
 
 
 class ProtocolTests(unittest.TestCase):

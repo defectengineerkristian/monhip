@@ -1,6 +1,7 @@
 """Text aus am Computer erzeugten PDFs lesen (ohne Zusatzpakete) – nicht aus eingescannten oder verschlüsselten.
 
 extract(daten) -> (Text mit „--- Seite n ---“-Markierungen, Seitenzahl)
+extract_lines(daten) -> je Seite [(Zeile, Schriftgröße)] – fürs Hörbuch (Kopfzeilen, Fußnoten, Überschriften erkennen)
 """
 
 import base64
@@ -388,10 +389,18 @@ class _Doc:
             out.append((node, res))
 
     def page_text(self, page: dict, resources: dict) -> str:
+        return _tidy(self._run(self._contents(page), resources, 0))
+
+    def page_lines(self, page: dict, resources: dict) -> list[tuple[str, float]]:
+        """Zeilen der Seite in Lesereihenfolge mit ihrer (größten) Schriftgröße in Punkt."""
+        lines: list[tuple[str, float]] = []
+        self._run(self._contents(page), resources, 0, lines)
+        return [(re.sub(r"[ \t\u00a0]+", " ", t).strip(), size) for t, size in lines if t.strip()]
+
+    def _contents(self, page: dict) -> bytes:
         contents = self.resolve(page.get("Contents"))
         parts = contents if isinstance(contents, list) else [contents]
-        data = b"\n".join(self.stream_data(s) for s in (self.resolve(p) for p in parts) if isinstance(s, Stream))
-        return _tidy(self._run(data, resources, 0))
+        return b"\n".join(self.stream_data(s) for s in (self.resolve(p) for p in parts) if isinstance(s, Stream))
 
     # ------------------------------------------------------------ Schriften
 
@@ -471,9 +480,10 @@ class _Doc:
 
     # ------------------------------------------------------------ Inhaltsströme
 
-    def _run(self, data: bytes, resources: dict, depth: int) -> str:
+    def _run(self, data: bytes, resources: dict, depth: int, lines: list | None = None) -> str:
         """Liest die Textbefehle eines Inhaltsstroms. Zeilenumbrüche/Leerzeichen werden aus den
-        Positionsbefehlen abgeleitet (nur so gut, wie es die PDF hergibt)."""
+        Positionsbefehlen abgeleitet (nur so gut, wie es die PDF hergibt). lines: sammelt zusätzlich
+        (Zeile, größte Schriftgröße darin)."""
         fonts = self.resolve(resources.get("Font")) if isinstance(resources, dict) else None
         fonts = fonts if isinstance(fonts, dict) else {}
         xobjects = self.resolve(resources.get("XObject")) if isinstance(resources, dict) else None
@@ -488,16 +498,28 @@ class _Doc:
         end_x = 0.0                   # Position hinter dem zuletzt gezeigten Text
         last_y = None                 # y der zuletzt gezeigten Zeile
         pos, n = 0, len(data)
+        line_start, line_size = 0, 0.0  # für lines: Beginn der Zeile in out, größte Schrift darin
 
         def show(s: bytes):
-            nonlocal end_x
+            nonlocal end_x, line_size
             text, advance = font.show(s)
             if text:
                 out.append(text)
+                if text.strip():
+                    line_size = max(line_size, size * abs(d))
             end_x += advance * size * abs(a)
+
+        def end_line():
+            nonlocal line_start, line_size
+            if lines is not None:
+                text = "".join(out[line_start:]).replace("\n", " ")
+                if text.strip():
+                    lines.append((text, round(line_size, 1)))
+                line_start, line_size = len(out) + 1, 0.0  # +1: der Umbruch, der gleich angehängt wird
 
         def newline():
             if out and not out[-1].endswith("\n"):
+                end_line()
                 out.append("\n")
 
         def space():
@@ -564,7 +586,11 @@ class _Doc:
                     xo = self.resolve(xobjects.get(stack[-1])) if isinstance(stack[-1], str) else None
                     if isinstance(xo, Stream) and xo.info.get("Subtype") == "Form":
                         sub_res = self.resolve(xo.info.get("Resources")) or resources
-                        out.append(self._run(self.stream_data(xo), sub_res, depth + 1))
+                        if lines is not None:  # eigene Zeilen der Form; danach beginnt hier eine neue
+                            end_line()
+                        out.append(self._run(self.stream_data(xo), sub_res, depth + 1, lines))
+                        if lines is not None:
+                            line_start = len(out)
                 elif op == b"ID":  # Inline-Bild: Binärdaten bis „EI“ überspringen
                     m = re.compile(rb"[\x00\t\n\x0c\r ]EI(?=[\x00\t\n\x0c\r ]|$)").search(data, pos)
                     pos = m.end() if m else n
@@ -579,6 +605,8 @@ class _Doc:
                 stack.append(val)
             if len(stack) > 200:
                 stack.clear()
+        if lines is not None:
+            end_line()
         return "".join(out)
 
 
@@ -647,6 +675,21 @@ def _png_unpredict(data: bytes, columns: int) -> bytes:
 def _tidy(text: str) -> str:
     lines = [re.sub(r"[ \t ]+", " ", line).strip() for line in text.splitlines()]
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+
+def extract_lines(data: bytes, max_pages: int = 2000) -> list[list[tuple[str, float]]]:
+    """Je Seite die Zeilen mit Schriftgröße: [[(Zeile, Größe), …], …]. Eine Seite ohne lesbaren Text ist leer."""
+    doc = _Doc(data)
+    pages = doc.pages()
+    if not pages:
+        raise PDFError("In der PDF wurden keine Seiten gefunden (Datei beschädigt?).")
+    out = []
+    for page, res in pages[:max_pages]:
+        try:
+            out.append(doc.page_lines(page, res))
+        except Exception:
+            out.append([])
+    return out
 
 
 def extract(data: bytes, max_pages: int = 2000) -> tuple[str, int]:

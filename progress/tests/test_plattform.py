@@ -75,7 +75,7 @@ class PlatformBasics(unittest.TestCase):
             self.assertTrue(lines[0].startswith("/  "), lines)
 
     def test_python_template_matches_system(self):
-        import projects
+        import projektvorlagen as projects
         self.assertIn("main.py", projects.TEMPLATES["python"]["run"])
         self.assertTrue(projects.TEMPLATES["python"]["run"].startswith("py " if plattform.WINDOWS else "python3 "))
 
@@ -204,7 +204,7 @@ class LinuxFiles(unittest.TestCase):
         self.assertEqual([p.name for p in self.dir.iterdir()], ["programm.sh"])
 
     def test_unsafe_root_blocks_system_folders(self):
-        import projekt
+        import teamwork_projekt as projekt
         self.assertTrue(projekt.unsafe_root(Path("/usr/share")))
         self.assertTrue(projekt.unsafe_root(Path.home() / ".config" / "autostart"))
         self.assertIsNone(projekt.unsafe_root(self.dir))
@@ -412,7 +412,7 @@ class LinuxMedia(unittest.TestCase):
 
     def test_recorder_stops_cleanly_with_sigint(self):
         """Statt eines Mikrofons ein Ersatz-„arecord“: schreibt erst beim SIGINT die Datei fertig – wie die echten."""
-        import speech
+        import spracherkennung as speech
         bin_dir = self.dir / "bin"
         bin_dir.mkdir()
         fake = bin_dir / "arecord"
@@ -440,7 +440,7 @@ class LinuxMedia(unittest.TestCase):
         self.assertTrue(path.name.startswith("Diktat ") and path.stat().st_size > 44)
 
     def test_recorder_without_program(self):
-        import speech
+        import spracherkennung as speech
         with mock.patch.object(plattform, "which", return_value=None):
             with self.assertRaisesRegex(RuntimeError, "pw-record, parecord oder arecord"):
                 speech.Recorder().start()

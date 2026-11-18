@@ -81,7 +81,7 @@ def main():
         import images
         import memory
         import reminders
-        import roomui
+        import teamwork as roomui
         import tkinter as tk
         monhip.APP_DIR = data
         monhip.CONFIG_FILE = config_file

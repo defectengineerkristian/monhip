@@ -101,14 +101,15 @@ def download(url: str, dest: Path, progress, cancel, done: int = 0, total: int =
     return done
 
 
-def fetch_one(url: str, dest: Path, progress, cancel, done: int = 0, total: int = 0) -> int:
+def fetch_one(url: str, dest: Path, progress, cancel, done: int = 0, total: int = 0, sha256: str | None = None) -> int:
     """Eine große Datei (Modell) über <dest>.part laden und erst fertig umbenennen. Bricht die Verbindung ab, bleibt
     der Teil liegen und der nächste Versuch macht dort weiter; nach „Abbrechen“ (cancel) oder einem anderen Fehler
-    bleibt nichts liegen. Gibt den neuen Stand von done zurück."""
+    bleibt nichts liegen. sha256: erwartete Prüfsumme (passt sie nicht, bleibt nichts liegen). Gibt den neuen Stand
+    von done zurück."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     part = dest.with_name(dest.name + ".part")
     try:
-        done = download(url, part, progress, cancel, done, total, resume=True)
+        done = download(url, part, progress, cancel, done, total, sha256=sha256, resume=True)
         part.replace(dest)
     except BaseException as e:
         broken = isinstance(e, (OSError, http.client.HTTPException)) and not cancel.is_set()

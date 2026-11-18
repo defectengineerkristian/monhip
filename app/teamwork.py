@@ -1,4 +1,4 @@
-"""Teamwork – Oberfläche und Ablauf des Gruppenchats (RoomMode, Netzwerk in room.py).
+"""Teamwork – Oberfläche und Ablauf des Gruppenchats (RoomMode, Netzwerk in teamwork_netz.py).
 
 Jede Nachricht bekommt einen eigenen Slot in der zweiten ChatView, damit mehrere KIs gleichzeitig schreiben können.
 Die eigene KI antwortet auf @Name/@alle mit dem hier geladenen Modell und hat immer alle Werkzeuge; wann sie vorher
@@ -34,14 +34,14 @@ import documents
 import icons
 import images
 import plattform
-import projekt
-import room
+import teamwork_projekt as projekt
+import teamwork_netz as room
 import sdcpp
 from backend import model_name
 from bilder import FORMATS
 from agent import (ROOM_SCREEN_PROMPT, Agent, ToolError, date_line, describe_call, format_args, result_ok,
                    run_conversation, time_label, tool_budget)
-from projekt import RISKY_SUFFIXES, mark_from_internet  # RISKY_SUFFIXES: vor dem Herunterladen warnen
+from teamwork_projekt import RISKY_SUFFIXES, mark_from_internet  # RISKY_SUFFIXES: vor dem Herunterladen warnen
 from themes import FAMILY, mix_hex
 from widgets import bind_wheel, scrolled, wheel_delta
 
@@ -528,6 +528,8 @@ class RoomMode:
                        **icons.opts("add", lower=1)).pack(fill=tk.X)
             ttk.Button(p, text=tr('Raum beitreten'), style="Sidebar.TButton", command=self.dialog_join,
                        **icons.opts("join", lower=1)).pack(fill=tk.X)
+            ttk.Button(p, text=tr('Im Heimnetz suchen'), style="Sidebar.TButton", command=self.dialog_find,
+                       **icons.opts("search", lower=1)).pack(fill=tk.X)
             if hosted or last:  # Angebot, den letzten Raum wieder zu öffnen bzw. ihm wieder beizutreten
                 if hosted:
                     text, sub = tr('Letzten Raum wieder öffnen'), tr('„{0}“ – du warst Gastgeber', hosted['room'])
@@ -1122,12 +1124,152 @@ class RoomMode:
             self.info['host'],
             self.info['port']), style="Muted.TLabel",
                   wraplength=round(470 * app.ui_scale)).pack(anchor="w", pady=(6, 0))
+        guests = dict(self.server.guests) if self.server else {}
+        if guests:  # wer per Anklopfen einen eigenen Schlüssel bekommen hat – einzeln wieder entziehen
+            ttk.Separator(body).pack(fill=tk.X, pady=(12, 8))
+            ttk.Label(body, text=tr('Zugelassen per Anklopfen (eigener Schlüssel):')).pack(anchor="w")
+            for kid, g in sorted(guests.items(), key=lambda kv: kv[1].get("time", "")):
+                row = ttk.Frame(body)
+                row.pack(fill=tk.X, pady=(4, 0))
+                ttk.Label(row, text=f"{g.get('name', '?')} (@{g.get('ai', '?')})  ·  {str(g.get('time', ''))[:10]}",
+                          style="Muted.TLabel").pack(side=tk.LEFT)
+                ttk.Button(row, text=tr('Zugang entziehen'),
+                           command=lambda k=kid, r=row: (self.server and self.server.revoke(k), r.destroy())
+                           ).pack(side=tk.RIGHT)
         bf = ttk.Frame(body)
         bf.pack(fill=tk.X, pady=(12, 0))
         ttk.Button(bf, text=tr('Schließen'), command=win.destroy).pack(side=tk.RIGHT)
         ttk.Button(bf, text=tr('Kopieren'), style="Accent.TButton", **icons.opts("copy", "accent_fg"),
                    command=lambda: (self.copy_invite(), win.destroy())).pack(side=tk.RIGHT, padx=(0, 6))
         dialogs.present(win, app.root)
+
+    # ================================================================ Anklopfen (room.Knock, RoomServer.decide)
+
+    def _on_knock(self, k: dict):
+        """Gastgeber: jemand klopft an – zulassen oder ablehnen (mit Prüfcode zum Vergleichen)."""
+        server = self.server
+        if not server:
+            return
+        allow, _ = dialogs.ask_with_option(
+            tr('Anklopfen'), tr('„{0}“ (KI: @{1}) möchte dem Raum „{2}“ beitreten.\n\nPrüfcode: {3}\n{0} sieht '
+                                'denselben Code – stimmt er überein, ist die Anfrage wirklich von {0}. Zulassen?\n\n'
+                                '(Anfrage von {4})', k["name"], k["ai"], server.room, k["code"], k["ip"]),
+            "", yes=tr('Zulassen'), no=tr('Ablehnen'), parent=self.app.root)
+        if self.server is server:
+            server.decide(k["id"], allow)
+
+    def dialog_find(self):
+        """Räume im Heimnetz suchen und anklopfen: Der Gastgeber lässt zu, dann gibt es einen eigenen Schlüssel."""
+        if self.connected or self.connecting:
+            return
+        app = self.app
+        name, ai = self._default_names()
+        win = dialogs.window(tr('Räume im Heimnetz'), app.root)
+        body = ttk.Frame(win, padding=18)
+        body.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(body, text=tr('Räume im Heimnetz'), style="Title.TLabel").grid(row=0, column=0, columnspan=2,
+                                                                                sticky="w", pady=(0, 10))
+        tree = ttk.Treeview(body, columns=("owner", "addr"), show="tree headings", height=5, selectmode="browse")
+        tree.heading("#0", text=tr('Raum'))
+        tree.heading("owner", text=tr('Gastgeber'))
+        tree.heading("addr", text=tr('Adresse'))
+        tree.column("#0", width=round(170 * app.ui_scale))
+        tree.column("owner", width=round(120 * app.ui_scale))
+        tree.column("addr", width=round(150 * app.ui_scale))
+        tree.grid(row=1, column=0, columnspan=2, sticky="nsew")
+        vars_ = {}
+        for r, (key, label, value) in enumerate((("name", tr('Dein Name'), name), ("ai", tr('Name deiner KI'), ai)), 2):
+            ttk.Label(body, text=label).grid(row=r, column=0, sticky="w", padx=(0, 12), pady=(8 if r == 2 else 4, 0))
+            vars_[key] = tk.StringVar(value=value)
+            ttk.Entry(body, textvariable=vars_[key], width=36).grid(row=r, column=1, sticky="ew",
+                                                                     pady=(8 if r == 2 else 4, 0))
+        status = tk.StringVar(value=tr('Suche …'))
+        ttk.Label(body, textvariable=status, style="Muted.TLabel", wraplength=round(460 * app.ui_scale)).grid(
+            row=4, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        bf = ttk.Frame(body)
+        bf.grid(row=5, column=0, columnspan=2, sticky="e", pady=(14, 0))
+        knock_btn = ttk.Button(bf, text=tr('Anklopfen'), style="Accent.TButton", **icons.opts("join", "accent_fg"))
+        knock_btn.pack(side=tk.LEFT)
+        search_btn = ttk.Button(bf, text=tr('Neu suchen'), **icons.opts("refresh"))
+        search_btn.pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(bf, text=tr('Abbrechen'), command=win.destroy).pack(side=tk.LEFT, padx=(6, 0))
+        body.columnconfigure(1, weight=1)
+        found: dict[str, dict] = {}
+        state = {"open": True, "knock": None}
+        win.bind("<Destroy>", lambda e: state.update(open=False) if e.widget is win else None)
+
+        def search():
+            tree.delete(*tree.get_children())
+            found.clear()
+            status.set(tr('Suche …'))
+            search_btn.state(["disabled"])
+            app.background(room.discover, searched)
+
+        def searched(rooms, err):
+            if not state["open"]:
+                return
+            search_btn.state(["!disabled"])
+            for r in rooms or []:
+                iid = tree.insert("", tk.END, text=r["room"], values=(r["owner"], f"{r['host']}:{r['port']}"))
+                found[iid] = r
+            if rooms:
+                tree.selection_set(tree.get_children()[0])
+                status.set(tr('Raum auswählen und „Anklopfen“ – der Gastgeber muss dich zulassen.'))
+            else:
+                status.set(tr('Kein Raum gefunden. Läuft beim Gastgeber ein Raum für „alle Netzwerke“ bzw. das '
+                              'Heimnetz, und seid ihr im selben Netz? Sonst geht es weiter mit einem Einladungscode.'))
+
+        def knock():
+            sel = tree.selection()
+            if not sel or sel[0] not in found or state["knock"]:
+                return
+            if not self._check_names(vars_["name"].get().strip(), vars_["ai"].get().strip()):
+                return
+            r = found[sel[0]]
+            knock_btn.state(["disabled"])
+            status.set(tr('Klopfe bei „{0}“ an …', r["room"]))
+            cfg = app.cfg
+            app.background(lambda: room.Knock(r["host"], r["port"], cfg["room_name"], cfg["room_ai"],
+                                              cfg.get("client_id", "")), knocked)
+
+        def knocked(k, err):
+            if not state["open"]:
+                return
+            if err:
+                knock_btn.state(["!disabled"])
+                status.set(tr('Anklopfen ging nicht: {0}', err))
+                return
+            state["knock"] = k
+            status.set(tr('Angeklopft bei „{0}“ – warte auf den Gastgeber …\nPrüfcode: {1}  (der Gastgeber sieht '
+                          'denselben Code)', k.room, k.code))
+            wait(k)
+
+        def wait(k):
+            def work():
+                while state["open"]:
+                    result = k.status()
+                    if result != "wartet":
+                        return result
+                return "abgebrochen"
+            app.background(work, lambda result, err: answered(k, result, err))
+
+        def answered(k, result, err):
+            if not state["open"]:
+                return
+            state["knock"] = None
+            knock_btn.state(["!disabled"])
+            if result == "zugelassen":
+                win.destroy()
+                self.join(k.invite())
+                return
+            status.set(tr('Der Gastgeber hat abgelehnt.') if result == "abgelehnt" else
+                       tr('Anklopfen ging nicht: {0}', err) if err else tr('Die Anfrage ist abgelaufen.'))
+
+        knock_btn.configure(command=knock)
+        search_btn.configure(command=search)
+        tree.bind("<Double-Button-1>", lambda e: knock())
+        dialogs.present(win, app.root)
+        search()
 
     def invite_code(self) -> str:
         i = self.info
@@ -1153,6 +1295,8 @@ class RoomMode:
             self.dialog_create()
             return
         server = room.RoomServer(room_name, key, bind, port, self._store_path(room_name))
+        server.owner = self.app.cfg.get("room_name", "")
+        server.on_knock = lambda k: self._put("call", (self._on_knock, (k,)))  # aus einem Server-Thread
         try:
             server.start()
         except OSError as e:
@@ -1193,7 +1337,8 @@ class RoomMode:
         profile = {**self._profile(), "host": info["is_host"]}
         if info["is_host"] and self.server:  # weist den eigenen Teilnehmer beim eigenen Server als Gastgeber aus
             profile["host_token"] = self.server.host_token
-        client = room.RoomClient(host, port, key, profile, lambda k, d: self._put("room", (k, d)))
+        client = room.RoomClient(host, port, key, profile, lambda k, d: self._put("room", (k, d)),
+                                 guest=info.get("guest", ""))
         self.connecting = True
         self.refresh_panel()
 
@@ -1776,7 +1921,7 @@ class RoomMode:
         return Agent(confirm, files=tools["files"], commands=tools["commands"], workspace=app.ws_var.get(),
                      folders=app.extra_folders, confirm_actions=confirm_actions, always_ask=always_ask,
                      ask_every=ask_every, web_access=tools["web"], groups={"clipboard": False},
-                     brave_key=app.brave_var.get(), team=team,
+                     team=team,
                      team_write=bool(project and (project["write"] or self.info["is_host"])), team_info=team_info,
                      share_files=True,  # datei_teilen (nur mit „Dateien“); share setzt _ai_worker
                      notes=self._notes_from_worker,

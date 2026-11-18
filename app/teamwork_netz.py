@@ -29,7 +29,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-import projekt
+import teamwork_projekt as projekt
 
 PROTOCOL = 1
 DEFAULT_PORT = 47821
@@ -54,6 +54,46 @@ REQUEST_ID = "_r"                 # zufällige ID jeder Anfrage (mitsigniert) �
 NAME_RE = re.compile(r"^[A-Za-z0-9ÄÖÜäöüß._-]{2,24}$")
 FILE_ID_RE = re.compile(r"[0-9a-f]{24}")  # IDs geteilter Dateien (secrets.token_hex(12) beim Gastgeber)
 RESERVED_NAMES = {"main"}         # „@main“ = Hauptauftrag des Raums
+
+# Anklopfen statt Schlüssel weitergeben: Räume im Heimnetz finden (UDP-Rundfrage an DEFAULT_PORT), anfragen, der
+# Gastgeber klickt „Zulassen“. Der neue Teilnehmer bekommt einen eigenen Schlüssel – der geht nie übers Netz: Beide
+# Seiten berechnen ihn per Diffie-Hellman (RFC 3526, Gruppe 14, 2048 Bit) selbst. Gegen einen Angreifer dazwischen
+# zeigen beide denselben vierstelligen Prüfcode an (ein Mittelsmann hätte mit jeder Seite ein anderes Geheimnis).
+DISCOVERY_MAGIC = b"MONHIP-RAUMSUCHE/1"
+DISCOVERY_WAIT = 1.5              # so lange sammelt die Suche Antworten (Sekunden)
+KNOCK_WAIT = 20                   # Long-Polling des Wartenden
+KNOCK_TTL = 600                   # so lange bleibt eine Anfrage offen
+MAX_KNOCKS = 8                    # gleichzeitig wartende Anfragen
+REJECT_PAUSE = 60                 # nach „Ablehnen“ so lange keine neue Anfrage von derselben Adresse
+GUEST_RE = re.compile(r"[0-9a-f]{16}")
+DH_P = int("FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74020BBEA63B139B22514A08798E3404DD"
+           "EF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7ED"
+           "EE386BFB5A899FA5AE9F24117C4B1FE649286651ECE45B3DC2007CB8A163BF0598DA48361C55D39A69163FA8FD24CF5F"
+           "83655D23DCA3AD961C62F356208552BB9ED529077096966D670C354E4ABC9804F1746C08CA18217C32905E462E36CE3B"
+           "E39E772C180E86039B2783A2EC07A28FB5C55DF06F4C52C9DE2BCBF6955817183995497CEA956AE515D2261898FA0510"
+           "15728E5A8AACAA68FFFFFFFFFFFFFFFF", 16)
+DH_G = 2
+
+
+def dh_private() -> int:
+    return secrets.randbits(256) | (1 << 255)
+
+
+def dh_public(private: int) -> int:
+    return pow(DH_G, private, DH_P)
+
+
+def dh_secret(private: int, peer: int) -> bytes:
+    if not 2 <= peer <= DH_P - 2:
+        raise ValueError("Ungültiger öffentlicher Schlüssel.")
+    return pow(peer, private, DH_P).to_bytes(256, "big")
+
+
+def guest_key(secret: bytes, kid: str) -> tuple[str, str]:
+    """Aus dem gemeinsamen Geheimnis: (eigener Schlüssel des Teilnehmers, vierstelliger Prüfcode)."""
+    key = hmac.new(secret, b"monhip-gast-schluessel:" + kid.encode(), hashlib.sha256).digest()[:18]
+    code = int.from_bytes(hmac.new(secret, b"monhip-pruefcode:" + kid.encode(), hashlib.sha256).digest()[:4], "big")
+    return base64.urlsafe_b64encode(key).decode(), f"{code % 10000:04d}"
 
 
 # Direkt zum Gastgeber, nie über einen Proxy aus der Umgebung (HTTP_PROXY, Windows-Einstellungen): Der Raum liegt im
@@ -132,9 +172,13 @@ def valid_file_id(fid) -> bool:
     return isinstance(fid, str) and bool(FILE_ID_RE.fullmatch(fid))
 
 
-def make_invite(host: str, port: int, key: str, room: str) -> str:
-    """Einladungscode zum Weitergeben (enthält Adresse, Port, Raumname und Schlüssel)."""
-    data = json.dumps({"v": PROTOCOL, "h": host, "p": port, "k": key, "r": room}, separators=(",", ":"))
+def make_invite(host: str, port: int, key: str, room: str, guest: str = "") -> str:
+    """Einladungscode zum Weitergeben (enthält Adresse, Port, Raumname und Schlüssel). guest: Kennung eines eigenen
+    Schlüssels nach dem Anklopfen – so merkt sich Monhip auch diesen Zugang (nicht zum Weitergeben gedacht)."""
+    d = {"v": PROTOCOL, "h": host, "p": port, "k": key, "r": room}
+    if guest:
+        d["g"] = guest
+    data = json.dumps(d, separators=(",", ":"))
     return "MSRAUM-" + base64.urlsafe_b64encode(data.encode()).decode().rstrip("=")
 
 
@@ -145,7 +189,9 @@ def parse_invite(code: str) -> dict:
     raw = code[7:] + "=" * (-len(code[7:]) % 4)
     try:
         d = json.loads(base64.urlsafe_b64decode(raw))
-        return {"host": str(d["h"]), "port": int(d["p"]), "key": str(d["k"]), "room": str(d.get("r", "Raum"))}
+        guest = str(d.get("g", ""))
+        return {"host": str(d["h"]), "port": int(d["p"]), "key": str(d["k"]), "room": str(d.get("r", "Raum")),
+                "guest": guest if GUEST_RE.fullmatch(guest) else ""}
     except (ValueError, KeyError, TypeError):
         raise ValueError("Der Einladungscode ist unvollständig oder beschädigt.") from None
 
@@ -253,6 +299,15 @@ class RoomServer:
         # Nur der eigene Teilnehmer des Gastgebers kennt dieses Zeichen (geht nie übers Netz – er verbindet sich
         # lokal); daran erkennt der Server den Gastgeber, statt dem Feld „host“ aus der Anfrage zu glauben
         self.host_token = secrets.token_hex(16)
+        # Anklopfen: eigene Schlüssel zugelassener Teilnehmer (Kennung → key, name, ai, client, time; gespeichert)
+        # und offene Anfragen; on_knock(anfrage) meldet eine neue an die Oberfläche (aus einem Server-Thread)
+        self.guests: dict[str, dict] = {}
+        self.knocks: dict[str, dict] = {}
+        self.on_knock = None
+        self.owner = ""                                    # Name des Gastgebers – zeigt die Raumsuche an
+        self.discoverable = True                           # auf die Raumsuche im Heimnetz antworten
+        self.discovery_port = DEFAULT_PORT                 # UDP-Port der Raumsuche (Tests: ein anderer)
+        self._udp: socket.socket | None = None
         self._uploads = threading.BoundedSemaphore(MAX_PENDING_UPLOADS)
         self._request_ids: dict[str, int] = {}             # schon gesehene Anfrage-IDs → gültig bis (Zeitstempel)
         self._request_lock = threading.Lock()
@@ -285,12 +340,58 @@ class RoomServer:
         self.port = self.httpd.server_address[1]
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
         threading.Thread(target=self._housekeeping, daemon=True).start()
+        if self.discoverable and (self._lan_bind() or self.bind == "127.0.0.1" and self.discovery_port != DEFAULT_PORT):
+            threading.Thread(target=self._discovery, daemon=True).start()
+
+    def _lan_bind(self) -> bool:
+        """Nur ein Raum, der im Heimnetz erreichbar ist, antwortet auf die Raumsuche (nicht „nur dieser PC“)."""
+        if self.bind == "0.0.0.0":
+            return True
+        try:
+            a = ipaddress.ip_address(self.bind)
+        except ValueError:
+            return False
+        return a.version == 4 and a.is_private and not a.is_loopback
+
+    def _discovery(self):
+        """Raumsuche: auf die UDP-Rundfrage DISCOVERY_MAGIC mit Raumname, Port und Gastgeber antworten."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # mehrere Räume auf einem Rechner
+            sock.bind(("" if self.bind == "0.0.0.0" else self.bind, self.discovery_port))
+        except OSError:
+            sock.close()
+            return
+        sock.settimeout(1.0)
+        self._udp = sock
+        while self.httpd:
+            try:
+                data, addr = sock.recvfrom(256)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            if data.strip() != DISCOVERY_MAGIC:
+                continue
+            reply = json.dumps({"v": PROTOCOL, "room": self.room, "port": self.port, "owner": self.owner},
+                               ensure_ascii=False).encode("utf-8")
+            try:
+                sock.sendto(reply, addr)
+            except OSError:
+                pass
+        sock.close()
 
     def stop(self):
         if self.httpd:
             self.httpd.shutdown()
             self.httpd.server_close()
             self.httpd = None
+        if self._udp:
+            try:
+                self._udp.close()
+            except OSError:
+                pass
+            self._udp = None
         with self.cond:
             self.cond.notify_all()
         self._save()
@@ -305,6 +406,8 @@ class RoomServer:
         except (OSError, ValueError):
             return
         self.files = {k: v for k, v in (data.get("files") or {}).items() if isinstance(v, dict)}
+        self.guests = {k: v for k, v in (data.get("guests") or {}).items()
+                       if GUEST_RE.fullmatch(k) and isinstance(v, dict) and isinstance(v.get("key"), str)}
         shared = data.get("project")
         if isinstance(shared, dict) and Path(str(shared.get("root", ""))).is_dir():
             self.project = projekt.ProjectFolder(Path(shared["root"]), shared.get("write", True), self._versions_dir())
@@ -327,7 +430,8 @@ class RoomServer:
             data = {"room": self.room, "messages": [dict(m) for m in self.messages.values()],
                     "files": {k: dict(v) for k, v in self.files.items()},
                     "project": {"root": str(self.project.root), "write": self.project.write} if self.project else None,
-                    "main": dict(self.main), "tasks": [dict(t) for t in self.tasks]}
+                    "main": dict(self.main), "tasks": [dict(t) for t in self.tasks],
+                    "guests": {k: dict(v) for k, v in self.guests.items()}}
             self._dirty = False
         try:
             self.store.parent.mkdir(parents=True, exist_ok=True)
@@ -408,6 +512,9 @@ class RoomServer:
         body = None
         try:
             route = urllib.parse.urlparse(h.path)
+            if route.path == "/api/knock":  # Anklopfen: ohne Signatur – den Schlüssel gibt es ja erst danach
+                self._reply(h, 200, self._knock_route(h, method, route))
+                return
             # Rohdaten statt JSON, eigene Grenze: geteilte Datei bzw. Datei für den Projektordner
             upload = method == "POST" and route.path in ("/api/upload", "/api/project/upload")
             length = h.headers.get("Content-Length") or "0"
@@ -466,7 +573,102 @@ class RoomServer:
         ts = h.headers.get("X-MS-Zeit", "")
         if not (ts.isascii() and ts.isdigit()) or abs(time.time() - int(ts)) > MAX_CLOCK_SKEW:
             raise RoomError(401, "Zeitstempel fehlt oder weicht zu stark ab (Uhrzeit der Rechner prüfen).")
-        return int(ts), _signer(self.key, method, h.path, ts)
+        key, guest = self.key, h.headers.get("X-MS-Gast", "")
+        if guest:  # eigener Schlüssel nach dem Anklopfen
+            g = self.guests.get(guest) if GUEST_RE.fullmatch(guest) else None
+            if not g:
+                raise RoomError(401, "Dieser Zugang gilt nicht mehr – bitte neu anklopfen.")
+            key = g["key"]
+        return int(ts), _signer(key, method, h.path, ts)
+
+    # ------------------------------------------------------------ Anklopfen
+
+    def _knock_route(self, h, method: str, route) -> dict:
+        query = {k: v[0] for k, v in urllib.parse.parse_qs(route.query).items()}
+        if method == "GET":
+            return self._knock_status(query)
+        length = h.headers.get("Content-Length") or "0"
+        if not (length.isascii() and length.isdigit()) or int(length) > 4096:
+            raise RoomError(413, "Anfrage zu groß.")
+        body = h.rfile.read(int(length)) if int(length) else b""
+        data = json.loads(body) if body else {}
+        if not isinstance(data, dict):
+            raise RoomError(400, "Ungültige Anfrage.")
+        return self._knock(data, h.client_address[0])
+
+    def _expire_knocks(self, now: float):
+        for kid, k in list(self.knocks.items()):
+            if now - k["time"] > KNOCK_TTL:
+                self.knocks.pop(kid, None)
+
+    def _knock(self, d: dict, ip: str) -> dict:
+        """Neue Anfrage: Namen prüfen, Schlüssel berechnen (er bleibt hier), die Oberfläche fragen lassen."""
+        name, ai = str(d.get("name", "")).strip(), str(d.get("ai", "")).strip()
+        if not valid_name(name) or not valid_name(ai) or name.lower() == ai.lower():
+            raise RoomError(400, "Namen: 2–24 Zeichen, nur Buchstaben, Ziffern, Punkt, Binde- und Unterstrich; dein "
+                                 "Name und der deiner KI müssen sich unterscheiden.")
+        try:
+            peer = int(str(d.get("pub", ""))[:600], 16)
+        except ValueError:
+            raise RoomError(400, "Ungültige Anfrage.") from None
+        now = time.time()
+        with self.cond:
+            self._expire_knocks(now)
+            waiting = [k for k in self.knocks.values() if k["status"] == "wartet"]
+            if len(waiting) >= MAX_KNOCKS:
+                raise RoomError(429, "Gerade warten zu viele Anfragen – bitte später noch einmal.")
+            if any(k["ip"] == ip for k in waiting):
+                raise RoomError(429, "Von diesem Rechner wartet schon eine Anfrage.")
+            if any(k["ip"] == ip and k["status"] == "abgelehnt" and now - k["time"] < REJECT_PAUSE
+                   for k in self.knocks.values()):
+                raise RoomError(429, "Der Gastgeber hat gerade abgelehnt – bitte etwas warten.")
+            kid, private = secrets.token_hex(8), dh_private()
+            try:
+                key, code = guest_key(dh_secret(private, peer), kid)
+            except ValueError:
+                raise RoomError(400, "Ungültige Anfrage.") from None
+            self.knocks[kid] = {"id": kid, "name": name, "ai": ai, "client": str(d.get("client", ""))[:40],
+                                "ip": ip, "time": now, "status": "wartet", "key": key, "code": code}
+        if self.on_knock:
+            self.on_knock({"id": kid, "name": name, "ai": ai, "ip": ip, "code": code})
+        return {"id": kid, "pub": format(dh_public(private), "x"), "room": self.room}
+
+    def _knock_status(self, q: dict) -> dict:
+        """Long-Polling des Wartenden: „wartet“, „zugelassen“, „abgelehnt“ oder „unbekannt“ – nie der Schlüssel."""
+        kid = str(q.get("id", ""))
+        deadline = time.time() + min(KNOCK_WAIT, max(0.0, float(q.get("wait", KNOCK_WAIT))))
+        with self.cond:
+            while True:
+                k = self.knocks.get(kid)
+                if not k:
+                    return {"status": "unbekannt"}
+                if k["status"] != "wartet" or time.time() >= deadline or not self.httpd:
+                    return {"status": k["status"]}
+                self.cond.wait(max(0.05, deadline - time.time()))
+
+    def decide(self, kid: str, allow: bool) -> bool:
+        """Entscheidung des Gastgebers (nur von seiner eigenen Oberfläche). Zugelassen: der eigene Schlüssel gilt ab
+        jetzt – auch nach einem Neustart des Raums. → False, wenn die Anfrage nicht mehr offen ist."""
+        with self.cond:
+            k = self.knocks.get(kid)
+            if not k or k["status"] != "wartet":
+                return False
+            k["status"] = "zugelassen" if allow else "abgelehnt"
+            if allow:
+                self.guests[kid] = {"key": k["key"], "name": k["name"], "ai": k["ai"], "client": k["client"],
+                                    "time": datetime.now().isoformat(timespec="seconds")}
+            self.cond.notify_all()
+        if allow:
+            self._save()
+        return True
+
+    def revoke(self, kid: str) -> bool:
+        """Eigenen Schlüssel eines Teilnehmers wieder entziehen – seine nächste Anfrage scheitert."""
+        with self.cond:
+            gone = self.guests.pop(kid, None)
+        if gone:
+            self._save()
+        return bool(gone)
 
     def _read_upload(self, h, length: int, mac):
         """Upload (bis 100 MB) lesen und dabei signieren – in eine temporäre Datei statt in den Speicher: vor der Prüfung
@@ -853,9 +1055,10 @@ class RoomClient:
     """Verbindung eines Teilnehmers zum Gastgeber. on_event(art, daten) wird aus dem Hintergrund-Thread
     aufgerufen: ("snapshot", snapshot), ("event", ereignis), ("state", "ok" | Fehlertext)."""
 
-    def __init__(self, host: str, port: int, key: str, profile: dict, on_event):
+    def __init__(self, host: str, port: int, key: str, profile: dict, on_event, guest: str = ""):
         host = f"[{host}]" if ":" in host else host
         self.base, self.key, self.profile, self.on_event = f"http://{host}:{port}", key, dict(profile), on_event
+        self.guest = guest  # Kennung des eigenen Schlüssels nach dem Anklopfen ("" = Raumschlüssel)
         self.member: str | None = None
         self.seq = 0
         self.running = False
@@ -916,6 +1119,8 @@ class RoomClient:
         path += ("&" if "?" in path else "?") + f"{REQUEST_ID}={secrets.token_hex(12)}"
         ts = str(int(time.time()))
         mac, headers, upload = _signer(self.key, method, path, ts), {"Content-Type": content_type, "X-MS-Zeit": ts}, None
+        if self.guest:
+            headers["X-MS-Gast"] = self.guest
         if isinstance(body, Path):
             size = 0
             with open(body, "rb") as f:
@@ -1041,3 +1246,93 @@ class RoomClient:
             self._req("POST", "/api/leave", {"member": self.member}, timeout=3)
         except (RoomError, OSError, ValueError):
             pass
+
+
+# ---------------------------------------------------------------- Raumsuche und Anklopfen (Teilnehmer)
+
+def _broadcasts() -> set[str]:
+    """Ziele der Rundfrage: allgemein und je eigener Heimnetz-Adresse das /24-Netz (Router lassen das allgemeine
+    255.255.255.255 nicht immer über jede Netzwerkkarte hinaus)."""
+    out = {"255.255.255.255"}
+    for ip, kind in local_addresses():
+        if kind == "Heimnetz":
+            out.add(".".join(ip.split(".")[:3]) + ".255")
+    return out
+
+
+def discover(timeout: float = DISCOVERY_WAIT, port: int = DEFAULT_PORT, targets=None) -> list[dict]:
+    """Räume im Heimnetz: [{"host", "port", "room", "owner"}] – blockiert etwa timeout Sekunden (im Thread).
+    targets: statt der Rundfrage an diese Adressen (Tests)."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    found: dict[tuple[str, int], dict] = {}
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        sock.settimeout(0.2)
+        for target in targets or _broadcasts():
+            try:
+                sock.sendto(DISCOVERY_MAGIC, (target, port))
+            except OSError:
+                pass
+        end = time.time() + timeout
+        while time.time() < end:
+            try:
+                data, addr = sock.recvfrom(2048)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            try:
+                d = json.loads(data.decode("utf-8"))
+                room_port = int(d["port"])
+                name = str(d["room"])[:60]
+            except (ValueError, KeyError, TypeError, UnicodeDecodeError):
+                continue
+            if 0 < room_port < 65536 and name:
+                found[(addr[0], room_port)] = {"host": addr[0], "port": room_port, "room": name,
+                                               "owner": str(d.get("owner", ""))[:24]}
+    finally:
+        sock.close()
+    return sorted(found.values(), key=lambda r: (r["room"].lower(), r["host"]))
+
+
+def _plain(url: str, data: dict | None = None, timeout: float = 15) -> dict:
+    """Unsignierte Anfrage (nur fürs Anklopfen)."""
+    body = json.dumps(data, ensure_ascii=False).encode("utf-8") if data is not None else None
+    req = urllib.request.Request(url, data=body, method="POST" if data is not None else "GET",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with _direct.open(req, timeout=timeout) as r:
+            return json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        try:
+            msg = json.loads(e.read() or b"{}").get("error") or e.reason
+        except ValueError:
+            msg = e.reason
+        raise RoomError(e.code, str(msg)) from None
+
+
+class Knock:
+    """Beim Gastgeber anklopfen. Der Konstruktor fragt an (blockiert, Netz); danach code = Prüfcode zum Vergleichen,
+    status() wartet bis zu KNOCK_WAIT Sekunden auf die Entscheidung, invite() ist nach „zugelassen“ der Zugang."""
+
+    def __init__(self, host: str, port: int, name: str, ai: str, client: str = ""):
+        self.host, self.port = host, port
+        self.base = f"http://{f'[{host}]' if ':' in host else host}:{port}"
+        private = dh_private()
+        res = _plain(self.base + "/api/knock", {"name": name, "ai": ai, "client": client,
+                                                 "pub": format(dh_public(private), "x")})
+        try:
+            self.id, self.room = str(res["id"]), str(res.get("room") or "Raum")[:60]
+            if not GUEST_RE.fullmatch(self.id):
+                raise ValueError(self.id)
+            self.key, self.code = guest_key(dh_secret(private, int(str(res["pub"]), 16)), self.id)
+        except (KeyError, ValueError, TypeError):
+            raise RoomError(502, "Der Gastgeber hat unerwartet geantwortet.") from None
+
+    def status(self, wait: float = KNOCK_WAIT) -> str:
+        res = _plain(f"{self.base}/api/knock?id={self.id}&wait={wait:g}", timeout=wait + 15)
+        return str(res.get("status", "unbekannt"))
+
+    def invite(self) -> str:
+        return make_invite(self.host, self.port, self.key, self.room, guest=self.id)
+

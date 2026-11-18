@@ -44,6 +44,7 @@ GLYPHS = {
     "search": ("\ue721", "⌕"), "settings": ("\ue713", "⚙"), "shield": ("\uea18", "✓"), "star": ("\ue734", "★"),
     "stop": ("\uee95", "■"), "tasks": ("\ue9d5", "≡"), "terminal": ("\ue756", "❯"), "think": ("\uea80", "✻"),
     "undo": ("\ue7a7", "↶"), "upload": ("\ue898", "⬆"), "warning": ("\ue7ba", "!"), "cross": ("\ue711", "✗"),
+    "speaker": ("\ue767", "🔊"), "headset": ("\ue95b", "🎧"), "zoom": ("\ue8a3", "⊕"),
 }
 
 # Linux: Name → Symbol aus Fluent UI System Icons (Größe 20, „regular“ bzw. „filled“). In MonhipIcons.ttf liegen sie in
@@ -65,6 +66,7 @@ FLUENT = {
     "star": "star_20_regular", "stop": "stop_20_filled", "tasks": "task_list_ltr_20_regular",
     "terminal": "window_console_20_regular", "think": "brain_circuit_20_regular", "undo": "arrow_undo_20_regular",
     "upload": "arrow_upload_20_regular", "warning": "warning_20_regular", "cross": "dismiss_20_regular",
+    "speaker": "speaker_2_20_regular", "headset": "headset_20_regular", "zoom": "zoom_in_20_regular",
 }
 _LINUX_CHARS = {name: chr(0xE000 + i) for i, name in enumerate(FLUENT)}
 

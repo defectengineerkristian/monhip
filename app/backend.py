@@ -288,6 +288,7 @@ class LlamaServer(ManagedServer):
         self.vision = False  # Modell versteht Bilder (mit mmproj geladen, laut /props)
         self.n_ctx: int | None = None  # tatsächlicher Kontext je Anfrage (laut /props)
         self.last: dict | None = None  # womit zuletzt gestartet wurde – restart() lädt genauso wieder
+        self.slot_dir: Path | None = None  # --slot-save-path: Rechenstand langer Chats speichern (rechenstand.py)
 
     def _forget(self):
         self.model, self.vision, self.n_ctx = None, False, None
@@ -318,6 +319,9 @@ class LlamaServer(ManagedServer):
                 args += ["--mmproj", str(mmproj)]
                 if image_tokens and "--image-max-tokens" not in extra:
                     args += ["--image-max-tokens", str(image_tokens)]
+            if self.slot_dir and "--slot-save-path" not in extra:
+                Path(self.slot_dir).mkdir(parents=True, exist_ok=True)
+                args += ["--slot-save-path", str(self.slot_dir)]
             if extra.strip():
                 args += shlex.split(extra, posix=not plattform.WINDOWS)
             if "--api-key" in args[:-1]:  # eigener Schlüssel in den Einstellungen (auch „a,b“): dann den ersten

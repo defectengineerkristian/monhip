@@ -6,16 +6,20 @@ Teamwork rooms. Everything runs on your own computer.
 
 ## Features
 
-- **Chat** with streamed answers, saved conversations and image understanding.
+- **Chat** with streamed answers, saved conversations and image understanding; long chats reopen
+  without being read in again.
 - **Documents and research:** PDFs, Office files and code; web search with sources.
 - **Browser:** a browser in a side panel that you share with the AI – it opens and reads
   pages, fills in forms, and asks you to handle logins and captchas yourself.
 - **Agent tools:** files and folders, Office documents, Python and shell commands,
   Jupyter notebooks – each action can require confirmation.
-- **Images and 3D:** create or edit images; turn an image or a description into a 3D
+- **Images and 3D:** create, edit or upscale images; turn an image or a description into a 3D
   model (GLB, or STL for 3D printing).
-- **Teamwork:** rooms with other people and their AI assistants, shared files and tasks.
-- **Speech:** local dictation; notifications when longer tasks finish.
+- **Teamwork:** rooms with other people and their AI assistants, shared files and tasks; find rooms
+  on the home network and knock – the host admits you, and you get your own key.
+- **Speech:** local dictation, answers read aloud and a conversation mode; audiobooks from PDFs
+  (one MP3 per chapter, without page numbers, headers or footnotes); notifications when longer
+  tasks finish.
 
 ## Install
 

@@ -1,8 +1,7 @@
-"""Internetzugriff: Websuche (DuckDuckGo ohne Schlüssel, optional Brave-API) und Seitenabruf als Text."""
+"""Internetzugriff: Websuche (DuckDuckGo, ohne Schlüssel) und Seitenabruf als Text."""
 
 import http.client
 import ipaddress
-import json
 import os
 import re
 import socket
@@ -137,21 +136,12 @@ def search_duckduckgo(query: str, n: int = 8) -> list[dict]:
     out = [r for r in p.results if r["url"].startswith("http") and "duckduckgo.com/y.js" not in r["url"]]
     if not out and ("anomaly" in html.lower() or "captcha" in html.lower()):
         raise RuntimeError("DuckDuckGo blockiert gerade automatische Anfragen. Später erneut versuchen "
-                           "oder einen Brave-Search-API-Schlüssel eintragen.")
+                           "oder über den Browser in der Seitenleiste suchen.")
     return out[:n]
 
 
-def search_brave(query: str, api_key: str, n: int = 8) -> list[dict]:
-    url = "https://api.search.brave.com/res/v1/web/search?" + urllib.parse.urlencode(
-        {"q": query, "count": n, "search_lang": "de"})
-    body, _, _ = _get(url, headers={"Accept": "application/json", "X-Subscription-Token": api_key})
-    items = json.loads(body).get("web", {}).get("results", [])
-    return [{"title": i.get("title", ""), "url": i.get("url", ""),
-             "snippet": re.sub(r"<[^>]+>", "", i.get("description", ""))} for i in items[:n]]
-
-
-def search(query: str, brave_key: str = "", n: int = 8) -> str:
-    results = search_brave(query, brave_key, n) if brave_key else search_duckduckgo(query, n)
+def search(query: str, n: int = 8) -> str:
+    results = search_duckduckgo(query, n)
     if not results:
         return "Keine Treffer."
     return "\n\n".join(f"[{i}] {r['title'].strip()}\n{r['url']}\n{' '.join(r['snippet'].split())}"
